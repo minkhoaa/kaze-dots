@@ -1,4 +1,4 @@
-local ctx = require("omarch._ctx")
+local ctx = require("kaze._ctx")
 local cfg = ctx.cfg
 
 local home = os.getenv("HOME") or ""

@@ -1,5 +1,5 @@
-local ctx = require("omarch._ctx")
-local themes = require("omarch.themes")
+local ctx = require("kaze._ctx")
+local themes = require("kaze.themes")
 
 local cfg = ctx.cfg
 local theme = ctx.theme

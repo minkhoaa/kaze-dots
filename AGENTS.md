@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Repository operating manual for AI coding agents working on `omarch-shell`. Keep changes tightly aligned with [GOAL.md](GOAL.md), [DESIGN.md](DESIGN.md), and [docs/specs/](docs/specs/01-architecture.md).
+Repository operating manual for AI coding agents working on `kaze-dots`. Keep changes tightly aligned with [GOAL.md](GOAL.md), [DESIGN.md](DESIGN.md), and [docs/specs/](docs/specs/01-architecture.md).
 
 ## 1. Project Purpose
 
-`omarch-shell` is a modular, Lua-driven Arch Linux + Hyprland desktop configuration and layout engine. Users configure layout, theme, apps, and behavior in Lua; the Lua engine generates and hot-reloads native configs for Waybar, Foot, Fuzzel, Fnott, Hyprlock, and Hyprland while keeping total desktop idle overhead around `~53 MiB` PSS and `0.00%` CPU.
+`kaze-dots` is a modular, Lua-driven Arch Linux + Hyprland desktop configuration and layout engine. Users configure layout, theme, apps, and behavior in Lua; the Lua engine generates and hot-reloads native configs for Waybar, Foot, Fuzzel, Fnott, Hyprlock, and Hyprland while keeping total desktop idle overhead around `~53 MiB` PSS and `0.00%` CPU.
 
 ## 2. Technical Stack
 
@@ -23,14 +23,14 @@ Repository operating manual for AI coding agents working on `omarch-shell`. Keep
 ## 3. Repository Structure (Target Architecture)
 
 ```text
-omarch-shell/
+kaze-dots/
 ├── AGENTS.md                   # This file (agent operating rules)
 ├── GOAL.md                     # Objectives, hard RAM/CPU budgets, milestones
 ├── DESIGN.md                   # Aesthetic & UX design system
 ├── docs/specs/                 # Detailed engineering specifications (01..05)
-├── lua/omarch/                 # Pure Lua library (config, themes, layouts, emitters, state)
+├── lua/kaze/                 # Pure Lua library (config, themes, layouts, emitters, state)
 ├── hypr/                       # Hyprland 0.57+ native Lua modules (hyprland.lua, core, rules, keybinds, execs)
-├── bin/                        # Executable Lua CLI tools (omarch-sync, omarch-layout, omarch-theme, omarch-menu, omarch-power, omarch-tui, omarch-osd)
+├── bin/                        # Executable Lua CLI tools (kaze-sync, kaze-layout, kaze-theme, kaze-menu, kaze-power, kaze-tui, kaze-osd)
 ├── templates/                  # Static non-Lua fallbacks (hypridle.conf, default wallpaper assets)
 ├── scripts/                    # Installer, symlink applicator, VM sync/test helpers
 └── tests/                      # Lua unit tests + VM verification & telemetry scripts
@@ -50,7 +50,7 @@ Use these exact commands — do not guess alternatives.
 ### Local Static Checks (run before every VM deploy or commit)
 ```bash
 # 1. Syntax-check every Lua module and executable
-find lua hypr bin tests -type f \( -name '*.lua' -o -path 'bin/omarch-*' \) -print0 | xargs -0 -r -n1 luac -p
+find lua hypr bin tests -type f \( -name '*.lua' -o -path 'bin/kaze-*' \) -print0 | xargs -0 -r -n1 luac -p
 
 # 2. Run pure-Lua unit / emitter smoke tests (when tests/ exist)
 lua tests/run.lua
@@ -76,20 +76,20 @@ Full headless boot, screenshot capture, and PSS/CPU telemetry protocol are speci
 
 ## 5. Architecture & Design Rules
 
-1. **Lua is the Single Source of Truth**: Users edit Lua (`config.lua`, `themes.lua`, `hypr/*.lua`). All Waybar (`config.jsonc`, `style.css`, `colors.css`), Foot, Fuzzel, Fnott, and Hyprlock configs are **generated deterministically** by `omarch-sync`.
+1. **Lua is the Single Source of Truth**: Users edit Lua (`config.lua`, `themes.lua`, `hypr/*.lua`). All Waybar (`config.jsonc`, `style.css`, `colors.css`), Foot, Fuzzel, Fnott, and Hyprlock configs are **generated deterministically** by `kaze-sync`.
 2. **Zero Polling Rule**: Never add periodic `custom/*` bash/python polling scripts to Waybar (`interval: 1` shelling out to `awk`/`grep`/`curl`). Use Waybar's native C++ modules (`hyprland/workspaces`, `clock`, `network`, `wireplumber`, `battery`, `tray`, `mpris`) or event-driven IPC.
 3. **Zero Heavy Runtimes**: Do not introduce Qt/QML (`quickshell`), Electron, GTK4/AGS, Rust `wgpu`/Iced, or background Python/Node daemons into the desktop stack.
 4. **Hyprland 0.57+ Lua API Gotchas**:
-   - `hl.window_rule({ match = { ... } })` uses **C++ `std::regex`**, NOT Lua `%` escapes (write `^om-tui$`, never `^om%-tui$`).
+   - `hl.window_rule({ match = { ... } })` uses **C++ `std::regex`**, NOT Lua `%` escapes (write `^kaze-tui$`, never `^om%-tui$`).
    - Do not use legacy `.conf` syntax or deprecated `windowrulev2` / `layerrule` string rules.
    - Always test reloads with `hyprctl configerrors` — output must be completely empty.
 5. **Process Name Safety**: Never use `pkill -f` with a substring that appears in the invoking shell command. Use `pkill -x <exact_15char_comm>` (e.g., `pkill -x qemu-system-x86`, `pkill -x waybar`).
 
 ## 6. Coding & Naming Conventions
 
-- **Files & CLI binaries**: `kebab-case` (`bin/omarch-sync`, `docs/specs/02-layouts.md`).
-- **Lua modules & table keys**: `snake_case` (`lua/omarch/emit_waybar.lua`, `bar_height`, `gaps_out`).
-- **Pure Emitters**: Every config emitter (`lua/omarch/emit_*.lua`) must be a pure function `(cfg, theme, layout_spec) -> string`. File I/O and atomic writes (`write .tmp` → `os.rename`) happen only in `lua/omarch/fs.lua` / `omarch-sync`.
+- **Files & CLI binaries**: `kebab-case` (`bin/kaze-sync`, `docs/specs/02-layouts.md`).
+- **Lua modules & table keys**: `snake_case` (`lua/kaze/emit_waybar.lua`, `bar_height`, `gaps_out`).
+- **Pure Emitters**: Every config emitter (`lua/kaze/emit_*.lua`) must be a pure function `(cfg, theme, layout_spec) -> string`. File I/O and atomic writes (`write .tmp` → `os.rename`) happen only in `lua/kaze/fs.lua` / `kaze-sync`.
 - **Zero External Lua Dependencies**: Use standard Lua 5.5 libraries only (`io`, `os`, `string`, `table`, `math`). Quote all shell arguments safely via a shared `shell_quote(s)` helper.
 - **No Silent Failures**: Every CLI tool exits non-zero with a clear `stderr` message when an invalid layout/theme or missing dependency is encountered.
 
@@ -120,9 +120,9 @@ Before marking any implementation task complete:
   - `~/.config/fuzzel/fuzzel.ini`
   - `~/.config/fnott/fnott.ini`
   - `~/.config/hypr/hyprlock.conf`
-  - `~/.config/omarch/state.lua`
+  - `~/.config/kaze/state.lua`
 - **Source of Truth (edit here instead)**:
-  - `lua/omarch/*.lua` and `~/.config/omarch/user.lua`
+  - `lua/kaze/*.lua` and `~/.config/kaze/user.lua`
   - `hypr/*.lua`
 
 ## 10. Completion & Reporting Requirements

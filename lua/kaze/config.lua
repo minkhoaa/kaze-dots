@@ -1,8 +1,8 @@
-local defaults = require("omarch.defaults")
-local fs = require("omarch.fs")
-local layouts = require("omarch.layouts")
-local state = require("omarch.state")
-local themes = require("omarch.themes")
+local defaults = require("kaze.defaults")
+local fs = require("kaze.fs")
+local layouts = require("kaze.layouts")
+local state = require("kaze.state")
+local themes = require("kaze.themes")
 
 local M = {}
 
@@ -56,16 +56,16 @@ local function load_lua_table(path)
     local env = setmetatable({}, { __index = _G })
     local chunk, load_err = loadfile(path, "t", env)
     if not chunk then
-        io.stderr:write(string.format("omarch warning: failed to load %s: %s\n", path, tostring(load_err)))
+        io.stderr:write(string.format("kaze warning: failed to load %s: %s\n", path, tostring(load_err)))
         return {}
     end
     local ok, res = pcall(chunk)
     if not ok then
-        io.stderr:write(string.format("omarch warning: runtime error in %s: %s\n", path, tostring(res)))
+        io.stderr:write(string.format("kaze warning: runtime error in %s: %s\n", path, tostring(res)))
         return {}
     end
     if type(res) ~= "table" then
-        io.stderr:write(string.format("omarch warning: %s must return a table (got %s)\n", path, type(res)))
+        io.stderr:write(string.format("kaze warning: %s must return a table (got %s)\n", path, type(res)))
         return {}
     end
     return res
@@ -77,7 +77,7 @@ function M.load(opts)
     local home = opts.home or fs.home()
     local config_dir = opts.config_dir or fs.config_dir(home)
     local state_path = opts.state_path or state.path(config_dir)
-    local user_path = opts.user_path or (config_dir .. "/omarch/user.lua")
+    local user_path = opts.user_path or (config_dir .. "/kaze/user.lua")
 
     local state_tbl = state.load(state_path)
     local user_tbl = load_lua_table(user_path)
@@ -88,7 +88,7 @@ function M.load(opts)
         if strict then
             error(layout_spec)
         end
-        io.stderr:write(string.format("omarch warning: %s; falling back to 'noctalia'\n", tostring(layout_spec)))
+        io.stderr:write(string.format("kaze warning: %s; falling back to 'noctalia'\n", tostring(layout_spec)))
         layout_spec = layouts.get("noctalia")
     end
 
@@ -110,7 +110,7 @@ function M.load(opts)
         if strict then
             error(theme)
         end
-        io.stderr:write(string.format("omarch warning: %s; falling back to 'noctalia'\n", tostring(theme)))
+        io.stderr:write(string.format("kaze warning: %s; falling back to 'noctalia'\n", tostring(theme)))
         cfg.theme = "noctalia"
         theme = themes.get("noctalia")
     end

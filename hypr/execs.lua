@@ -1,16 +1,16 @@
-local ctx = require("omarch._ctx")
-local fs = require("omarch.fs")
+local ctx = require("kaze._ctx")
+local fs = require("kaze.fs")
 
 local cfg = ctx.cfg
 local theme = ctx.theme
 
 hl.on("hyprland.start", function()
     -- Ensure all generated daemon configs are fresh before launching daemons
-    local sync_cmd = (os.getenv("HOME") or "") .. "/.local/bin/omarch-sync"
+    local sync_cmd = (os.getenv("HOME") or "") .. "/.local/bin/kaze-sync"
     if fs.file_exists(sync_cmd) then
         os.execute(fs.shell_quote(sync_cmd) .. " >/dev/null 2>&1")
     else
-        os.execute("omarch-sync >/dev/null 2>&1")
+        os.execute("kaze-sync >/dev/null 2>&1")
     end
 
     hl.exec_cmd("foot --server")

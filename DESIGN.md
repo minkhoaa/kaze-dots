@@ -2,7 +2,7 @@
 
 ## 1. Design Philosophy
 
-`omarch-shell` fuses three complementary aesthetics into one coherent desktop:
+`kaze-dots` fuses three complementary aesthetics into one coherent desktop:
 
 1. **Omarchy Discipline (Core Ethos)**: Calm surfaces, restrained color, high information density without clutter, crisp typography, keyboard-driven navigation, and ephemeral floating TUI utilities instead of bloated settings windows.
 2. **Noctalia Polish (Default Layout)**: Floating pill islands separated by breathing room, subtle `1px` hairline borders, soft frosted translucency (delegated to Hyprland's compositor blur — zero GPU overhead in Waybar), and pill-shaped active workspace indicators.
@@ -71,14 +71,14 @@ Every theme defines a strict semantic palette (6-char hex without `#`, so Lua em
 
 ### Command-Palette First (`fuzzel`)
 - `Super + Space`: App launcher (centered, max 8 visible lines, icon-enabled, instant fuzzy match).
-- `Super + Shift + Space` (or clicking the OS/Logo button on the bar): **`omarch-menu`** — structured Omarchy command menu:
+- `Super + Shift + Space` (or clicking the OS/Logo button on the bar): **`kaze-menu`** — structured Omarchy command menu:
   - `Switch Layout` (`noctalia` / `caelestia` / `omarchy`)
   - `Switch Theme` (`noctalia` / `lavender` / `tokyonight` / `carbon`)
   - `Wi-Fi` / `Bluetooth` / `Audio` / `System Monitor`
   - `Clipboard History` / `Screenshot Region` / `Reload Shell` / `Power Menu`
 
-### Floating TUI Utilities (`omarch-tui`)
-Clicking status pills on Waybar (or pressing `Super + Alt + W/B/A`, `Ctrl + Shift + Esc`) spawns a centered floating `footclient` window (`class = om-tui`, `56% × 62%` of monitor) running a native TUI:
+### Floating TUI Utilities (`kaze-tui`)
+Clicking status pills on Waybar (or pressing `Super + Alt + W/B/A`, `Ctrl + Shift + Esc`) spawns a centered floating `footclient` window (`class = kaze-tui`, `56% × 62%` of monitor) running a native TUI:
 - **Network** → `nmtui`
 - **Bluetooth** → `bluetui`
 - **Audio** → `wiremix`
@@ -86,8 +86,8 @@ Clicking status pills on Waybar (or pressing `Super + Alt + W/B/A`, `Ctrl + Shif
 
 Closing the window (`q` or `Esc` or `Super + Q`) returns RAM usage to `0 MiB`.
 
-### Zero-Daemon Progress OSD (`omarch-osd`)
-Volume and brightness keys call `omarch-osd`, which adjusts hardware via `wpctl` / `brightnessctl` and sends a synchronous replacing notification to `fnott` (`x-canonical-private-synchronous: omarch-osd` + `int:value:<0..100>`). Fnott renders a native accent-colored progress bar in the top-center/top-right corner for `1.4s` and disappears — **zero extra daemon, zero idle RAM**.
+### Zero-Daemon Progress OSD (`kaze-osd`)
+Volume and brightness keys call `kaze-osd`, which adjusts hardware via `wpctl` / `brightnessctl` and sends a synchronous replacing notification to `fnott` (`x-canonical-private-synchronous: kaze-osd` + `int:value:<0..100>`). Fnott renders a native accent-colored progress bar in the top-center/top-right corner for `1.4s` and disappears — **zero extra daemon, zero idle RAM**.
 
 ## 6. Motion & Blur Discipline
 

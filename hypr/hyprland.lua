@@ -9,19 +9,19 @@ if not xdg_cfg or xdg_cfg == "" then
 end
 
 package.path = table.concat({
-    xdg_data .. "/omarch-shell/lua/?.lua",
-    xdg_data .. "/omarch-shell/lua/?/init.lua",
+    xdg_data .. "/kaze-dots/lua/?.lua",
+    xdg_data .. "/kaze-dots/lua/?/init.lua",
     xdg_cfg .. "/hypr/?.lua",
     package.path,
 }, ";")
 
 for _, mod in ipairs({
-    "omarch._ctx",
-    "omarch.config",
-    "omarch.state",
-    "omarch.themes",
-    "omarch.layouts",
-    "omarch.layouts.noctalia",
+    "kaze._ctx",
+    "kaze.config",
+    "kaze.state",
+    "kaze.themes",
+    "kaze.layouts",
+    "kaze.layouts.noctalia",
     "env",
     "core",
     "rules",
@@ -31,8 +31,8 @@ for _, mod in ipairs({
     package.loaded[mod] = nil
 end
 
-local cfg, theme, layout = require("omarch.config").load({ strict = false })
-package.loaded["omarch._ctx"] = {
+local cfg, theme, layout = require("kaze.config").load({ strict = false })
+package.loaded["kaze._ctx"] = {
     cfg = cfg,
     theme = theme,
     layout = layout,

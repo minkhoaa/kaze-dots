@@ -2,7 +2,7 @@
 
 ## 1. Layout Contract
 
-Every layout module in `lua/omarch/layouts/<name>.lua` exports a deterministic table:
+Every layout module in `lua/kaze/layouts/<name>.lua` exports a deterministic table:
 
 ```lua
 return {
@@ -29,11 +29,11 @@ return {
 ### Shared Rules Across All 3 Layouts
 - **Zero polling**: Only native Waybar C++ modules (`hyprland/workspaces`, `hyprland/window`, `mpris`, `clock`, `network`, `wireplumber`, `battery`, `tray`) plus static click-only launchers (`custom/menu`, `custom/power` with **no `exec`** and **no `interval`** — pure `format` + `on-click`).
 - **Consistent click targets**:
-  - `custom/menu` → `omarch-menu`
-  - `network` → `omarch-tui wifi`
-  - `wireplumber` → left-click `omarch-tui audio`, right-click `omarch-osd vol-mute`, scroll up/down `omarch-osd vol-up` / `vol-down`
-  - `battery` → tooltip shows power draw & time remaining; click opens `omarch-tui sysmon`
-  - `custom/power` → `omarch-power`
+  - `custom/menu` → `kaze-menu`
+  - `network` → `kaze-tui wifi`
+  - `wireplumber` → left-click `kaze-tui audio`, right-click `kaze-osd vol-mute`, scroll up/down `kaze-osd vol-up` / `vol-down`
+  - `battery` → tooltip shows power draw & time remaining; click opens `kaze-tui sysmon`
+  - `custom/power` → `kaze-power`
   - `hyprland/workspaces` → scroll up/down switches workspace (`hyprctl dispatch workspace e+1/-1`)
 - **Layer blur**: Hyprland applies `hl.layer_rule({ match = { namespace = "waybar" }, blur = true, ignore_alpha = 0.25 })`. Because `ignore_alpha = 0.25` skips fully transparent gaps (`alpha = 0.0`), floating pill layouts (`noctalia`) blur **only inside the visible pills**, never creating ugly blurred boxes in empty spaces between islands.
 
@@ -144,12 +144,12 @@ return {
 
 ---
 
-## 5. Live Hot-Switch Contract (`omarch-layout <name>`)
+## 5. Live Hot-Switch Contract (`kaze-layout <name>`)
 
 Switching layout must execute cleanly in **`≤ 500 ms`** without restarting Hyprland:
 1. Validate `<name>` ∈ `{ "noctalia", "caelestia", "omarchy" }`.
-2. Update `~/.config/omarch/state.lua` atomically (`layout = "<name>"`).
-3. Invoke `omarch-sync --reload`:
+2. Update `~/.config/kaze/state.lua` atomically (`layout = "<name>"`).
+3. Invoke `kaze-sync --reload`:
    - Regenerates `waybar/{config.jsonc,style.css,colors.css}`, `fnott.ini`, `fuzzel.ini`, `foot.ini`, `hyprlock.conf`.
    - Runs `hyprctl reload` (applies new `gaps_in`, `gaps_out`, `rounding`, `border_size`).
    - Restarts `waybar` cleanly (`pkill -x waybar`, wait up to `300ms` for exit, launch `waybar` detached).

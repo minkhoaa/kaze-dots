@@ -17,31 +17,31 @@ local function setup_path()
     local base = (resolved or script):match("^(.*)/[^/]+$")
     if base then
         local repo_lua = base .. "/../lua"
-        local f = io.open(repo_lua .. "/omarch/defaults.lua", "r")
+        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
         if f then
             f:close()
             paths[#paths + 1] = repo_lua .. "/?.lua"
             paths[#paths + 1] = repo_lua .. "/?/init.lua"
         end
     end
-    paths[#paths + 1] = xdg_data .. "/omarch-shell/lua/?.lua"
-    paths[#paths + 1] = xdg_data .. "/omarch-shell/lua/?/init.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
     paths[#paths + 1] = package.path
     package.path = table.concat(paths, ";")
 end
 
 setup_path()
 
-local config = require("omarch.config")
-local emit_fnott = require("omarch.emit_fnott")
-local emit_foot = require("omarch.emit_foot")
-local emit_fuzzel = require("omarch.emit_fuzzel")
-local emit_hyprlock = require("omarch.emit_hyprlock")
-local emit_waybar = require("omarch.emit_waybar")
-local fs = require("omarch.fs")
+local config = require("kaze.config")
+local emit_fnott = require("kaze.emit_fnott")
+local emit_foot = require("kaze.emit_foot")
+local emit_fuzzel = require("kaze.emit_fuzzel")
+local emit_hyprlock = require("kaze.emit_hyprlock")
+local emit_waybar = require("kaze.emit_waybar")
+local fs = require("kaze.fs")
 
 local function usage()
-    io.stderr:write("Usage: omarch-sync [--reload] [--check] [-h|--help]\n")
+    io.stderr:write("Usage: kaze-sync [--reload] [--check] [-h|--help]\n")
 end
 
 local check_only = false
@@ -54,10 +54,10 @@ for i = 1, #arg do
     elseif a == "--reload" then
         do_reload = true
     elseif a == "-h" or a == "--help" then
-        io.stdout:write("Usage: omarch-sync [--reload] [--check] [-h|--help]\n")
+        io.stdout:write("Usage: kaze-sync [--reload] [--check] [-h|--help]\n")
         os.exit(0)
     else
-        io.stderr:write(string.format("omarch-sync: unknown option '%s'\n", a))
+        io.stderr:write(string.format("kaze-sync: unknown option '%s'\n", a))
         usage()
         os.exit(2)
     end
@@ -65,7 +65,7 @@ end
 
 local ok, cfg, theme, layout = pcall(config.load, { strict = true })
 if not ok then
-    io.stderr:write(string.format("omarch-sync: %s\n", tostring(cfg)))
+    io.stderr:write(string.format("kaze-sync: %s\n", tostring(cfg)))
     os.exit(1)
 end
 
@@ -76,7 +76,7 @@ local fnott_ini = emit_fnott.emit(cfg, theme, layout)
 local hyprlock_conf = emit_hyprlock.emit(cfg, theme, layout)
 
 if check_only then
-    io.stdout:write(string.format("omarch-sync: check ok (layout=%s, theme=%s)\n", cfg.layout, cfg.theme))
+    io.stdout:write(string.format("kaze-sync: check ok (layout=%s, theme=%s)\n", cfg.layout, cfg.theme))
     os.exit(0)
 end
 
@@ -94,7 +94,7 @@ local outputs = {
 for _, item in ipairs(outputs) do
     local write_ok, write_err = pcall(fs.write_atomic, item[1], item[2])
     if not write_ok then
-        io.stderr:write(string.format("omarch-sync: %s\n", tostring(write_err)))
+        io.stderr:write(string.format("kaze-sync: %s\n", tostring(write_err)))
         os.exit(1)
     end
 end

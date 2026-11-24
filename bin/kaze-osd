@@ -17,23 +17,23 @@ local function setup_path()
     local base = (resolved or script):match("^(.*)/[^/]+$")
     if base then
         local repo_lua = base .. "/../lua"
-        local f = io.open(repo_lua .. "/omarch/defaults.lua", "r")
+        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
         if f then
             f:close()
             paths[#paths + 1] = repo_lua .. "/?.lua"
             paths[#paths + 1] = repo_lua .. "/?/init.lua"
         end
     end
-    paths[#paths + 1] = xdg_data .. "/omarch-shell/lua/?.lua"
-    paths[#paths + 1] = xdg_data .. "/omarch-shell/lua/?/init.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
     paths[#paths + 1] = package.path
     package.path = table.concat(paths, ";")
 end
 
 setup_path()
 
-local config = require("omarch.config")
-local fs = require("omarch.fs")
+local config = require("kaze.config")
+local fs = require("kaze.fs")
 
 local VALID_ACTIONS = {
     ["vol-up"] = true,
@@ -46,13 +46,13 @@ local VALID_ACTIONS = {
 
 local action = arg[1]
 if action == "-h" or action == "--help" then
-    io.stdout:write("Usage: omarch-osd <vol-up|vol-down|vol-mute|mic-mute|bright-up|bright-down>\n")
+    io.stdout:write("Usage: kaze-osd <vol-up|vol-down|vol-mute|mic-mute|bright-up|bright-down>\n")
     os.exit(0)
 end
 
 if not action or not VALID_ACTIONS[action] then
     io.stderr:write(string.format(
-        "omarch-osd: invalid action '%s' (expected: vol-up, vol-down, vol-mute, mic-mute, bright-up, bright-down)\n",
+        "kaze-osd: invalid action '%s' (expected: vol-up, vol-down, vol-mute, mic-mute, bright-up, bright-down)\n",
         tostring(action or "")
     ))
     os.exit(1)
@@ -89,7 +89,7 @@ local function send_osd(title, body, pct)
         return
     end
     local cmd = string.format(
-        "notify-send -a omarch-osd -t 1400 -u low -h string:x-canonical-private-synchronous:omarch-osd -h int:value:%d %s %s >/dev/null 2>&1",
+        "notify-send -a kaze-osd -t 1400 -u low -h string:x-canonical-private-synchronous:kaze-osd -h int:value:%d %s %s >/dev/null 2>&1",
         clamp_pct(pct),
         fs.shell_quote(title),
         fs.shell_quote(body)
@@ -108,7 +108,7 @@ local bright_step = tonumber(cfg.bright_step) or 5
 
 if action == "vol-up" or action == "vol-down" or action == "vol-mute" then
     if not cmd_exists("wpctl") then
-        io.stderr:write("omarch-osd: wpctl not found in PATH\n")
+        io.stderr:write("kaze-osd: wpctl not found in PATH\n")
         os.exit(1)
     end
     local target = "@DEFAULT_AUDIO_SINK@"
@@ -138,7 +138,7 @@ if action == "vol-up" or action == "vol-down" or action == "vol-mute" then
     end
 elseif action == "mic-mute" then
     if not cmd_exists("wpctl") then
-        io.stderr:write("omarch-osd: wpctl not found in PATH\n")
+        io.stderr:write("kaze-osd: wpctl not found in PATH\n")
         os.exit(1)
     end
     local target = "@DEFAULT_AUDIO_SOURCE@"
@@ -158,7 +158,7 @@ elseif action == "mic-mute" then
     end
 else
     if not cmd_exists("brightnessctl") then
-        io.stderr:write("omarch-osd: brightnessctl not found in PATH\n")
+        io.stderr:write("kaze-osd: brightnessctl not found in PATH\n")
         os.exit(1)
     end
     local delta = action == "bright-up" and (bright_step .. "%+") or (bright_step .. "%-")

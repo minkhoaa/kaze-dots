@@ -1,4 +1,4 @@
-local ctx = require("omarch._ctx")
+local ctx = require("kaze._ctx")
 local cfg = ctx.cfg
 
 local op = cfg.opacity or {}
@@ -13,7 +13,7 @@ hl.window_rule({
 -- Floating centered Omarchy TUI popups (nmtui, bluetui, wiremix, btop)
 -- Hyprland window_rule uses C++ std::regex (not Lua patterns)
 hl.window_rule({
-    match = { class = "^om-tui$" },
+    match = { class = "^kaze-tui$" },
     float = true,
     center = true,
     size = "(monitor_w*0.56) (monitor_h*0.62)",

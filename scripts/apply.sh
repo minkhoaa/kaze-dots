@@ -11,7 +11,7 @@ for arg in "$@"; do
             ;;
         -h|--help)
             echo "Usage: $0 [--yes]"
-            echo "Backs up existing configs, symlinks omarch-shell into \$HOME, and runs omarch-sync."
+            echo "Backs up existing configs, symlinks kaze-dots into \$HOME, and runs kaze-sync."
             exit 0
             ;;
         *)
@@ -22,7 +22,7 @@ for arg in "$@"; do
 done
 
 if [ "$AUTO_YES" = false ]; then
-    read -r -p "Apply omarch-shell symlinks and regenerate configs in $HOME? [y/N] " reply
+    read -r -p "Apply kaze-dots symlinks and regenerate configs in $HOME? [y/N] " reply
     case "$reply" in
         [yY]|[yY][eE][sS]) ;;
         *)
@@ -35,7 +35,7 @@ fi
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 BIN_HOME="$HOME/.local/bin"
-BACKUP_DIR="$CONFIG_HOME/.omarch-backup-$(date +%Y%m%d-%H%M%S)"
+BACKUP_DIR="$CONFIG_HOME/.kaze-backup-$(date +%Y%m%d-%H%M%S)"
 BACKUP_CREATED=false
 
 backup_and_link() {
@@ -63,9 +63,9 @@ backup_and_link() {
     ln -s "$src" "$dst"
 }
 
-mkdir -p "$DATA_HOME/omarch-shell/lua" "$CONFIG_HOME/hypr" "$CONFIG_HOME/omarch" "$BIN_HOME"
+mkdir -p "$DATA_HOME/kaze-dots/lua" "$CONFIG_HOME/hypr" "$CONFIG_HOME/kaze" "$BIN_HOME"
 
-backup_and_link "$REPO_DIR/lua/omarch" "$DATA_HOME/omarch-shell/lua/omarch"
+backup_and_link "$REPO_DIR/lua/kaze" "$DATA_HOME/kaze-dots/lua/kaze"
 
 for f in hyprland.lua env.lua core.lua rules.lua execs.lua keybinds.lua; do
     backup_and_link "$REPO_DIR/hypr/$f" "$CONFIG_HOME/hypr/$f"
@@ -73,21 +73,21 @@ done
 
 backup_and_link "$REPO_DIR/templates/hypridle.conf" "$CONFIG_HOME/hypr/hypridle.conf"
 
-for bin_file in "$REPO_DIR"/bin/omarch-*; do
+for bin_file in "$REPO_DIR"/bin/kaze-*; do
     chmod +x "$bin_file"
     backup_and_link "$bin_file" "$BIN_HOME/$(basename "$bin_file")"
 done
 
-if [ ! -e "$CONFIG_HOME/omarch/user.lua" ]; then
-    cat <<'EOF' > "$CONFIG_HOME/omarch/user.lua"
--- User overrides for omarch-shell (safe to edit; never overwritten by apply.sh)
+if [ ! -e "$CONFIG_HOME/kaze/user.lua" ]; then
+    cat <<'EOF' > "$CONFIG_HOME/kaze/user.lua"
+-- User overrides for kaze-dots (safe to edit; never overwritten by apply.sh)
 return {}
 EOF
 fi
 
-"$BIN_HOME/omarch-sync"
+"$BIN_HOME/kaze-sync"
 
 if [ "$BACKUP_CREATED" = true ]; then
     echo "Backed up previous configs to: $BACKUP_DIR"
 fi
-echo "Applied omarch-shell cleanly."
+echo "Applied kaze-dots cleanly."

@@ -3,7 +3,7 @@ local M = {}
 local ORDER = { "noctalia" }
 
 local REGISTRY = {
-    noctalia = "omarch.layouts.noctalia",
+    noctalia = "kaze.layouts.noctalia",
 }
 
 local REQUIRED_HYPR = { "gaps_in", "gaps_out", "rounding", "border_size" }

@@ -17,22 +17,22 @@ local function setup_path()
     local base = (resolved or script):match("^(.*)/[^/]+$")
     if base then
         local repo_lua = base .. "/../lua"
-        local f = io.open(repo_lua .. "/omarch/defaults.lua", "r")
+        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
         if f then
             f:close()
             paths[#paths + 1] = repo_lua .. "/?.lua"
             paths[#paths + 1] = repo_lua .. "/?/init.lua"
         end
     end
-    paths[#paths + 1] = xdg_data .. "/omarch-shell/lua/?.lua"
-    paths[#paths + 1] = xdg_data .. "/omarch-shell/lua/?/init.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
     paths[#paths + 1] = package.path
     package.path = table.concat(paths, ";")
 end
 
 setup_path()
 
-local fs = require("omarch.fs")
+local fs = require("kaze.fs")
 
 local TOOLS = {
     wifi = {
@@ -80,7 +80,7 @@ local function find_existing_tui(title)
     local clients_out = read_cmd("hyprctl clients 2>/dev/null")
     local cur_addr, cur_class, cur_title
     local function check_match()
-        if cur_addr and cur_class == "om-tui" and cur_title == title then
+        if cur_addr and cur_class == "kaze-tui" and cur_title == title then
             return cur_addr
         end
         return nil
@@ -117,13 +117,13 @@ end
 
 local mode = arg[1]
 if mode == "-h" or mode == "--help" then
-    io.stdout:write("Usage: omarch-tui <wifi|bluetooth|audio|sysmon>\n")
+    io.stdout:write("Usage: kaze-tui <wifi|bluetooth|audio|sysmon>\n")
     os.exit(0)
 end
 
 local entry = TOOLS[mode]
 if not entry then
-    io.stderr:write(string.format("omarch-tui: invalid mode '%s' (expected: wifi, bluetooth, audio, sysmon)\n", tostring(mode or "")))
+    io.stderr:write(string.format("kaze-tui: invalid mode '%s' (expected: wifi, bluetooth, audio, sysmon)\n", tostring(mode or "")))
     os.exit(1)
 end
 
@@ -147,30 +147,30 @@ for _, cand in ipairs(entry.candidates) do
 end
 
 if not tool_bin then
-    io.stderr:write(string.format("omarch-tui: none of [%s] found in PATH\n", table.concat(entry.candidates, ", ")))
+    io.stderr:write(string.format("kaze-tui: none of [%s] found in PATH\n", table.concat(entry.candidates, ", ")))
     os.exit(1)
 end
 
 local server_alive = os.execute("pgrep -x foot >/dev/null 2>&1")
 if (server_alive == true or server_alive == 0) and cmd_exists("footclient") then
     local cmd = string.format(
-        "footclient -N -a om-tui -T %s %s >/dev/null 2>&1",
+        "footclient -N -a kaze-tui -T %s %s >/dev/null 2>&1",
         fs.shell_quote(entry.title),
         fs.shell_quote(tool_bin)
     )
     local ok = os.execute(cmd)
     if not (ok == true or ok == 0) then
-        io.stderr:write("omarch-tui: failed to launch footclient\n")
+        io.stderr:write("kaze-tui: failed to launch footclient\n")
         os.exit(1)
     end
 elseif cmd_exists("foot") then
     local cmd = string.format(
-        "nohup foot -a om-tui -T %s %s >/dev/null 2>&1 </dev/null &",
+        "nohup foot -a kaze-tui -T %s %s >/dev/null 2>&1 </dev/null &",
         fs.shell_quote(entry.title),
         fs.shell_quote(tool_bin)
     )
     os.execute(cmd)
 else
-    io.stderr:write("omarch-tui: neither footclient (with foot --server) nor foot is available\n")
+    io.stderr:write("kaze-tui: neither footclient (with foot --server) nor foot is available\n")
     os.exit(1)
 end

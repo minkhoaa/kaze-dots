@@ -8,16 +8,16 @@ package.path = table.concat({
     package.path,
 }, ";")
 
-local config = require("omarch.config")
-local emit_fnott = require("omarch.emit_fnott")
-local emit_foot = require("omarch.emit_foot")
-local emit_fuzzel = require("omarch.emit_fuzzel")
-local emit_hyprlock = require("omarch.emit_hyprlock")
-local emit_waybar = require("omarch.emit_waybar")
-local fs = require("omarch.fs")
-local layouts = require("omarch.layouts")
-local state = require("omarch.state")
-local themes = require("omarch.themes")
+local config = require("kaze.config")
+local emit_fnott = require("kaze.emit_fnott")
+local emit_foot = require("kaze.emit_foot")
+local emit_fuzzel = require("kaze.emit_fuzzel")
+local emit_hyprlock = require("kaze.emit_hyprlock")
+local emit_waybar = require("kaze.emit_waybar")
+local fs = require("kaze.fs")
+local layouts = require("kaze.layouts")
+local state = require("kaze.state")
+local themes = require("kaze.themes")
 
 local passed = 0
 local failed = 0
@@ -233,7 +233,7 @@ local function strip_jsonc_comments(s)
 end
 
 local function make_tmp_dir()
-    local d = string.format("/tmp/omarch-test-%d-%d", os.time(), math.random(100000, 999999))
+    local d = string.format("/tmp/kaze-test-%d-%d", os.time(), math.random(100000, 999999))
     fs.mkdir_p(d)
     return d
 end
@@ -247,7 +247,7 @@ local function cmd_exists(bin)
     return ok == true or ok == 0
 end
 
-io.stdout:write("Running omarch-shell unit tests...\n")
+io.stdout:write("Running kaze-dots unit tests...\n")
 
 test("themes: all 4 presets validate and helpers format properly", function()
     local list = themes.list()
@@ -279,15 +279,15 @@ test("fs: shell_quote and atomic write work safely", function()
     assert_eq(fs.shell_quote("a'b c"), "'a'\\''b c'", "shell_quote")
     local tmp = make_tmp_dir()
     local target = tmp .. "/nested/dir/file.txt"
-    fs.write_atomic(target, "hello omarch\n")
+    fs.write_atomic(target, "hello kaze\n")
     local content = fs.read_file(target)
-    assert_eq(content, "hello omarch\n", "atomic file readback")
+    assert_eq(content, "hello kaze\n", "atomic file readback")
     rm_rf(tmp)
 end)
 
 test("state: save, load, and corrupt file recovery", function()
     local tmp = make_tmp_dir()
-    local sp = tmp .. "/omarch/state.lua"
+    local sp = tmp .. "/kaze/state.lua"
     state.save({ layout = "noctalia", theme = "tokyonight" }, sp)
     local loaded = state.load(sp)
     assert_eq(loaded.layout, "noctalia", "state layout")
@@ -302,8 +302,8 @@ end)
 test("config: precedence defaults -> layout -> state -> user.lua + malformed fallback", function()
     local tmp = make_tmp_dir()
     local cfg_dir = tmp .. "/config"
-    local state_path = cfg_dir .. "/omarch/state.lua"
-    local user_path = cfg_dir .. "/omarch/user.lua"
+    local state_path = cfg_dir .. "/kaze/state.lua"
+    local user_path = cfg_dir .. "/kaze/user.lua"
 
     state.save({ layout = "noctalia", theme = "lavender" }, state_path)
     fs.write_atomic(user_path, [[
@@ -435,16 +435,16 @@ test("emitters: noctalia x all 4 themes produce valid configs with zero polling"
     rm_rf(tmp)
 end)
 
-test("CLI: omarch-sync writes isolated XDG_CONFIG_HOME and rejects bad args", function()
+test("CLI: kaze-sync writes isolated XDG_CONFIG_HOME and rejects bad args", function()
     local tmp = make_tmp_dir()
     local env_prefix = "HOME=" .. fs.shell_quote(tmp) .. " XDG_CONFIG_HOME=" .. fs.shell_quote(tmp .. "/cfg")
 
-    local ok_check = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/omarch-sync") .. " --check >/dev/null 2>&1")
-    assert_true(ok_check == true or ok_check == 0, "omarch-sync --check exit 0")
+    local ok_check = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-sync") .. " --check >/dev/null 2>&1")
+    assert_true(ok_check == true or ok_check == 0, "kaze-sync --check exit 0")
     assert_true(not fs.file_exists(tmp .. "/cfg/waybar/config.jsonc"), "--check must not write files")
 
-    local ok_run = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/omarch-sync") .. " >/dev/null 2>&1")
-    assert_true(ok_run == true or ok_run == 0, "omarch-sync exit 0")
+    local ok_run = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-sync") .. " >/dev/null 2>&1")
+    assert_true(ok_run == true or ok_run == 0, "kaze-sync exit 0")
 
     local expected_files = {
         "/cfg/waybar/colors.css",
@@ -459,14 +459,14 @@ test("CLI: omarch-sync writes isolated XDG_CONFIG_HOME and rejects bad args", fu
         assert_true(fs.file_exists(tmp .. rel), "missing generated file: " .. rel)
     end
 
-    local bad_sync = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/omarch-sync") .. " --invalid >/dev/null 2>&1")
-    assert_true(bad_sync ~= true and bad_sync ~= 0, "omarch-sync --invalid must fail")
+    local bad_sync = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-sync") .. " --invalid >/dev/null 2>&1")
+    assert_true(bad_sync ~= true and bad_sync ~= 0, "kaze-sync --invalid must fail")
 
-    local bad_tui = os.execute(fs.shell_quote(repo_dir .. "/bin/omarch-tui") .. " bogus >/dev/null 2>&1")
-    assert_true(bad_tui ~= true and bad_tui ~= 0, "omarch-tui bogus must fail")
+    local bad_tui = os.execute(fs.shell_quote(repo_dir .. "/bin/kaze-tui") .. " bogus >/dev/null 2>&1")
+    assert_true(bad_tui ~= true and bad_tui ~= 0, "kaze-tui bogus must fail")
 
-    local bad_osd = os.execute(fs.shell_quote(repo_dir .. "/bin/omarch-osd") .. " bogus >/dev/null 2>&1")
-    assert_true(bad_osd ~= true and bad_osd ~= 0, "omarch-osd bogus must fail")
+    local bad_osd = os.execute(fs.shell_quote(repo_dir .. "/bin/kaze-osd") .. " bogus >/dev/null 2>&1")
+    assert_true(bad_osd ~= true and bad_osd ~= 0, "kaze-osd bogus must fail")
 
     rm_rf(tmp)
 end)
