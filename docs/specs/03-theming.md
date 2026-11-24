@@ -6,8 +6,8 @@ Every palette is a pure Lua table of **uppercase/lowercase 6-digit hex strings w
 
 ```lua
 {
-    name      = "noctalia",
-    label     = "Noctalia (Slate & Sky)",
+    name      = "kaze",
+    label     = "Kaze (Slate & Sky)",
     bg        = "111318",
     bg_alt    = "181b22",
     surface   = "252a36",
@@ -25,7 +25,7 @@ Every palette is a pure Lua table of **uppercase/lowercase 6-digit hex strings w
 
 ### Required Helper Functions in `lua/kaze/themes.lua`
 - `themes.get(name)` → returns validated palette table or errors with available names.
-- `themes.list()` → ordered list `{ "noctalia", "lavender", "tokyonight", "carbon" }`.
+- `themes.list()` → ordered list `{ "kaze", "lavender", "tokyonight", "carbon" }`.
 - `themes.hex(c)` → `"#" .. c` (for CSS, `hyprlock`).
 - `themes.hex_alpha(c, aa)` → `c .. aa` (for `fuzzel` `RRGGBBAA` and `fnott` `RRGGBBAA`).
 - `themes.hypr_rgba(c, aa)` → `"rgba(" .. c .. aa .. ")"` (for Hyprland border/bg colors).
@@ -33,7 +33,7 @@ Every palette is a pure Lua table of **uppercase/lowercase 6-digit hex strings w
 
 ## 2. Built-in Theme Presets
 
-| Token | `noctalia` *(default)* | `lavender` | `tokyonight` | `carbon` |
+| Token | `kaze` *(default)* | `lavender` | `tokyonight` | `carbon` |
 |---|---|---|---|---|
 | `bg` | `111318` | `11111b` | `1a1b26` | `0c0c0e` |
 | `bg_alt` | `181b22` | `181825` | `24283b` | `141417` |

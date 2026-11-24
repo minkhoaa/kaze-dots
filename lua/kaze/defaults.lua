@@ -1,6 +1,6 @@
 return {
-    layout = "noctalia",
-    theme = "noctalia",
+    layout = "sidebar",
+    theme = "kaze",
     font = "JetBrainsMono Nerd Font",
     terminal = "footclient",
     browser = "firefox",

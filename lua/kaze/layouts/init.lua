@@ -1,11 +1,11 @@
 local M = {}
 
-local ORDER = { "noctalia", "caelestia", "omarchy" }
+local ORDER = { "sidebar", "islands", "slim" }
 
 local REGISTRY = {
-    noctalia = "kaze.layouts.noctalia",
-    caelestia = "kaze.layouts.caelestia",
-    omarchy = "kaze.layouts.omarchy",
+    sidebar = "kaze.layouts.sidebar",
+    islands = "kaze.layouts.islands",
+    slim = "kaze.layouts.slim",
 }
 
 local REQUIRED_HYPR = { "gaps_in", "gaps_out", "rounding", "border_size" }

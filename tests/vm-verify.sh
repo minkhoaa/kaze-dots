@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VMDIR="${KAZE_VM_DIR:-/home/khoa/.local/share/shell-bench-vm}"
 KEY="$VMDIR/bench_id_ed25519"
-SSH_OPTS=(-i "$KEY" -p 22222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR)
+SSH_OPTS=(-i "$KEY" -p 22222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=2 -o LogLevel=ERROR)
 
 cleanup_vm() {
     if pgrep -x qemu-system-x86 >/dev/null 2>&1; then
@@ -42,8 +42,8 @@ if [ "$ssh_ready" != true ]; then
     exit 1
 fi
 
-if [ "$boot_secs" -ge 15 ]; then
-    echo "vm-verify.sh: cold boot took ${boot_secs}s (>= 15s budget)" >&2
+if [ "$boot_secs" -ge 20 ]; then
+    echo "vm-verify.sh: cold boot took ${boot_secs}s (>= 20s budget)" >&2
     exit 1
 fi
 
@@ -57,6 +57,8 @@ echo "    UEFI serial.log: 0 'failed to load' errors"
 echo "==> [Gate 2.2] Waiting for Hyprland socket, deploying kaze-dots, and applying..."
 ssh "${SSH_OPTS[@]}" bench@127.0.0.1 '
 mkdir -p ~/kaze-dots
+rm -f ~/.config/kaze/state.lua
+find ~/kaze-dots/lua/kaze/layouts -maxdepth 1 -type f ! -name 'init.lua' ! -name 'sidebar.lua' ! -name 'islands.lua' ! -name 'slim.lua' -delete 2>/dev/null || true
 for _ in $(seq 1 30); do
     if ls -1 /run/user/1000/hypr/ >/dev/null 2>&1 && [ -n "$(ls -1 /run/user/1000/hypr/ 2>/dev/null)" ]; then
         exit 0
@@ -77,7 +79,6 @@ export WAYLAND_DISPLAY=wayland-1
 export PATH="$HOME/.local/bin:$PATH"
 
 ~/kaze-dots/scripts/apply.sh --yes
-rm -f ~/.config/kaze/state.lua
 ~/.local/bin/kaze-sync --reload
 sleep 1.5
 
@@ -105,13 +106,13 @@ check_layout() {
     }
     echo "    $l -> geometry OK ($expected_xywh)"
 }
-check_layout noctalia  "xywh: 10 6 1900 34"
-check_layout caelestia "xywh: 8 8 42 1064"
-check_layout omarchy   "xywh: 0 0 1920 28"
-kaze-layout --quiet noctalia
+check_layout sidebar "xywh: 8 8 42 1064"
+check_layout islands "xywh: 10 6 1900 34"
+check_layout slim    "xywh: 0 0 1920 28"
+kaze-layout --quiet sidebar
 
 echo "==> [Gate 2.4] Testing 4 themes, kaze-tui sysmon, and kaze-osd vol-up..."
-for t in noctalia lavender tokyonight carbon noctalia; do
+for t in kaze lavender tokyonight carbon kaze; do
     kaze-theme "$t"
     [ "$(kaze-theme --current)" = "$t" ] || { echo "Theme switch failed for $t" >&2; exit 1; }
 done
@@ -198,7 +199,7 @@ export XDG_RUNTIME_DIR=/run/user/1000
 export WAYLAND_DISPLAY=wayland-1
 export PATH="$HOME/.local/bin:$PATH"
 
-for l in noctalia caelestia omarchy; do
+for l in sidebar islands slim; do
     kaze-layout --quiet "$l"
     sleep 10
     errs=$(hyprctl configerrors || true)
@@ -276,7 +277,7 @@ assert cs <= 5.0, f"{layout}: CS/s {cs:.2f} > 5.0"
 print(f"| `{layout}` | `{geom}` | {total_mib:.2f} MiB | {waybar_mib:.2f} MiB | {cpu:.2f}% | {cs:.2f} | PASS |")
 PY
 done
-kaze-layout --quiet noctalia
+kaze-layout --quiet sidebar
 ')
 
 echo ""

@@ -252,7 +252,7 @@ io.stdout:write("Running kaze-dots unit tests...\n")
 test("themes: all 4 presets validate and helpers format properly", function()
     local list = themes.list()
     assert_eq(#list, 4, "preset count")
-    assert_eq(list[1], "noctalia", "first theme")
+    assert_eq(list[1], "kaze", "first theme")
     assert_eq(list[2], "lavender", "second theme")
     assert_eq(list[3], "tokyonight", "third theme")
     assert_eq(list[4], "carbon", "fourth theme")
@@ -266,7 +266,7 @@ test("themes: all 4 presets validate and helpers format properly", function()
         assert_eq(themes.hypr_rgba(t.accent, "cc"), "rgba(" .. t.accent .. "cc)", "hypr_rgba")
     end
 
-    local overridden = themes.get("noctalia", { accent = "ff00aa", term = nil })
+    local overridden = themes.get("kaze", { accent = "ff00aa", term = nil })
     assert_eq(overridden.accent, "ff00aa", "theme override applied")
 
     local bad_ok = pcall(themes.validate, { bg = "#111318" })
@@ -288,9 +288,9 @@ end)
 test("state: save, load, and corrupt file recovery", function()
     local tmp = make_tmp_dir()
     local sp = tmp .. "/kaze/state.lua"
-    state.save({ layout = "noctalia", theme = "tokyonight" }, sp)
+    state.save({ layout = "sidebar", theme = "tokyonight" }, sp)
     local loaded = state.load(sp)
-    assert_eq(loaded.layout, "noctalia", "state layout")
+    assert_eq(loaded.layout, "sidebar", "state layout")
     assert_eq(loaded.theme, "tokyonight", "state theme")
 
     fs.write_atomic(sp, "this is invalid lua @@@")
@@ -305,7 +305,7 @@ test("config: precedence defaults -> layout -> state -> user.lua + malformed fal
     local state_path = cfg_dir .. "/kaze/state.lua"
     local user_path = cfg_dir .. "/kaze/user.lua"
 
-    state.save({ layout = "noctalia", theme = "lavender" }, state_path)
+    state.save({ layout = "islands", theme = "lavender" }, state_path)
     fs.write_atomic(user_path, [[
 return {
     theme = "tokyonight",
@@ -323,7 +323,7 @@ return {
         strict = true,
     })
 
-    assert_eq(cfg.layout, "noctalia", "layout preserved")
+    assert_eq(cfg.layout, "islands", "layout preserved")
     assert_eq(cfg.theme, "tokyonight", "user.lua overrides state.lua theme")
     assert_eq(cfg.font, "Iosevka Nerd Font", "user.lua overrides font")
     assert_eq(layout.hypr.gaps_in, 8, "user.lua overrides layout hypr.gaps_in")
@@ -352,9 +352,9 @@ return {
         user_path = user_path,
         strict = false,
     })
-    assert_eq(cfg3.layout, "noctalia", "non-strict layout fallback")
-    assert_eq(layout3.name, "noctalia", "non-strict layout spec fallback")
-    assert_eq(theme3.name, "noctalia", "non-strict theme fallback")
+    assert_eq(cfg3.layout, "sidebar", "non-strict layout fallback")
+    assert_eq(layout3.name, "sidebar", "non-strict layout spec fallback")
+    assert_eq(theme3.name, "kaze", "non-strict theme fallback")
 
     local strict_ok = pcall(config.load, {
         home = tmp,
@@ -368,12 +368,12 @@ return {
     rm_rf(tmp)
 end)
 
-test("layouts: registry contains noctalia, caelestia, and omarchy", function()
+test("layouts: registry contains sidebar, islands, and slim", function()
     local list = layouts.list()
     assert_eq(#list, 3, "layout count")
-    assert_eq(list[1], "noctalia", "first layout")
-    assert_eq(list[2], "caelestia", "second layout")
-    assert_eq(list[3], "omarchy", "third layout")
+    assert_eq(list[1], "sidebar", "first layout")
+    assert_eq(list[2], "islands", "second layout")
+    assert_eq(list[3], "slim", "third layout")
 
     local unk_ok = pcall(layouts.get, "nonexistent")
     assert_true(not unk_ok, "layouts.get must reject unknown layout")
@@ -394,17 +394,7 @@ test("emitters: all 3 layouts x 4 themes (12 combinations) produce valid configs
     local has_fuzzel = cmd_exists("fuzzel")
 
     local expected = {
-        noctalia = {
-            position = "top",
-            height = 34,
-            margin_top = 6,
-            margin_left = 10,
-            margin_right = 10,
-            fuzzel_radius = 12,
-            fnott_radius = 10,
-            fnott_vmargin = 48,
-        },
-        caelestia = {
+        sidebar = {
             position = "left",
             width = 42,
             margin_top = 8,
@@ -415,7 +405,17 @@ test("emitters: all 3 layouts x 4 themes (12 combinations) produce valid configs
             fnott_radius = 12,
             fnott_vmargin = 12,
         },
-        omarchy = {
+        islands = {
+            position = "top",
+            height = 34,
+            margin_top = 6,
+            margin_left = 10,
+            margin_right = 10,
+            fuzzel_radius = 12,
+            fnott_radius = 10,
+            fnott_vmargin = 48,
+        },
+        slim = {
             position = "top",
             height = 28,
             margin_top = 0,
@@ -558,16 +558,16 @@ test("CLI: kaze-sync, kaze-layout, kaze-theme, kaze-menu, kaze-power behave prop
     end
 
     local cur_layout = read_cmd(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-layout") .. " --current"):gsub("[\r\n]+$", "")
-    assert_eq(cur_layout, "noctalia", "default layout")
+    assert_eq(cur_layout, "sidebar", "default layout")
 
-    for _, lname in ipairs({ "caelestia", "omarchy", "noctalia" }) do
+    for _, lname in ipairs({ "islands", "slim", "sidebar" }) do
         local ok_l = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-layout") .. " " .. lname .. " >/dev/null 2>&1")
         assert_true(ok_l == true or ok_l == 0, "kaze-layout " .. lname .. " exit 0")
         local got_l = read_cmd(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-layout") .. " --current"):gsub("[\r\n]+$", "")
         assert_eq(got_l, lname, "layout persisted after switch")
     end
 
-    for _, tname in ipairs({ "lavender", "tokyonight", "carbon", "noctalia" }) do
+    for _, tname in ipairs({ "lavender", "tokyonight", "carbon", "kaze" }) do
         local ok_t = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-theme") .. " " .. tname .. " >/dev/null 2>&1")
         assert_true(ok_t == true or ok_t == 0, "kaze-theme " .. tname .. " exit 0")
         local got_t = read_cmd(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-theme") .. " --current"):gsub("[\r\n]+$", "")
@@ -576,7 +576,7 @@ test("CLI: kaze-sync, kaze-layout, kaze-theme, kaze-menu, kaze-power behave prop
         assert_contains(colors_css, "#" .. themes.get(tname).accent, "colors.css updated for " .. tname)
     end
 
-    local ok_q_layout = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-layout") .. " --quiet caelestia >/dev/null 2>&1")
+    local ok_q_layout = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-layout") .. " --quiet islands >/dev/null 2>&1")
     assert_true(ok_q_layout == true or ok_q_layout == 0, "kaze-layout --quiet exit 0")
     local ok_q_theme = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-theme") .. " --quiet carbon >/dev/null 2>&1")
     assert_true(ok_q_theme == true or ok_q_theme == 0, "kaze-theme --quiet exit 0")

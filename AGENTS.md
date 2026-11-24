@@ -80,7 +80,7 @@ Full headless boot, screenshot capture, and PSS/CPU telemetry protocol are speci
 2. **Zero Polling Rule**: Never add periodic `custom/*` bash/python polling scripts to Waybar (`interval: 1` shelling out to `awk`/`grep`/`curl`). Use Waybar's native C++ modules (`hyprland/workspaces`, `clock`, `network`, `wireplumber`, `battery`, `tray`, `mpris`) or event-driven IPC.
 3. **Zero Heavy Runtimes**: Do not introduce Qt/QML (`quickshell`), Electron, GTK4/AGS, Rust `wgpu`/Iced, or background Python/Node daemons into the desktop stack.
 4. **Hyprland 0.57+ Lua API Gotchas**:
-   - `hl.window_rule({ match = { ... } })` uses **C++ `std::regex`**, NOT Lua `%` escapes (write `^kaze-tui$`, never `^om%-tui$`).
+   - `hl.window_rule({ match = { ... } })` uses **C++ `std::regex`**, NOT Lua `%` escapes (write `^kaze-tui$`, never `^kaze%-tui$`).
    - Do not use legacy `.conf` syntax or deprecated `windowrulev2` / `layerrule` string rules.
    - Always test reloads with `hyprctl configerrors` — output must be completely empty.
 5. **Process Name Safety**: Never use `pkill -f` with a substring that appears in the invoking shell command. Use `pkill -x <exact_15char_comm>` (e.g., `pkill -x qemu-system-x86`, `pkill -x waybar`).
@@ -97,7 +97,7 @@ Full headless boot, screenshot capture, and PSS/CPU telemetry protocol are speci
 
 Before marking any implementation task complete:
 1. All modified `.lua` files pass `luac -p` with zero errors.
-2. Pure-Lua emitter tests generate valid output for **all 3 layouts** (`noctalia`, `caelestia`, `omarchy`) × **all 4 themes** (`noctalia`, `lavender`, `tokyonight`, `carbon`).
+2. Pure-Lua emitter tests generate valid output for **all 3 layouts** (`sidebar`, `islands`, `slim`) × **all 4 themes** (`kaze`, `lavender`, `tokyonight`, `carbon`).
 3. Any runtime/Hyprland/Waybar/UI change is deployed and verified inside the clean Arch KVM VM (`1920×1080`):
    - `hyprctl configerrors` is empty.
    - All target layers (`wallpaper`, `waybar`) are present with expected geometry.
@@ -106,7 +106,7 @@ Before marking any implementation task complete:
 
 ## 8. Host Isolation & Safety Boundaries (STRICT)
 
-- **NEVER** modify, reload, restart, or kill the user's live host Hyprland / `caelestia-shell` session.
+- **NEVER** modify, reload, restart, or kill the user's live host Hyprland / Quickshell session.
 - **NEVER** run `sudo`, modify `/etc` or `/usr`, or install/remove host packages.
 - **NEVER** overwrite `~/.config/hypr`, `~/.config/waybar`, or `~/.config/quickshell` on the host unless the user explicitly asks to apply to host.
 - **ALWAYS** pin QEMU GTK/EGL rendering to Intel iGPU (`__GLX_VENDOR_LIBRARY_NAME=mesa MESA_LOADER_DRIVER_OVERRIDE=iris` or `rendernode=/dev/dri/renderD128`) so the host NVIDIA dGPU stays asleep.

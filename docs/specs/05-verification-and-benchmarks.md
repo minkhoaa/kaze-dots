@@ -34,18 +34,18 @@ Inside `shell-bench-vm` (`1920×1080`):
    - `hyprctl monitors` shows `1920x1080`.
    - `hyprctl layers` contains `wallpaper` (`swaybg`) and `waybar`.
 3. **3-Layout Hot-Switch Verification**:
-   For each layout in `{ noctalia, caelestia, omarchy }`:
+   For each layout in `{ sidebar, islands, slim }`:
    - Execute `kaze-layout <layout>` inside the Hyprland session.
    - Assert exit code `0` and `hyprctl configerrors` empty.
    - Assert Waybar layer geometry matches spec:
-     - `noctalia`: top bar `h=34`, `y=6`, `w=1900` (`1920 - 2*10`).
-     - `caelestia`: left bar `w=42`, `x=8`, `h=1064` (`1080 - 2*8`).
-     - `omarchy`: top bar `h=28`, `x=0, y=0, w=1920`.
+     - `sidebar`: left bar `w=42`, `x=8`, `h=1064` (`1080 - 2*8`).
+     - `islands`: top bar `h=34`, `y=6`, `w=1900` (`1920 - 2*10`).
+     - `slim`: top bar `h=28`, `x=0, y=0, w=1920`.
    - Capture real `1920×1080` screenshot via `grim` and visually inspect it (no clipped text, no broken Nerd Font icons, no overlapping borders, clean contrast).
 4. **Interactive Feature Checks**:
    - Spawn `kaze-tui sysmon` → verify floating centered `kaze-tui` window in `hyprctl clients`, then close cleanly.
    - Trigger `kaze-osd vol-up` → verify `fnott` stays alive and exits `0`.
-   - Switch theme across all 4 presets (`noctalia`, `lavender`, `tokyonight`, `carbon`) → verify exit `0` and updated `colors.css`.
+   - Switch theme across all 4 presets (`kaze`, `lavender`, `tokyonight`, `carbon`) → verify exit `0` and updated `colors.css`.
 
 ### Gate 3 — Performance & Resource Regression Budgets
 Measure steady-state idle telemetry inside the VM (after 10s settle window, 10s sampling interval) across all shell daemons (`waybar`, `swaybg`, `foot`, `fnott`, `hypridle`, `wl-paste`):

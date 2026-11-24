@@ -10,18 +10,18 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 - `--check`: Dry-run validation only (verifies theme/layout/emitters without writing `~/.config/*` or reloading daemons).
 - `--reload`: After writing, reloads Hyprland (`hyprctl reload`), restarts `waybar` and `fnott` cleanly (only when `HYPRLAND_INSTANCE_SIGNATURE` or `WAYLAND_DISPLAY` is active).
 
-### `kaze-layout [noctalia|caelestia|omarchy|--menu|--current]`
+### `kaze-layout [--quiet] [sidebar|islands|slim|--menu|--current]`
 - No args or `--menu`: Opens `fuzzel --dmenu -p "Layout > "` listing all layouts with `(active)` marker on the current one.
-- `<name>`: Validates, persists to `~/.config/kaze/state.lua`, executes `kaze-sync --reload`, sends a confirmation notification.
+- `<name>`: Validates, persists to `~/.config/kaze/state.lua`, executes `kaze-sync --reload`, sends a confirmation notification (suppressed with `--quiet`).
 - `--current`: Prints active layout name to `stdout`.
 
-### `kaze-theme [noctalia|lavender|tokyonight|carbon|--menu|--current]`
+### `kaze-theme [--quiet] [kaze|lavender|tokyonight|carbon|--menu|--current]`
 - No args or `--menu`: Opens `fuzzel --dmenu -p "Theme > "` listing all themes with `(active)` marker.
-- `<name>`: Validates, persists to `~/.config/kaze/state.lua`, executes `kaze-sync --reload`, sends a confirmation notification.
+- `<name>`: Validates, persists to `~/.config/kaze/state.lua`, executes `kaze-sync --reload`, sends a confirmation notification (suppressed with `--quiet`).
 - `--current`: Prints active theme name to `stdout`.
 
 ### `kaze-menu`
-- Opens the Omarchy command palette via `fuzzel --dmenu -p "Kaze > "` (toggles closed if `fuzzel` is already running):
+- Opens the Kaze command palette via `fuzzel --dmenu -p "Kaze > "` (toggles closed if `fuzzel` is already running):
   - `󰙵  Switch Layout` → calls `kaze-layout --menu`
   - `󰏘  Switch Theme` → calls `kaze-theme --menu`
   - `󰖩  Wi-Fi (nmtui)` → calls `kaze-tui wifi`

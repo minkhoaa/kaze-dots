@@ -2,11 +2,11 @@
 
 ## 1. Design Philosophy
 
-`kaze-dots` fuses three complementary aesthetics into one coherent desktop:
+`kaze-dots` is built around three personal design pillars:
 
-1. **Omarchy Discipline (Core Ethos)**: Calm surfaces, restrained color, high information density without clutter, crisp typography, keyboard-driven navigation, and ephemeral floating TUI utilities instead of bloated settings windows.
-2. **Noctalia Polish (Default Layout)**: Floating pill islands separated by breathing room, subtle `1px` hairline borders, soft frosted translucency (delegated to Hyprland's compositor blur — zero GPU overhead in Waybar), and pill-shaped active workspace indicators.
-3. **Caelestia Ergonomics (Alternate Layout)**: Vertical left sidebar freeing 100% of vertical screen height for code/terminals, stacked workspace indicators, and a unified framed desktop feel.
+1. **Vertical-First Ergonomics (`sidebar`, default)**: A sleek `42px` vertical left rail frees 100% of vertical screen height for code and terminals, with stacked workspace pills and unified Hyprland canvas framing.
+2. **Calm Minimalism**: Restrained surfaces, crisp typography, keyboard-driven navigation, and ephemeral floating TUI utilities instead of bloated always-resident settings windows.
+3. **Flexible Framing (`islands` & `slim`)**: Switchable between floating top pill islands (`islands`) with subtle `1px` hairline borders and frosted translucency, or a flush `28px` minimal strip (`slim`) when maximum simplicity is preferred.
 
 ### Visual Principles
 - **Restraint over decoration**: Never use loud gradients, neon rainbow borders, pulsing animations, or cluttered widget badges.
@@ -28,18 +28,18 @@
 
 ## 3. The 3 Layouts at a Glance
 
-| Dimension | `noctalia` *(Default)* | `caelestia` | `omarchy` |
+| Dimension | `sidebar` *(Default)* | `islands` | `slim` |
 |---|---|---|---|
-| **Bar position** | Top, floating (`margin: 6 10 0 10`) | Left, vertical (`margin: 8 0 8 8`) | Top, docked flush (`margin: 0`) |
-| **Bar thickness** | `34px` pill islands (transparent outer track) | `42px` vertical rail | `28px` flat solid/frosted strip |
-| **Bar corner radius** | `14px` per island pill | `14px` unified rail | `0px` (crisp horizontal edge) |
-| **Workspaces style** | Horizontal dots; active expands into `24px` accent pill | Vertical dots; active expands into `24px` tall accent pill | Minimal numbered/dot tabs with bottom accent indicator |
+| **Bar position** | Left, vertical (`margin: 8 0 8 8`) | Top, floating (`margin: 6 10 0 10`) | Top, docked flush (`margin: 0`) |
+| **Bar thickness** | `42px` vertical rail | `34px` pill islands (transparent outer track) | `28px` flat solid/frosted strip |
+| **Bar corner radius** | `14px` unified rail | `14px` per island pill | `0px` (crisp horizontal edge) |
+| **Workspaces style** | Vertical dots; active expands into `24px` tall accent pill | Horizontal dots; active expands into `24px` accent pill | Minimal numbered tabs with bottom accent indicator |
 | **Window `gaps_in` / `gaps_out`** | `5px` / `10px` | `5px` / `10px` | `4px` / `6px` |
-| **Window `rounding`** | `10px` | `12px` | `6px` |
+| **Window `rounding`** | `12px` | `10px` | `6px` |
 | **Window `border_size`** | `1px` | `1px` | `1px` |
-| **Popup (`fuzzel`) radius** | `12px` | `14px` | `8px` |
-| **Notification (`fnott`) radius** | `10px` | `12px` | `6px` |
-| **Best suited for** | Modern daily driver with balanced airy polish | Coding/reading needing full `1080px` vertical height | Ultra-minimalist keyboard purists & small screens |
+| **Popup (`fuzzel`) radius** | `14px` | `12px` | `8px` |
+| **Notification (`fnott`) radius** | `12px` | `10px` | `6px` |
+| **Best suited for** | Coding/reading needing full `1080px` vertical height | Balanced airy desktop with floating pill islands | Ultra-minimalist keyboard purists & compact displays |
 
 Full pixel dimensions, Waybar module layouts, and CSS contracts are defined in [docs/specs/02-layouts.md](docs/specs/02-layouts.md).
 
@@ -62,18 +62,18 @@ Every theme defines a strict semantic palette (6-char hex without `#`, so Lua em
 | `danger` | Battery ≤ 15% / muted audio / destructive power action |
 
 ### Built-in Presets
-1. **`noctalia` *(default)***: Deep charcoal-slate (`#111318`) with elevated obsidian pills (`#181b22`), soft ice text (`#e6edf7`), and calm sky-indigo accent (`#89b4fa`).
-2. **`lavender`**: Catppuccin Mocha / Caelestia-inspired dark indigo (`#11111b` / `#181825`) with lavender accent (`#b4befe`).
+1. **`kaze` *(default)***: Deep charcoal-slate (`#111318`) with elevated obsidian surfaces (`#181b22`), soft ice text (`#e6edf7`), and calm sky-indigo accent (`#89b4fa`).
+2. **`lavender`**: Deep indigo (`#11111b` / `#181825`) with soft lavender accent (`#b4befe`).
 3. **`tokyonight`**: Tokyo Night Storm (`#1a1b26` / `#24283b`) with crisp electric blue (`#7aa2f7`).
-4. **`carbon`**: Pure Omarchy monochrome matte black (`#0c0c0e` / `#141417`) with stark silver-white accent (`#e4e4e7`).
+4. **`carbon`**: Monochrome matte black (`#0c0c0e` / `#141417`) with stark silver-white accent (`#e4e4e7`).
 
 ## 5. Interaction & Ephemeral UI Design
 
 ### Command-Palette First (`fuzzel`)
 - `Super + Space`: App launcher (centered, max 8 visible lines, icon-enabled, instant fuzzy match).
-- `Super + Shift + Space` (or clicking the OS/Logo button on the bar): **`kaze-menu`** — structured Omarchy command menu:
-  - `Switch Layout` (`noctalia` / `caelestia` / `omarchy`)
-  - `Switch Theme` (`noctalia` / `lavender` / `tokyonight` / `carbon`)
+- `Super + Shift + Space` (or clicking the OS/Logo button on the bar): **`kaze-menu`** — structured Kaze command palette:
+  - `Switch Layout` (`sidebar` / `islands` / `slim`)
+  - `Switch Theme` (`kaze` / `lavender` / `tokyonight` / `carbon`)
   - `Wi-Fi` / `Bluetooth` / `Audio` / `System Monitor`
   - `Clipboard History` / `Screenshot Region` / `Reload Shell` / `Power Menu`
 
@@ -87,7 +87,7 @@ Clicking status pills on Waybar (or pressing `Super + Alt + W/B/A`, `Ctrl + Shif
 Closing the window (`q` or `Esc` or `Super + Q`) returns RAM usage to `0 MiB`.
 
 ### Zero-Daemon Progress OSD (`kaze-osd`)
-Volume and brightness keys call `kaze-osd`, which adjusts hardware via `wpctl` / `brightnessctl` and sends a synchronous replacing notification to `fnott` (`x-canonical-private-synchronous: kaze-osd` + `int:value:<0..100>`). Fnott renders a native accent-colored progress bar in the top-center/top-right corner for `1.4s` and disappears — **zero extra daemon, zero idle RAM**.
+Volume and brightness keys call `kaze-osd`, which adjusts hardware via `wpctl` / `brightnessctl` and sends a synchronous replacing notification to `fnott` (`x-canonical-private-synchronous: kaze-osd` + `int:value:<0..100>`). Fnott renders a native accent-colored progress bar in the top-right corner for `1.4s` and disappears — **zero extra daemon, zero idle RAM**.
 
 ## 6. Motion & Blur Discipline
 

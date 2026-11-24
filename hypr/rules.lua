@@ -10,7 +10,7 @@ hl.window_rule({
     opacity = string.format("%.2f %.2f", active_op, inactive_op),
 })
 
--- Floating centered Omarchy TUI popups (nmtui, bluetui, wiremix, btop)
+-- Floating centered Kaze TUI popups (nmtui, bluetui, wiremix, btop)
 -- Hyprland window_rule uses C++ std::regex (not Lua patterns)
 hl.window_rule({
     match = { class = "^kaze-tui$" },

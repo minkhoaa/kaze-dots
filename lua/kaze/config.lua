@@ -88,8 +88,8 @@ function M.load(opts)
         if strict then
             error(layout_spec)
         end
-        io.stderr:write(string.format("kaze warning: %s; falling back to 'noctalia'\n", tostring(layout_spec)))
-        layout_spec = layouts.get("noctalia")
+        io.stderr:write(string.format("kaze warning: %s; falling back to 'sidebar'\n", tostring(layout_spec)))
+        layout_spec = layouts.get("sidebar")
     end
 
     local cfg = M.deep_merge(
@@ -110,9 +110,9 @@ function M.load(opts)
         if strict then
             error(theme)
         end
-        io.stderr:write(string.format("kaze warning: %s; falling back to 'noctalia'\n", tostring(theme)))
-        cfg.theme = "noctalia"
-        theme = themes.get("noctalia")
+        io.stderr:write(string.format("kaze warning: %s; falling back to 'kaze'\n", tostring(theme)))
+        cfg.theme = "kaze"
+        theme = themes.get("kaze")
     end
 
     local effective_layout = M.deep_copy(layout_spec)

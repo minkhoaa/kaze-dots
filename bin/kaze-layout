@@ -52,7 +52,7 @@ local function sibling_or_path(bin)
 end
 
 local function usage()
-    io.stdout:write("Usage: kaze-layout [--quiet] [noctalia|caelestia|omarchy|--menu|--current|-h|--help]\n")
+    io.stdout:write("Usage: kaze-layout [--quiet] [sidebar|islands|slim|--menu|--current|-h|--help]\n")
 end
 
 local function pick_from_menu(current_layout)

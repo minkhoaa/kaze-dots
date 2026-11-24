@@ -38,7 +38,7 @@ Only 6 lightweight native daemons remain resident in memory:
 
 | Daemon | Role | Language | Expected Idle PSS (`1920×1080`) |
 |---|---|---|---|
-| `waybar` | Top or vertical side bar (`noctalia` / `caelestia` / `omarchy`) | C++ / GTK3 | ~36–39 MiB |
+| `waybar` | Vertical left rail or top bar (`sidebar` / `islands` / `slim`) | C++ / GTK3 | ~36–39 MiB |
 | `swaybg` | Static wallpaper rendering | Pure C | ~6.3 MiB |
 | `foot --server` | Shared terminal daemon for instant `footclient` & `kaze-tui` windows | Pure C | ~4.9 MiB |
 | `fnott` | Notification daemon + progress OSD renderer | Pure C | ~3.0 MiB |
@@ -53,8 +53,8 @@ Ephemeral processes (`fuzzel`, `hyprlock`, `grim`, `slurp`, `footclient`, `nmtui
 `lua/kaze/config.lua` resolves effective configuration deterministically by deep-merging tables in strict priority order:
 
 1. **Built-in Defaults** (`lua/kaze/defaults.lua`):
-   - `layout = "noctalia"`
-   - `theme = "noctalia"`
+   - `layout = "sidebar"`
+   - `theme = "kaze"`
    - `font = "JetBrainsMono Nerd Font"`
    - `terminal = "footclient"`
    - `browser = "firefox"` (auto-fallback if unset)
@@ -81,10 +81,10 @@ lua/kaze/
 ├── defaults.lua        # Base default configuration table
 ├── themes.lua          # Built-in color palettes + hex/rgba conversion helpers
 ├── layouts/
-│   ├── init.lua        # Layout registry & validator ("noctalia", "caelestia", "omarchy")
-│   ├── noctalia.lua    # Noctalia floating pill layout geometry + Waybar JSONC/CSS builders
-│   ├── caelestia.lua   # Caelestia 42px left vertical sidebar geometry + Waybar JSONC/CSS builders
-│   └── omarchy.lua     # Omarchy 28px flat top bar geometry + Waybar JSONC/CSS builders
+│   ├── init.lua        # Layout registry & validator ("sidebar", "islands", "slim")
+│   ├── sidebar.lua     # 42px left vertical sidebar geometry + Waybar JSONC/CSS builders
+│   ├── islands.lua     # Floating top pill islands geometry + Waybar JSONC/CSS builders
+│   └── slim.lua        # 28px flat minimal top bar geometry + Waybar JSONC/CSS builders
 ├── config.lua          # Deep-merge loader (defaults -> state -> user -> layout)
 ├── state.lua           # Read/write ~/.config/kaze/state.lua atomically
 ├── fs.lua              # Atomic file write (.tmp -> os.rename), mkdir -p, shell_quote

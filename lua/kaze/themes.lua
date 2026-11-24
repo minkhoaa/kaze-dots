@@ -1,6 +1,6 @@
 local M = {}
 
-local ORDER = { "noctalia", "lavender", "tokyonight", "carbon" }
+local ORDER = { "kaze", "lavender", "tokyonight", "carbon" }
 
 local REQUIRED_KEYS = {
     "bg",
@@ -17,9 +17,9 @@ local REQUIRED_KEYS = {
 }
 
 local PRESETS = {
-    noctalia = {
-        name = "noctalia",
-        label = "Noctalia (Slate & Sky)",
+    kaze = {
+        name = "kaze",
+        label = "Kaze (Slate & Sky)",
         bg = "111318",
         bg_alt = "181b22",
         surface = "252a36",
@@ -38,7 +38,7 @@ local PRESETS = {
     },
     lavender = {
         name = "lavender",
-        label = "Lavender (Mocha Indigo)",
+        label = "Lavender (Soft Indigo)",
         bg = "11111b",
         bg_alt = "181825",
         surface = "313244",

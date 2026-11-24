@@ -5,8 +5,8 @@
 -- will pin them and override state.lua).
 
 return {
-    -- layout = "noctalia", -- "noctalia" | "caelestia" | "omarchy"
-    -- theme = "noctalia",  -- "noctalia" | "lavender" | "tokyonight" | "carbon"
+    -- layout = "sidebar", -- "sidebar" | "islands" | "slim"
+    -- theme = "kaze",     -- "kaze" | "lavender" | "tokyonight" | "carbon"
 
     -- font = "JetBrainsMono Nerd Font",
     -- terminal = "footclient",

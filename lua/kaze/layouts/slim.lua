@@ -1,18 +1,18 @@
 local M = {
-    name = "noctalia",
-    label = "Noctalia (Floating Pills)",
+    name = "slim",
+    label = "Slim (Minimal Top Bar)",
     hypr = {
-        gaps_in = 5,
-        gaps_out = 10,
-        rounding = 10,
+        gaps_in = 4,
+        gaps_out = 6,
+        rounding = 6,
         border_size = 1,
     },
     ui = {
-        fuzzel_radius = 12,
-        fnott_radius = 10,
+        fuzzel_radius = 8,
+        fnott_radius = 6,
         fnott_anchor = "top-right",
-        fnott_edge_margin_vertical = 48,
-        fnott_edge_margin_horizontal = 12,
+        fnott_edge_margin_vertical = 36,
+        fnott_edge_margin_horizontal = 10,
     },
 }
 
@@ -21,21 +21,21 @@ function M.build_waybar_config(_cfg, _theme)
 {
   "layer": "top",
   "position": "top",
-  "height": 34,
-  "margin-top": 6,
-  "margin-left": 10,
-  "margin-right": 10,
+  "height": 28,
+  "margin-top": 0,
   "margin-bottom": 0,
+  "margin-left": 0,
+  "margin-right": 0,
   "spacing": 0,
   "exclusive": true,
   "reload_style_on_change": false,
 
   "modules-left": [
     "custom/menu",
-    "hyprland/workspaces"
+    "hyprland/workspaces",
+    "hyprland/window"
   ],
   "modules-center": [
-    "mpris",
     "clock"
   ],
   "modules-right": [
@@ -53,7 +53,7 @@ function M.build_waybar_config(_cfg, _theme)
   },
 
   "hyprland/workspaces": {
-    "format": "",
+    "format": "{name}",
     "on-click": "activate",
     "on-scroll-up": "hyprctl dispatch \"hl.dsp.focus({ workspace = '-1' })\"",
     "on-scroll-down": "hyprctl dispatch \"hl.dsp.focus({ workspace = '+1' })\"",
@@ -63,23 +63,15 @@ function M.build_waybar_config(_cfg, _theme)
     }
   },
 
-  "mpris": {
-    "format": "{player_icon} {dynamic}",
-    "format-paused": "{status_icon} {dynamic}",
-    "player-icons": {
-      "default": "󰎈"
-    },
-    "status-icons": {
-      "paused": "󰏤"
-    },
-    "dynamic-order": ["artist", "title"],
-    "dynamic-len": 28,
-    "max-length": 32
+  "hyprland/window": {
+    "format": "{title}",
+    "max-length": 42,
+    "separate-outputs": true
   },
 
   "clock": {
     "interval": 60,
-    "format": "{:%a %d %b · %H:%M}",
+    "format": "{:%a %d %b  %H:%M}",
     "tooltip-format": "<tt>{calendar}</tt>"
   },
 
@@ -140,100 +132,83 @@ function M.build_waybar_css(cfg, _theme)
     border: none;
     border-radius: 0;
     font-family: "%s", monospace;
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 500;
     min-height: 0;
+    min-width: 0;
 }
 
 window#waybar {
-    background: transparent;
-    border: none;
+    background: alpha(@bg_alt, 0.92);
+    border-bottom: 1px solid alpha(@border, 0.85);
+    border-radius: 0;
     color: @fg;
-}
-
-.modules-left,
-.modules-center,
-.modules-right {
-    background: alpha(@bg_alt, 0.88);
-    border: 1px solid alpha(@border, 0.85);
-    border-radius: 14px;
-    padding: 0 6px;
-    margin: 0;
 }
 
 #custom-menu {
     color: @accent;
-    font-size: 14px;
-    padding: 0 9px;
-    margin: 3px 2px 3px 0;
-    border-radius: 10px;
+    font-size: 13.5px;
+    padding: 0 10px;
+    margin: 0;
     transition: background 140ms ease, color 140ms ease;
 }
 
 #custom-menu:hover {
-    background: alpha(@surface, 0.90);
+    background: alpha(@surface, 0.80);
     color: @fg;
 }
 
 #workspaces {
     margin: 0;
-    padding: 0 4px;
+    padding: 0 2px;
 }
 
 #workspaces button {
-    padding: 0;
-    min-width: 8px;
-    min-height: 8px;
-    margin: 12px 4px;
-    border-radius: 99px;
-    background: @fg_muted;
-    transition: all 150ms cubic-bezier(0.2, 0.0, 0.0, 1.0);
-}
-
-#workspaces button label {
-    font-size: 0px;
-    min-height: 0;
-    min-width: 0;
-    padding: 0;
-    margin: 0;
+    padding: 0 8px;
+    margin: 0 1px;
+    color: @fg_muted;
+    background: transparent;
+    border-bottom: 2px solid transparent;
+    font-weight: 600;
+    transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
 #workspaces button.empty {
-    background: alpha(@fg_muted, 0.35);
+    color: alpha(@fg_muted, 0.45);
 }
 
 #workspaces button:hover {
-    background: @fg;
+    color: @fg;
+    background: alpha(@surface, 0.65);
 }
 
 #workspaces button.active {
-    min-width: 24px;
-    background: @accent;
-}
-
-#workspaces button.active:hover {
-    background: @accent;
+    color: @fg;
+    background: alpha(@surface, 0.40);
+    border-bottom: 2px solid @accent;
 }
 
 #workspaces button.urgent {
-    background: @danger;
+    color: @danger;
+    border-bottom: 2px solid @danger;
 }
 
-#mpris {
-    color: @accent;
-    font-weight: 500;
-    font-size: 12.5px;
-    padding: 0 8px 0 10px;
-    margin: 3px 0;
-    border-radius: 10px;
+#window {
+    color: @fg_muted;
+    padding: 0 10px;
+    font-weight: 400;
+}
+
+window#waybar.empty #window {
+    padding: 0;
+    margin: 0;
+    background: transparent;
 }
 
 #clock {
     color: @fg;
     font-weight: 600;
-    font-size: 12.5px;
     padding: 0 10px;
-    margin: 3px 0;
     letter-spacing: 0.2px;
 }
 
@@ -242,21 +217,19 @@ window#waybar {
 #wireplumber,
 #battery {
     padding: 0 8px;
-    margin: 3px 1px;
-    border-radius: 10px;
-    font-size: 12.5px;
+    margin: 0;
     color: @fg;
     transition: background 140ms ease, color 140ms ease;
 }
 
 #network {
-    font-size: 14px;
+    font-size: 13.5px;
 }
 
 #network:hover,
 #wireplumber:hover,
 #battery:hover {
-    background: alpha(@surface, 0.90);
+    background: alpha(@surface, 0.80);
     color: @accent;
 }
 
@@ -283,10 +256,9 @@ window#waybar {
 
 #custom-power {
     color: @fg_muted;
-    font-size: 13.5px;
-    padding: 0 9px;
-    margin: 3px 0 3px 2px;
-    border-radius: 10px;
+    font-size: 13px;
+    padding: 0 10px;
+    margin: 0;
     transition: background 140ms ease, color 140ms ease;
 }
 
@@ -298,7 +270,7 @@ window#waybar {
 tooltip {
     background: alpha(@bg_alt, 0.95);
     border: 1px solid @border;
-    border-radius: 10px;
+    border-radius: 6px;
 }
 
 tooltip label {
