@@ -1,0 +1,174 @@
+#!/usr/bin/env lua
+
+local function setup_path()
+    local home = os.getenv("HOME") or ""
+    local xdg_data = os.getenv("XDG_DATA_HOME")
+    if not xdg_data or xdg_data == "" then
+        xdg_data = home .. "/.local/share"
+    end
+    local paths = {}
+    local script = arg and arg[0] or ""
+    local q = "'" .. script:gsub("'", "'\\''") .. "'"
+    local p = io.popen("readlink -f " .. q .. " 2>/dev/null")
+    local resolved = p and p:read("*l") or nil
+    if p then
+        p:close()
+    end
+    local base = (resolved or script):match("^(.*)/[^/]+$")
+    if base then
+        local repo_lua = base .. "/../lua"
+        local f = io.open(repo_lua .. "/omarch/defaults.lua", "r")
+        if f then
+            f:close()
+            paths[#paths + 1] = repo_lua .. "/?.lua"
+            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+        end
+    end
+    paths[#paths + 1] = xdg_data .. "/omarch-shell/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/omarch-shell/lua/?/init.lua"
+    paths[#paths + 1] = package.path
+    package.path = table.concat(paths, ";")
+end
+
+setup_path()
+
+local config = require("omarch.config")
+local fs = require("omarch.fs")
+
+local VALID_ACTIONS = {
+    ["vol-up"] = true,
+    ["vol-down"] = true,
+    ["vol-mute"] = true,
+    ["mic-mute"] = true,
+    ["bright-up"] = true,
+    ["bright-down"] = true,
+}
+
+local action = arg[1]
+if action == "-h" or action == "--help" then
+    io.stdout:write("Usage: omarch-osd <vol-up|vol-down|vol-mute|mic-mute|bright-up|bright-down>\n")
+    os.exit(0)
+end
+
+if not action or not VALID_ACTIONS[action] then
+    io.stderr:write(string.format(
+        "omarch-osd: invalid action '%s' (expected: vol-up, vol-down, vol-mute, mic-mute, bright-up, bright-down)\n",
+        tostring(action or "")
+    ))
+    os.exit(1)
+end
+
+local function cmd_exists(bin)
+    local ok = os.execute("command -v " .. fs.shell_quote(bin) .. " >/dev/null 2>&1")
+    return ok == true or ok == 0
+end
+
+local function run_capture(cmd)
+    local p = io.popen(cmd .. " 2>&1")
+    if not p then
+        return false, ""
+    end
+    local out = p:read("*a") or ""
+    local ok = p:close()
+    return (ok == true or ok == 0), out
+end
+
+local function clamp_pct(v)
+    local n = math.floor((tonumber(v) or 0) + 0.5)
+    if n < 0 then
+        return 0
+    end
+    if n > 100 then
+        return 100
+    end
+    return n
+end
+
+local function send_osd(title, body, pct)
+    if not cmd_exists("notify-send") then
+        return
+    end
+    local cmd = string.format(
+        "notify-send -a omarch-osd -t 1400 -u low -h string:x-canonical-private-synchronous:omarch-osd -h int:value:%d %s %s >/dev/null 2>&1",
+        clamp_pct(pct),
+        fs.shell_quote(title),
+        fs.shell_quote(body)
+    )
+    os.execute(cmd)
+end
+
+local ok_cfg, cfg = pcall(config.load, { strict = false })
+if not ok_cfg or type(cfg) ~= "table" then
+    cfg = { vol_step = 5, vol_max = 1.5, bright_step = 5 }
+end
+
+local vol_step = tonumber(cfg.vol_step) or 5
+local vol_max = tonumber(cfg.vol_max) or 1.5
+local bright_step = tonumber(cfg.bright_step) or 5
+
+if action == "vol-up" or action == "vol-down" or action == "vol-mute" then
+    if not cmd_exists("wpctl") then
+        io.stderr:write("omarch-osd: wpctl not found in PATH\n")
+        os.exit(1)
+    end
+    local target = "@DEFAULT_AUDIO_SINK@"
+    if action == "vol-up" then
+        os.execute(string.format("wpctl set-mute %s 0 >/dev/null 2>&1; wpctl set-volume -l %s %s %d%%+ >/dev/null 2>&1",
+            target, tostring(vol_max), target, vol_step))
+    elseif action == "vol-down" then
+        os.execute(string.format("wpctl set-mute %s 0 >/dev/null 2>&1; wpctl set-volume %s %d%%- >/dev/null 2>&1",
+            target, target, vol_step))
+    else
+        os.execute(string.format("wpctl set-mute %s toggle >/dev/null 2>&1", target))
+    end
+
+    local ok_vol, out = run_capture("wpctl get-volume " .. target)
+    if not ok_vol then
+        send_osd("󰕾 Volume", "No audio sink", 0)
+        os.exit(0)
+    end
+    local raw = tonumber(out:match("Volume:%s*([%d%.]+)")) or 0
+    local pct = math.floor(raw * 100 + 0.5)
+    local muted = out:find("[MUTED]", 1, true) ~= nil
+    if muted then
+        send_osd("󰖁 Volume", string.format("Muted (%d%%)", pct), 0)
+    else
+        local icon = pct >= 60 and "󰕾" or (pct >= 25 and "󰖀" or "󰕿")
+        send_osd(icon .. " Volume", string.format("%d%%", pct), pct)
+    end
+elseif action == "mic-mute" then
+    if not cmd_exists("wpctl") then
+        io.stderr:write("omarch-osd: wpctl not found in PATH\n")
+        os.exit(1)
+    end
+    local target = "@DEFAULT_AUDIO_SOURCE@"
+    os.execute(string.format("wpctl set-mute %s toggle >/dev/null 2>&1", target))
+    local ok_mic, out = run_capture("wpctl get-volume " .. target)
+    if not ok_mic then
+        send_osd("󰍬 Microphone", "No audio source", 0)
+        os.exit(0)
+    end
+    local raw = tonumber(out:match("Volume:%s*([%d%.]+)")) or 0
+    local pct = math.floor(raw * 100 + 0.5)
+    local muted = out:find("[MUTED]", 1, true) ~= nil
+    if muted then
+        send_osd("󰍭 Microphone", "Muted", 0)
+    else
+        send_osd("󰍬 Microphone", string.format("%d%%", pct), pct)
+    end
+else
+    if not cmd_exists("brightnessctl") then
+        io.stderr:write("omarch-osd: brightnessctl not found in PATH\n")
+        os.exit(1)
+    end
+    local delta = action == "bright-up" and (bright_step .. "%+") or (bright_step .. "%-")
+    local ok_set = os.execute("brightnessctl set " .. fs.shell_quote(delta) .. " >/dev/null 2>&1")
+    local ok_get, out = run_capture("brightnessctl -m")
+    if not (ok_set == true or ok_set == 0) or not ok_get then
+        send_osd("󰃠 Brightness", "No backlight", 0)
+        os.exit(0)
+    end
+    local pct_str = out:match(",(%d+)%%,")
+    local pct = tonumber(pct_str) or 0
+    send_osd("󰃠 Brightness", string.format("%d%%", pct), pct)
+end

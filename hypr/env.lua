@@ -1,0 +1,26 @@
+local ctx = require("omarch._ctx")
+local cfg = ctx.cfg
+
+local home = os.getenv("HOME") or ""
+local local_bin = home .. "/.local/bin"
+local cur_path = os.getenv("PATH") or "/usr/local/bin:/usr/bin:/bin"
+if not (":" .. cur_path .. ":"):find(":" .. local_bin .. ":", 1, true) then
+    hl.env("PATH", local_bin .. ":" .. cur_path)
+end
+
+hl.env("XDG_CURRENT_DESKTOP", "Hyprland")
+hl.env("XDG_SESSION_TYPE", "wayland")
+hl.env("XDG_SESSION_DESKTOP", "Hyprland")
+
+hl.env("GDK_BACKEND", "wayland,x11")
+hl.env("QT_QPA_PLATFORM", "wayland;xcb")
+hl.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
+hl.env("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
+hl.env("SDL_VIDEODRIVER", "wayland,x11")
+hl.env("CLUTTER_BACKEND", "wayland")
+hl.env("ELECTRON_OZONE_PLATFORM_HINT", "auto")
+hl.env("_JAVA_AWT_WM_NONREPARENTING", "1")
+
+hl.env("XCURSOR_THEME", cfg.cursor_theme)
+hl.env("XCURSOR_SIZE", tostring(cfg.cursor_size))
+hl.env("TERMINAL", cfg.terminal)

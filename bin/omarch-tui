@@ -1,0 +1,176 @@
+#!/usr/bin/env lua
+
+local function setup_path()
+    local home = os.getenv("HOME") or ""
+    local xdg_data = os.getenv("XDG_DATA_HOME")
+    if not xdg_data or xdg_data == "" then
+        xdg_data = home .. "/.local/share"
+    end
+    local paths = {}
+    local script = arg and arg[0] or ""
+    local q = "'" .. script:gsub("'", "'\\''") .. "'"
+    local p = io.popen("readlink -f " .. q .. " 2>/dev/null")
+    local resolved = p and p:read("*l") or nil
+    if p then
+        p:close()
+    end
+    local base = (resolved or script):match("^(.*)/[^/]+$")
+    if base then
+        local repo_lua = base .. "/../lua"
+        local f = io.open(repo_lua .. "/omarch/defaults.lua", "r")
+        if f then
+            f:close()
+            paths[#paths + 1] = repo_lua .. "/?.lua"
+            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+        end
+    end
+    paths[#paths + 1] = xdg_data .. "/omarch-shell/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/omarch-shell/lua/?/init.lua"
+    paths[#paths + 1] = package.path
+    package.path = table.concat(paths, ";")
+end
+
+setup_path()
+
+local fs = require("omarch.fs")
+
+local TOOLS = {
+    wifi = {
+        title = "Network (nmtui)",
+        candidates = { "nmtui" },
+    },
+    bluetooth = {
+        title = "Bluetooth (bluetui)",
+        candidates = { "bluetui", "bluetoothctl" },
+    },
+    audio = {
+        title = "Audio (wiremix)",
+        candidates = { "wiremix", "pulsemixer", "alsamixer" },
+    },
+    sysmon = {
+        title = "System Monitor",
+        candidates = { "btop", "htop", "top" },
+    },
+}
+
+local function cmd_exists(bin)
+    local ok = os.execute("command -v " .. fs.shell_quote(bin) .. " >/dev/null 2>&1")
+    return ok == true or ok == 0
+end
+
+local function read_cmd(cmd)
+    local p = io.popen(cmd)
+    if not p then
+        return ""
+    end
+    local out = p:read("*a") or ""
+    p:close()
+    return out
+end
+
+local function find_existing_tui(title)
+    local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
+    if not hypr_sig or hypr_sig == "" then
+        return nil, false
+    end
+
+    local active_out = read_cmd("hyprctl activewindow 2>/dev/null")
+    local active_addr = active_out:match("Window%s+(%x+)%s+->")
+
+    local clients_out = read_cmd("hyprctl clients 2>/dev/null")
+    local cur_addr, cur_class, cur_title
+    local function check_match()
+        if cur_addr and cur_class == "om-tui" and cur_title == title then
+            return cur_addr
+        end
+        return nil
+    end
+
+    for line in clients_out:gmatch("[^\r\n]+") do
+        local addr = line:match("^Window%s+(%x+)%s+->")
+        if addr then
+            local matched = check_match()
+            if matched then
+                return matched, matched == active_addr
+            end
+            cur_addr = addr
+            cur_class = nil
+            cur_title = nil
+        else
+            local cls = line:match("^%s*class:%s*(.+)$")
+            if cls then
+                cur_class = cls
+            end
+            local ttl = line:match("^%s*title:%s*(.+)$")
+            if ttl then
+                cur_title = ttl
+            end
+        end
+    end
+
+    local matched = check_match()
+    if matched then
+        return matched, matched == active_addr
+    end
+    return nil, false
+end
+
+local mode = arg[1]
+if mode == "-h" or mode == "--help" then
+    io.stdout:write("Usage: omarch-tui <wifi|bluetooth|audio|sysmon>\n")
+    os.exit(0)
+end
+
+local entry = TOOLS[mode]
+if not entry then
+    io.stderr:write(string.format("omarch-tui: invalid mode '%s' (expected: wifi, bluetooth, audio, sysmon)\n", tostring(mode or "")))
+    os.exit(1)
+end
+
+local existing_addr, is_active = find_existing_tui(entry.title)
+if existing_addr then
+    local win_arg = "'address:0x" .. existing_addr .. "'"
+    if is_active then
+        os.execute("hyprctl dispatch " .. fs.shell_quote("hl.dsp.window.close({ window = " .. win_arg .. " })") .. " >/dev/null 2>&1")
+    else
+        os.execute("hyprctl dispatch " .. fs.shell_quote("hl.dsp.focus({ window = " .. win_arg .. " })") .. " >/dev/null 2>&1")
+    end
+    os.exit(0)
+end
+
+local tool_bin
+for _, cand in ipairs(entry.candidates) do
+    if cmd_exists(cand) then
+        tool_bin = cand
+        break
+    end
+end
+
+if not tool_bin then
+    io.stderr:write(string.format("omarch-tui: none of [%s] found in PATH\n", table.concat(entry.candidates, ", ")))
+    os.exit(1)
+end
+
+local server_alive = os.execute("pgrep -x foot >/dev/null 2>&1")
+if (server_alive == true or server_alive == 0) and cmd_exists("footclient") then
+    local cmd = string.format(
+        "footclient -N -a om-tui -T %s %s >/dev/null 2>&1",
+        fs.shell_quote(entry.title),
+        fs.shell_quote(tool_bin)
+    )
+    local ok = os.execute(cmd)
+    if not (ok == true or ok == 0) then
+        io.stderr:write("omarch-tui: failed to launch footclient\n")
+        os.exit(1)
+    end
+elseif cmd_exists("foot") then
+    local cmd = string.format(
+        "nohup foot -a om-tui -T %s %s >/dev/null 2>&1 </dev/null &",
+        fs.shell_quote(entry.title),
+        fs.shell_quote(tool_bin)
+    )
+    os.execute(cmd)
+else
+    io.stderr:write("omarch-tui: neither footclient (with foot --server) nor foot is available\n")
+    os.exit(1)
+end
