@@ -1,0 +1,13 @@
+# Runtime / generated local outputs (never commit user machine state)
+state/
+*.log
+*.pid
+*.tmp
+.DS_Store
+
+# VM artifacts / temporary captures
+artifacts/
+screenshots/tmp-*
+*.qcow2
+*.iso
+*.fd
