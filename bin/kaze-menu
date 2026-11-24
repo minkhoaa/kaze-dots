@@ -1,0 +1,119 @@
+#!/usr/bin/env lua
+
+local script_dir
+
+local function setup_path()
+    local home = os.getenv("HOME") or ""
+    local xdg_data = os.getenv("XDG_DATA_HOME")
+    if not xdg_data or xdg_data == "" then
+        xdg_data = home .. "/.local/share"
+    end
+    local paths = {}
+    local script = arg and arg[0] or ""
+    local q = "'" .. script:gsub("'", "'\\''") .. "'"
+    local p = io.popen("readlink -f " .. q .. " 2>/dev/null")
+    local resolved = p and p:read("*l") or nil
+    if p then
+        p:close()
+    end
+    script_dir = (resolved or script):match("^(.*)/[^/]+$")
+    if script_dir then
+        local repo_lua = script_dir .. "/../lua"
+        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+        if f then
+            f:close()
+            paths[#paths + 1] = repo_lua .. "/?.lua"
+            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+        end
+    end
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
+    paths[#paths + 1] = package.path
+    package.path = table.concat(paths, ";")
+end
+
+setup_path()
+
+local fs = require("kaze.fs")
+
+local function cmd_exists(bin)
+    local ok = os.execute("command -v " .. fs.shell_quote(bin) .. " >/dev/null 2>&1")
+    return ok == true or ok == 0
+end
+
+local function sibling_or_path(bin)
+    if script_dir and fs.file_exists(script_dir .. "/" .. bin) then
+        return script_dir .. "/" .. bin
+    end
+    return bin
+end
+
+if #arg > 0 then
+    if #arg == 1 and (arg[1] == "-h" or arg[1] == "--help") then
+        io.stdout:write("Usage: kaze-menu\n")
+        os.exit(0)
+    end
+    io.stderr:write(string.format("kaze-menu: unknown option '%s'\n", tostring(arg[1])))
+    os.exit(2)
+end
+
+local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
+if running == true or running == 0 then
+    os.execute("pkill -x fuzzel >/dev/null 2>&1")
+    os.exit(0)
+end
+
+if not cmd_exists("fuzzel") then
+    io.stderr:write("kaze-menu: fuzzel not found in PATH\n")
+    os.exit(1)
+end
+
+local items = {
+    { label = "󰙵  Switch Layout",      cmd = fs.shell_quote(sibling_or_path("kaze-layout")) .. " --menu" },
+    { label = "󰏘  Switch Theme",       cmd = fs.shell_quote(sibling_or_path("kaze-theme")) .. " --menu" },
+    { label = "󰖩  Wi-Fi (nmtui)",      cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " wifi" },
+    { label = "󰂯  Bluetooth (bluetui)", cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " bluetooth" },
+    { label = "󰕾  Audio Mixer (wiremix)", cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " audio" },
+    { label = "󰍛  System Monitor (btop)", cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " sysmon" },
+    { label = "󰅌  Clipboard History",  cmd = "sel=$(cliphist list | fuzzel --dmenu -p 'Clip > ') && [ -n \"$sel\" ] && printf '%s\\n' \"$sel\" | cliphist decode | wl-copy" },
+    { label = "󰄀  Screenshot Region",  cmd = "geom=$(slurp) && [ -n \"$geom\" ] && grim -g \"$geom\" - | wl-copy && notify-send -t 2000 'Screenshot' 'Region copied'" },
+    { label = "󰑓  Reload Shell",       cmd = fs.shell_quote(sibling_or_path("kaze-sync")) .. " --reload" },
+    { label = "⏻  Power Menu",         cmd = fs.shell_quote(sibling_or_path("kaze-power")) },
+}
+
+local labels = {}
+local actions = {}
+for i, item in ipairs(items) do
+    labels[i] = item.label
+    actions[item.label] = item.cmd
+end
+
+local cmd = string.format(
+    "printf '%%s\\n' %s | fuzzel --dmenu --lines %d -p %s",
+    fs.shell_quote(table.concat(labels, "\n")),
+    #labels,
+    fs.shell_quote("Kaze > ")
+)
+local p = io.popen(cmd)
+if not p then
+    io.stderr:write("kaze-menu: failed to launch fuzzel\n")
+    os.exit(1)
+end
+local out = p:read("*a") or ""
+p:close()
+
+local choice = out:gsub("[\r\n]+$", "")
+if choice == "" then
+    os.exit(0)
+end
+
+local action = actions[choice]
+if not action then
+    io.stderr:write(string.format("kaze-menu: unrecognized selection '%s'\n", choice))
+    os.exit(1)
+end
+
+local ok = os.execute(action)
+if not (ok == true or ok == 0) then
+    os.exit(1)
+end

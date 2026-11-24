@@ -121,7 +121,7 @@ if do_reload then
             utf8_guard
                 .. "pkill -x fnott >/dev/null 2>&1 || true; "
                 .. "i=0; while pgrep -x fnott >/dev/null 2>&1 && [ \"$i\" -lt 10 ]; do sleep 0.02; i=$((i + 1)); done; "
-                .. "nohup fnott >/dev/null 2>&1 </dev/null &"
+                .. "GLIBC_TUNABLES=glibc.malloc.trim_threshold=65536 nohup fnott >/dev/null 2>&1 </dev/null &"
         )
     end
 end

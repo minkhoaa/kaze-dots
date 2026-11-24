@@ -8,6 +8,8 @@ function M.emit(cfg, theme, layout)
 [main]
 layer=overlay
 anchor=%s
+dpi-aware=no
+icon-theme=hicolor
 edge-margin-vertical=%d
 edge-margin-horizontal=%d
 notification-margin=8

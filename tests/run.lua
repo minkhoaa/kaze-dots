@@ -368,76 +368,174 @@ return {
     rm_rf(tmp)
 end)
 
-test("emitters: noctalia x all 4 themes produce valid configs with zero polling", function()
+test("layouts: registry contains noctalia, caelestia, and omarchy", function()
+    local list = layouts.list()
+    assert_eq(#list, 3, "layout count")
+    assert_eq(list[1], "noctalia", "first layout")
+    assert_eq(list[2], "caelestia", "second layout")
+    assert_eq(list[3], "omarchy", "third layout")
+
+    local unk_ok = pcall(layouts.get, "nonexistent")
+    assert_true(not unk_ok, "layouts.get must reject unknown layout")
+end)
+
+local function assert_no_unresolved_tokens(text, label)
+    assert_true(not text:find("{{", 1, true), label .. ": unresolved '{{' token")
+    assert_true(not text:find("}}", 1, true), label .. ": unresolved '}}' token")
+    assert_true(not text:find("%s", 1, true), label .. ": unresolved '%s' token")
+    assert_true(not text:find("rgb(nil)", 1, true), label .. ": unresolved nil rgb")
+    assert_true(not text:find("rgba(nil", 1, true), label .. ": unresolved nil rgba")
+    assert_true(not text:find("=nil", 1, true), label .. ": unresolved nil value")
+end
+
+test("emitters: all 3 layouts x 4 themes (12 combinations) produce valid configs with zero polling", function()
     local tmp = make_tmp_dir()
     local has_foot = cmd_exists("foot")
     local has_fuzzel = cmd_exists("fuzzel")
 
-    local layout = layouts.get("noctalia")
-    for _, theme_name in ipairs(themes.list()) do
-        local theme = themes.get(theme_name)
-        local cfg = {
-            layout = "noctalia",
-            theme = theme_name,
-            font = "JetBrainsMono Nerd Font",
-            terminal = "footclient",
-            cursor_theme = "Adwaita",
-            wallpaper_expanded = "/home/bench/Pictures/Wallpapers/wallpaper.png",
-            hypr = layout.hypr,
-            ui = layout.ui,
-        }
+    local expected = {
+        noctalia = {
+            position = "top",
+            height = 34,
+            margin_top = 6,
+            margin_left = 10,
+            margin_right = 10,
+            fuzzel_radius = 12,
+            fnott_radius = 10,
+            fnott_vmargin = 48,
+        },
+        caelestia = {
+            position = "left",
+            width = 42,
+            margin_top = 8,
+            margin_bottom = 8,
+            margin_left = 8,
+            margin_right = 0,
+            fuzzel_radius = 14,
+            fnott_radius = 12,
+            fnott_vmargin = 12,
+        },
+        omarchy = {
+            position = "top",
+            height = 28,
+            margin_top = 0,
+            margin_left = 0,
+            margin_right = 0,
+            fuzzel_radius = 8,
+            fnott_radius = 6,
+            fnott_vmargin = 36,
+        },
+    }
 
-        local wb = emit_waybar.emit(cfg, theme, layout)
-        assert_contains(wb.colors_css, "@define-color accent    #" .. theme.accent .. ";", "waybar colors.css")
-        assert_contains(wb.style_css, '@import "colors.css";', "waybar style.css import")
-        assert_balanced(wb.style_css, "{", "}", "waybar style.css")
+    local combo_count = 0
+    for _, layout_name in ipairs(layouts.list()) do
+        local layout = layouts.get(layout_name)
+        local exp = expected[layout_name]
+        assert_true(exp ~= nil, "missing expectation table for " .. layout_name)
 
-        local stripped = strip_jsonc_comments(wb.config_jsonc)
-        local parsed = parse_json(stripped)
-        assert_eq(parsed.height, 34, "noctalia height")
-        assert_eq(parsed["margin-top"], 6, "noctalia margin-top")
-        assert_eq(parsed["margin-left"], 10, "noctalia margin-left")
-        assert_eq(parsed["margin-right"], 10, "noctalia margin-right")
-        assert_eq(parsed["custom/menu"].exec, nil, "custom/menu must have zero polling exec")
-        assert_eq(parsed["custom/menu"].interval, nil, "custom/menu must have zero polling interval")
-        assert_eq(parsed["custom/power"].exec, nil, "custom/power must have zero polling exec")
-        assert_eq(parsed["custom/power"].interval, nil, "custom/power must have zero polling interval")
+        for _, theme_name in ipairs(themes.list()) do
+            combo_count = combo_count + 1
+            local theme = themes.get(theme_name)
+            local tag = layout_name .. "/" .. theme_name
+            local cfg = {
+                layout = layout_name,
+                theme = theme_name,
+                font = "JetBrainsMono Nerd Font",
+                terminal = "footclient",
+                cursor_theme = "Adwaita",
+                wallpaper_expanded = "/home/bench/Pictures/Wallpapers/wallpaper.png",
+                hypr = layout.hypr,
+                ui = layout.ui,
+            }
 
-        local foot_ini = emit_foot.emit(cfg, theme, layout)
-        assert_contains(foot_ini, "background=" .. theme.bg, "foot background")
-        if has_foot then
-            local fp = tmp .. "/foot-" .. theme_name .. ".ini"
-            fs.write_atomic(fp, foot_ini)
-            local ok = os.execute("foot --check-config -c " .. fs.shell_quote(fp) .. " >/dev/null 2>&1")
-            assert_true(ok == true or ok == 0, "foot --check-config failed for " .. theme_name)
+            local wb = emit_waybar.emit(cfg, theme, layout)
+            assert_true(#wb.colors_css > 0, tag .. ": colors.css non-empty")
+            assert_true(#wb.config_jsonc > 0, tag .. ": config.jsonc non-empty")
+            assert_true(#wb.style_css > 0, tag .. ": style.css non-empty")
+            assert_contains(wb.colors_css, "@define-color accent    #" .. theme.accent .. ";", tag .. ": waybar colors.css")
+            assert_contains(wb.style_css, '@import "colors.css";', tag .. ": waybar style.css import")
+            assert_balanced(wb.style_css, "{", "}", tag .. ": waybar style.css")
+            assert_no_unresolved_tokens(wb.colors_css, tag .. ": waybar colors.css")
+            assert_no_unresolved_tokens(wb.config_jsonc, tag .. ": waybar config.jsonc")
+            assert_no_unresolved_tokens(wb.style_css, tag .. ": waybar style.css")
+
+            local stripped = strip_jsonc_comments(wb.config_jsonc)
+            local parsed = parse_json(stripped)
+            assert_eq(parsed.position, exp.position, tag .. ": position")
+            if exp.height then
+                assert_eq(parsed.height, exp.height, tag .. ": height")
+            end
+            if exp.width then
+                assert_eq(parsed.width, exp.width, tag .. ": width")
+            end
+            assert_eq(parsed["margin-top"], exp.margin_top, tag .. ": margin-top")
+            assert_eq(parsed["margin-left"], exp.margin_left, tag .. ": margin-left")
+            assert_eq(parsed["margin-right"], exp.margin_right, tag .. ": margin-right")
+            if exp.margin_bottom then
+                assert_eq(parsed["margin-bottom"], exp.margin_bottom, tag .. ": margin-bottom")
+            end
+            assert_eq(parsed["custom/menu"].exec, nil, tag .. ": custom/menu must have zero polling exec")
+            assert_eq(parsed["custom/menu"].interval, nil, tag .. ": custom/menu must have zero polling interval")
+            assert_eq(parsed["custom/power"].exec, nil, tag .. ": custom/power must have zero polling exec")
+            assert_eq(parsed["custom/power"].interval, nil, tag .. ": custom/power must have zero polling interval")
+
+            local foot_ini = emit_foot.emit(cfg, theme, layout)
+            assert_contains(foot_ini, "background=" .. theme.bg, tag .. ": foot background")
+            assert_no_unresolved_tokens(foot_ini, tag .. ": foot.ini")
+            if has_foot then
+                local fp = tmp .. "/foot-" .. layout_name .. "-" .. theme_name .. ".ini"
+                fs.write_atomic(fp, foot_ini)
+                local ok = os.execute("foot --check-config -c " .. fs.shell_quote(fp) .. " >/dev/null 2>&1")
+                assert_true(ok == true or ok == 0, "foot --check-config failed for " .. tag)
+            end
+
+            local fuzzel_ini = emit_fuzzel.emit(cfg, theme, layout)
+            assert_contains(fuzzel_ini, "radius=" .. exp.fuzzel_radius, tag .. ": fuzzel radius")
+            assert_contains(fuzzel_ini, "background=" .. theme.bg_alt .. "e8", tag .. ": fuzzel bg")
+            assert_no_unresolved_tokens(fuzzel_ini, tag .. ": fuzzel.ini")
+            if has_fuzzel then
+                local zp = tmp .. "/fuzzel-" .. layout_name .. "-" .. theme_name .. ".ini"
+                fs.write_atomic(zp, fuzzel_ini)
+                local ok = os.execute("fuzzel --check-config --config " .. fs.shell_quote(zp) .. " >/dev/null 2>&1")
+                assert_true(ok == true or ok == 0, "fuzzel --check-config failed for " .. tag)
+            end
+
+            local fnott_ini = emit_fnott.emit(cfg, theme, layout)
+            assert_contains(fnott_ini, "dpi-aware=no", tag .. ": fnott dpi-aware")
+            assert_contains(fnott_ini, "icon-theme=hicolor", tag .. ": fnott icon-theme")
+            assert_contains(fnott_ini, "progress-color=" .. theme.accent .. "ff", tag .. ": fnott progress-color")
+            assert_contains(fnott_ini, "border-radius=" .. exp.fnott_radius, tag .. ": fnott radius")
+            assert_contains(fnott_ini, "edge-margin-vertical=" .. exp.fnott_vmargin, tag .. ": fnott vertical margin")
+            assert_no_unresolved_tokens(fnott_ini, tag .. ": fnott.ini")
+
+            local hl_conf = emit_hyprlock.emit(cfg, theme, layout)
+            assert_contains(hl_conf, "rgb(" .. theme.accent .. ")", tag .. ": hyprlock accent")
+            assert_balanced(hl_conf, "{", "}", tag .. ": hyprlock.conf")
+            assert_no_unresolved_tokens(hl_conf, tag .. ": hyprlock.conf")
         end
-
-        local fuzzel_ini = emit_fuzzel.emit(cfg, theme, layout)
-        assert_contains(fuzzel_ini, "radius=12", "fuzzel radius")
-        assert_contains(fuzzel_ini, "background=" .. theme.bg_alt .. "e8", "fuzzel bg")
-        if has_fuzzel then
-            local zp = tmp .. "/fuzzel-" .. theme_name .. ".ini"
-            fs.write_atomic(zp, fuzzel_ini)
-            local ok = os.execute("fuzzel --check-config --config " .. fs.shell_quote(zp) .. " >/dev/null 2>&1")
-            assert_true(ok == true or ok == 0, "fuzzel --check-config failed for " .. theme_name)
-        end
-
-        local fnott_ini = emit_fnott.emit(cfg, theme, layout)
-        assert_contains(fnott_ini, "progress-color=" .. theme.accent .. "ff", "fnott progress-color")
-        assert_contains(fnott_ini, "border-radius=10", "fnott radius")
-        assert_contains(fnott_ini, "edge-margin-vertical=48", "fnott vertical margin")
-
-        local hl_conf = emit_hyprlock.emit(cfg, theme, layout)
-        assert_contains(hl_conf, "rgb(" .. theme.accent .. ")", "hyprlock accent")
-        assert_balanced(hl_conf, "{", "}", "hyprlock.conf")
     end
+    assert_eq(combo_count, 12, "3 layouts x 4 themes combinations")
 
     rm_rf(tmp)
 end)
 
-test("CLI: kaze-sync writes isolated XDG_CONFIG_HOME and rejects bad args", function()
+local function read_cmd(cmd)
+    local p = io.popen(cmd)
+    if not p then
+        return ""
+    end
+    local out = p:read("*a") or ""
+    p:close()
+    return out
+end
+
+test("CLI: kaze-sync, kaze-layout, kaze-theme, kaze-menu, kaze-power behave properly", function()
     local tmp = make_tmp_dir()
-    local env_prefix = "HOME=" .. fs.shell_quote(tmp) .. " XDG_CONFIG_HOME=" .. fs.shell_quote(tmp .. "/cfg")
+    local env_prefix = string.format(
+        "HOME=%s XDG_CONFIG_HOME=%s HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY=''",
+        fs.shell_quote(tmp),
+        fs.shell_quote(tmp .. "/cfg")
+    )
 
     local ok_check = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-sync") .. " --check >/dev/null 2>&1")
     assert_true(ok_check == true or ok_check == 0, "kaze-sync --check exit 0")
@@ -459,14 +557,54 @@ test("CLI: kaze-sync writes isolated XDG_CONFIG_HOME and rejects bad args", func
         assert_true(fs.file_exists(tmp .. rel), "missing generated file: " .. rel)
     end
 
+    local cur_layout = read_cmd(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-layout") .. " --current"):gsub("[\r\n]+$", "")
+    assert_eq(cur_layout, "noctalia", "default layout")
+
+    for _, lname in ipairs({ "caelestia", "omarchy", "noctalia" }) do
+        local ok_l = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-layout") .. " " .. lname .. " >/dev/null 2>&1")
+        assert_true(ok_l == true or ok_l == 0, "kaze-layout " .. lname .. " exit 0")
+        local got_l = read_cmd(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-layout") .. " --current"):gsub("[\r\n]+$", "")
+        assert_eq(got_l, lname, "layout persisted after switch")
+    end
+
+    for _, tname in ipairs({ "lavender", "tokyonight", "carbon", "noctalia" }) do
+        local ok_t = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-theme") .. " " .. tname .. " >/dev/null 2>&1")
+        assert_true(ok_t == true or ok_t == 0, "kaze-theme " .. tname .. " exit 0")
+        local got_t = read_cmd(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-theme") .. " --current"):gsub("[\r\n]+$", "")
+        assert_eq(got_t, tname, "theme persisted after switch")
+        local colors_css = fs.read_file(tmp .. "/cfg/waybar/colors.css")
+        assert_contains(colors_css, "#" .. themes.get(tname).accent, "colors.css updated for " .. tname)
+    end
+
+    local ok_q_layout = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-layout") .. " --quiet caelestia >/dev/null 2>&1")
+    assert_true(ok_q_layout == true or ok_q_layout == 0, "kaze-layout --quiet exit 0")
+    local ok_q_theme = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-theme") .. " --quiet carbon >/dev/null 2>&1")
+    assert_true(ok_q_theme == true or ok_q_theme == 0, "kaze-theme --quiet exit 0")
+
     local bad_sync = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-sync") .. " --invalid >/dev/null 2>&1")
     assert_true(bad_sync ~= true and bad_sync ~= 0, "kaze-sync --invalid must fail")
+
+    local bad_layout = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-layout") .. " bogus >/dev/null 2>&1")
+    assert_true(bad_layout ~= true and bad_layout ~= 0, "kaze-layout bogus must fail")
+
+    local bad_theme = os.execute(env_prefix .. " " .. fs.shell_quote(repo_dir .. "/bin/kaze-theme") .. " bogus >/dev/null 2>&1")
+    assert_true(bad_theme ~= true and bad_theme ~= 0, "kaze-theme bogus must fail")
 
     local bad_tui = os.execute(fs.shell_quote(repo_dir .. "/bin/kaze-tui") .. " bogus >/dev/null 2>&1")
     assert_true(bad_tui ~= true and bad_tui ~= 0, "kaze-tui bogus must fail")
 
     local bad_osd = os.execute(fs.shell_quote(repo_dir .. "/bin/kaze-osd") .. " bogus >/dev/null 2>&1")
     assert_true(bad_osd ~= true and bad_osd ~= 0, "kaze-osd bogus must fail")
+
+    local help_menu = os.execute(fs.shell_quote(repo_dir .. "/bin/kaze-menu") .. " --help >/dev/null 2>&1")
+    assert_true(help_menu == true or help_menu == 0, "kaze-menu --help exit 0")
+    local bad_menu = os.execute(fs.shell_quote(repo_dir .. "/bin/kaze-menu") .. " --bogus >/dev/null 2>&1")
+    assert_true(bad_menu ~= true and bad_menu ~= 0, "kaze-menu --bogus must fail")
+
+    local help_power = os.execute(fs.shell_quote(repo_dir .. "/bin/kaze-power") .. " --help >/dev/null 2>&1")
+    assert_true(help_power == true or help_power == 0, "kaze-power --help exit 0")
+    local bad_power = os.execute(fs.shell_quote(repo_dir .. "/bin/kaze-power") .. " --bogus >/dev/null 2>&1")
+    assert_true(bad_power ~= true and bad_power ~= 0, "kaze-power --bogus must fail")
 
     rm_rf(tmp)
 end)

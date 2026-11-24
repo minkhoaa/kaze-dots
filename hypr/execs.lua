@@ -23,7 +23,7 @@ hl.on("hyprland.start", function()
     end
 
     hl.exec_cmd("waybar")
-    hl.exec_cmd("fnott")
+    hl.exec_cmd("env GLIBC_TUNABLES=glibc.malloc.trim_threshold=65536 fnott")
     hl.exec_cmd("hypridle")
 
     hl.exec_cmd("wl-paste --type text --watch cliphist store")

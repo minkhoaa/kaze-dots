@@ -1,0 +1,163 @@
+#!/usr/bin/env lua
+
+local script_dir
+
+local function setup_path()
+    local home = os.getenv("HOME") or ""
+    local xdg_data = os.getenv("XDG_DATA_HOME")
+    if not xdg_data or xdg_data == "" then
+        xdg_data = home .. "/.local/share"
+    end
+    local paths = {}
+    local script = arg and arg[0] or ""
+    local q = "'" .. script:gsub("'", "'\\''") .. "'"
+    local p = io.popen("readlink -f " .. q .. " 2>/dev/null")
+    local resolved = p and p:read("*l") or nil
+    if p then
+        p:close()
+    end
+    script_dir = (resolved or script):match("^(.*)/[^/]+$")
+    if script_dir then
+        local repo_lua = script_dir .. "/../lua"
+        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+        if f then
+            f:close()
+            paths[#paths + 1] = repo_lua .. "/?.lua"
+            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+        end
+    end
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
+    paths[#paths + 1] = package.path
+    package.path = table.concat(paths, ";")
+end
+
+setup_path()
+
+local config = require("kaze.config")
+local fs = require("kaze.fs")
+local state = require("kaze.state")
+local themes = require("kaze.themes")
+
+local function cmd_exists(bin)
+    local ok = os.execute("command -v " .. fs.shell_quote(bin) .. " >/dev/null 2>&1")
+    return ok == true or ok == 0
+end
+
+local function sibling_or_path(bin)
+    if script_dir and fs.file_exists(script_dir .. "/" .. bin) then
+        return script_dir .. "/" .. bin
+    end
+    return bin
+end
+
+local function usage()
+    io.stdout:write("Usage: kaze-theme [--quiet] [noctalia|lavender|tokyonight|carbon|--menu|--current|-h|--help]\n")
+end
+
+local function pick_from_menu(current_theme)
+    local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
+    if running == true or running == 0 then
+        os.execute("pkill -x fuzzel >/dev/null 2>&1")
+        return nil
+    end
+    if not cmd_exists("fuzzel") then
+        io.stderr:write("kaze-theme: fuzzel not found in PATH\n")
+        os.exit(1)
+    end
+
+    local lines = {}
+    for _, name in ipairs(themes.list()) do
+        local t = themes.get(name)
+        local marker = (name == current_theme) and " (active)" or ""
+        lines[#lines + 1] = string.format("%s  —  %s%s", name, t.label, marker)
+    end
+
+    local cmd = string.format(
+        "printf '%%s\\n' %s | fuzzel --dmenu --lines %d -p %s",
+        fs.shell_quote(table.concat(lines, "\n")),
+        #lines,
+        fs.shell_quote("Theme > ")
+    )
+    local p = io.popen(cmd)
+    if not p then
+        io.stderr:write("kaze-theme: failed to launch fuzzel\n")
+        os.exit(1)
+    end
+    local out = p:read("*a") or ""
+    p:close()
+    local trimmed = out:gsub("[\r\n]+$", "")
+    if trimmed == "" then
+        return nil
+    end
+    return trimmed:match("^(%S+)")
+end
+
+local quiet = false
+local mode = nil
+for i = 1, #arg do
+    local a = arg[i]
+    if a == "-q" or a == "--quiet" then
+        quiet = true
+    elseif a == "-h" or a == "--help" then
+        usage()
+        os.exit(0)
+    elseif mode == nil then
+        mode = a
+    else
+        io.stderr:write("kaze-theme: too many arguments\n")
+        usage()
+        os.exit(2)
+    end
+end
+
+local cfg = config.load({ strict = false })
+
+if mode == "--current" then
+    io.stdout:write(cfg.theme .. "\n")
+    os.exit(0)
+end
+
+local target = mode
+if not target or target == "--menu" then
+    target = pick_from_menu(cfg.theme)
+    if not target then
+        os.exit(0)
+    end
+elseif target:sub(1, 1) == "-" then
+    io.stderr:write(string.format("kaze-theme: unknown option '%s'\n", target))
+    usage()
+    os.exit(2)
+end
+
+local ok_theme, theme = pcall(themes.get, target)
+if not ok_theme then
+    io.stderr:write(string.format("kaze-theme: %s\n", tostring(theme)))
+    os.exit(1)
+end
+
+local st = state.load()
+st.theme = theme.name
+local save_ok, save_err = pcall(state.save, st)
+if not save_ok then
+    io.stderr:write(string.format("kaze-theme: failed to write state: %s\n", tostring(save_err)))
+    os.exit(1)
+end
+
+local sync_bin = sibling_or_path("kaze-sync")
+local sync_ok = os.execute(fs.shell_quote(sync_bin) .. " --reload")
+if not (sync_ok == true or sync_ok == 0) then
+    io.stderr:write("kaze-theme: kaze-sync --reload failed\n")
+    os.exit(1)
+end
+
+local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
+local wl_disp = os.getenv("WAYLAND_DISPLAY")
+if not quiet and ((hypr_sig and hypr_sig ~= "") or (wl_disp and wl_disp ~= "")) and cmd_exists("notify-send") then
+    os.execute(string.format(
+        "i=0; while ! pgrep -x fnott >/dev/null 2>&1 && [ \"$i\" -lt 10 ]; do sleep 0.02; i=$((i + 1)); done; sleep 0.05; "
+            .. "notify-send -a kaze-theme -t 1800 -u low -h string:x-canonical-private-synchronous:kaze-switch %s %s >/dev/null 2>&1 || true",
+        fs.shell_quote("Theme switched"),
+        fs.shell_quote("Active: " .. theme.label)
+    ))
+end

@@ -17,11 +17,14 @@ package.path = table.concat({
 
 for _, mod in ipairs({
     "kaze._ctx",
+    "kaze.defaults",
     "kaze.config",
     "kaze.state",
     "kaze.themes",
     "kaze.layouts",
     "kaze.layouts.noctalia",
+    "kaze.layouts.caelestia",
+    "kaze.layouts.omarchy",
     "env",
     "core",
     "rules",
