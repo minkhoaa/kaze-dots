@@ -1,0 +1,55 @@
+-- User overrides for kaze-dots (~/.config/kaze/user.lua)
+-- This file is created once by scripts/apply.sh and never overwritten.
+-- Active layout and theme are normally persisted in ~/.config/kaze/state.lua
+-- via `kaze-layout` and `kaze-theme` (uncommenting `layout` or `theme` below
+-- will pin them and override state.lua).
+
+return {
+    -- layout = "noctalia", -- "noctalia" | "caelestia" | "omarchy"
+    -- theme = "noctalia",  -- "noctalia" | "lavender" | "tokyonight" | "carbon"
+
+    -- font = "JetBrainsMono Nerd Font",
+    -- terminal = "footclient",
+    -- browser = "firefox",
+    -- files = "footclient -e yazi",
+    -- wallpaper = "~/Pictures/Wallpapers/wallpaper.png",
+
+    -- kb_layout = "us",
+    -- cursor_theme = "Adwaita",
+    -- cursor_size = 24,
+
+    -- vol_step = 5,
+    -- vol_max = 1.5,
+    -- bright_step = 5,
+
+    -- blur = {
+    --     enabled = true,
+    --     size = 3,
+    --     passes = 1,
+    --     xray = true,
+    -- },
+    -- shadow = false,
+    -- opacity = {
+    --     active = 0.96,
+    --     inactive = 0.92,
+    -- },
+
+    -- Override layout-derived Hyprland geometry:
+    -- hypr = {
+    --     gaps_in = 5,
+    --     gaps_out = 10,
+    --     rounding = 10,
+    --     border_size = 1,
+    -- },
+
+    -- Override any 6-digit hex palette token (without '#'):
+    -- theme_overrides = {
+    --     accent = "89b4fa",
+    -- },
+
+    -- Multi-monitor configuration:
+    -- monitors = {
+    --     { output = "DP-1", mode = "2560x1440@144", position = "0x0", scale = 1 },
+    --     { output = "eDP-1", mode = "preferred", position = "auto", scale = 1 },
+    -- },
+}
