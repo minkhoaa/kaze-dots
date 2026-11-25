@@ -56,7 +56,6 @@ function M.build_waybar_config(_cfg, _theme)
 
   "hyprland/workspaces": {
     "format": "{name}",
-    "on-click": "activate",
     "on-scroll-up": "hyprctl dispatch \"hl.dsp.focus({ workspace = '-1' })\"",
     "on-scroll-down": "hyprctl dispatch \"hl.dsp.focus({ workspace = '+1' })\"",
     "sort-by-number": true,
@@ -97,6 +96,7 @@ function M.build_waybar_config(_cfg, _theme)
     "format": "{icon} {volume}%",
     "format-muted": "󰖁 Muted",
     "format-icons": ["󰕿", "󰖀", "󰕾"],
+    "hide-empty-text": true,
     "on-click": "kaze-tui audio",
     "on-click-right": "kaze-osd vol-mute",
     "on-scroll-up": "kaze-osd vol-up",

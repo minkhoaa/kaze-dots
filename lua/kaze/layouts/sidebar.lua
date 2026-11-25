@@ -57,7 +57,6 @@ function M.build_waybar_config(_cfg, _theme)
 
   "hyprland/workspaces": {
     "format": "",
-    "on-click": "activate",
     "on-scroll-up": "hyprctl dispatch \"hl.dsp.focus({ workspace = '-1' })\"",
     "on-scroll-down": "hyprctl dispatch \"hl.dsp.focus({ workspace = '+1' })\"",
     "sort-by-number": true,

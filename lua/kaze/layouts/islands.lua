@@ -56,7 +56,6 @@ function M.build_waybar_config(_cfg, _theme)
 
   "hyprland/workspaces": {
     "format": "",
-    "on-click": "activate",
     "on-scroll-up": "hyprctl dispatch \"hl.dsp.focus({ workspace = '-1' })\"",
     "on-scroll-down": "hyprctl dispatch \"hl.dsp.focus({ workspace = '+1' })\"",
     "sort-by-number": true,
@@ -105,6 +104,7 @@ function M.build_waybar_config(_cfg, _theme)
     "format": "{icon} {volume}%",
     "format-muted": "󰖁 Muted",
     "format-icons": ["󰕿", "󰖀", "󰕾"],
+    "hide-empty-text": true,
     "on-click": "kaze-tui audio",
     "on-click-right": "kaze-osd vol-mute",
     "on-scroll-up": "kaze-osd vol-up",
@@ -245,6 +245,11 @@ window#waybar {
 }
 
 #tray {
+    padding: 0 2px 0 8px;
+    margin: 0;
+}
+
+#tray.empty {
     padding: 0;
     margin: 0;
 }
@@ -286,6 +291,12 @@ window#waybar {
 
 #wireplumber.muted {
     color: @danger;
+}
+
+#wireplumber.empty,
+#battery.empty {
+    padding: 0;
+    margin: 0;
 }
 
 #battery.charging,

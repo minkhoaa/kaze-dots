@@ -80,6 +80,8 @@ local wifi_bin = power_profile.wifi_tool()
 local wifi_label = wifi_bin == "impala" and "󰖩  Wi-Fi (impala)" or "󰖩  Wi-Fi (nmtui)"
 
 local items = {
+    { label = "󰀻  App Launcher",       cmd = "fuzzel", needs = { "fuzzel" } },
+    { label = "󰆍  Terminal",           cmd = fs.shell_quote(sibling_or_path("kaze-footclient")) .. " -N", needs = { "footclient" } },
     { label = "󰙵  Switch Layout",      cmd = fs.shell_quote(sibling_or_path("kaze-layout")) .. " --menu" },
     { label = "󰏘  Switch Theme",       cmd = fs.shell_quote(sibling_or_path("kaze-theme")) .. " --menu" },
     { label = "󰸉  Switch Wallpaper",   cmd = fs.shell_quote(sibling_or_path("kaze-wall")) .. " --menu", check = function() return kaze_tool_exists("kaze-wall") end },
@@ -158,7 +160,19 @@ if not action then
     os.exit(1)
 end
 
-local ok = os.execute(action)
+local function in_restarted_unit()
+    local cgroup = fs.read_file("/proc/self/cgroup")
+    return cgroup ~= nil and cgroup:find("kaze%-waybar%.service") ~= nil
+end
+
+local run_cmd = action
+if in_restarted_unit() and cmd_exists("systemd-run") then
+    -- Escape kaze-waybar.service's cgroup so layout/theme switches that restart
+    -- Waybar do not terminate the switch transaction before state.lua commits.
+    run_cmd = "systemd-run --user --scope --quiet -- /bin/sh -c " .. fs.shell_quote(action)
+end
+
+local ok = os.execute(run_cmd)
 if not (ok == true or ok == 0) then
     os.exit(1)
 end
