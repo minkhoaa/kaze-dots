@@ -14,6 +14,12 @@ local M = {
         fnott_anchor = "top-right",
         fnott_edge_margin_vertical = 36,
         fnott_edge_margin_horizontal = 10,
+        popup_top_y = 8,
+        popup_right_x = 8,
+        popup_right_y = 8,
+        drawer_right_x = 8,
+        drawer_top_y = 36,
+        drawer_height_sub = 46,
     },
 }
 
@@ -50,12 +56,14 @@ function M.build_waybar_config(_cfg, _theme)
 
   "custom/menu": {
     "format": "󰣇",
-    "tooltip-format": "Kaze Menu",
-    "on-click": "kaze-menu"
+    "tooltip-format": "Kaze Menu (Right-click: Quick Panel)",
+    "on-click": "kaze-menu",
+    "on-click-right": "kaze-panel"
   },
 
   "hyprland/workspaces": {
     "format": "{name}",
+    "smooth-scrolling-threshold": 1.0,
     "on-scroll-up": "hyprctl dispatch \"hl.dsp.focus({ workspace = '-1' })\"",
     "on-scroll-down": "hyprctl dispatch \"hl.dsp.focus({ workspace = '+1' })\"",
     "sort-by-number": true,
@@ -73,7 +81,8 @@ function M.build_waybar_config(_cfg, _theme)
   "clock": {
     "interval": 60,
     "format": "{:%a %d %b · %H:%M}",
-    "tooltip-format": "<tt>{calendar}</tt>"
+    "tooltip-format": "<tt>{calendar}</tt>",
+    "on-click": "kaze-dashboard"
   },
 
   "tray": {
@@ -89,7 +98,8 @@ function M.build_waybar_config(_cfg, _theme)
     "tooltip-format-wifi": "{essid} ({signalStrength}%) · {ipaddr}",
     "tooltip-format-ethernet": "{ifname} · {ipaddr}",
     "tooltip-format-disconnected": "Disconnected",
-    "on-click": "kaze-tui wifi"
+    "on-click": "kaze-wifi",
+    "on-click-right": "kaze-tui wifi"
   },
 
   "wireplumber": {
@@ -97,7 +107,8 @@ function M.build_waybar_config(_cfg, _theme)
     "format-muted": "󰖁 Muted",
     "format-icons": ["󰕿", "󰖀", "󰕾"],
     "hide-empty-text": true,
-    "on-click": "kaze-tui audio",
+    "on-click": "kaze-audio-sink",
+    "on-click-middle": "kaze-tui audio",
     "on-click-right": "kaze-osd vol-mute",
     "on-scroll-up": "kaze-osd vol-up",
     "on-scroll-down": "kaze-osd vol-down"
@@ -115,14 +126,16 @@ function M.build_waybar_config(_cfg, _theme)
     "format-full": "󰁹 {capacity}%",
     "format-icons": ["󰁺", "󰁼", "󰁾", "󰂀", "󰁹"],
     "tooltip-format": "{timeTo} · {power:.1f}W",
-    "on-click": "kaze-tui sysmon"
+    "on-click": "kaze-panel",
+    "on-click-right": "kaze-tui sysmon"
   },
 
 ]] .. indicators.config .. [[
   "custom/power": {
     "format": "󰐥",
-    "tooltip-format": "Power Menu",
-    "on-click": "kaze-power"
+    "tooltip-format": "Power Menu (Right-click: Quick Panel)",
+    "on-click": "kaze-power",
+    "on-click-right": "kaze-panel"
   }
 }
 ]]
@@ -262,6 +275,14 @@ window#waybar.empty #window {
 
 #wireplumber.muted {
     color: @danger;
+}
+
+#wireplumber.empty,
+#battery.empty {
+    padding: 0;
+    margin: 0;
+    min-width: 0;
+    min-height: 0;
 }
 
 #battery.charging,

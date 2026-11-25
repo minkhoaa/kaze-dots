@@ -8,6 +8,9 @@ StartLimitBurst=5
 
 [Service]
 Type=exec
+Slice=session.slice
+Environment=NO_AT_BRIDGE=1
+Environment=GLIBC_TUNABLES=glibc.malloc.arena_max=2:glibc.malloc.trim_threshold=65536
 EnvironmentFile=%t/kaze/session.env
 ExecStart=/usr/bin/waybar --config ${XDG_CONFIG_HOME}/waybar/config.jsonc --style ${XDG_CONFIG_HOME}/waybar/style.css
 Restart=on-failure

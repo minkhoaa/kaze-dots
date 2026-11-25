@@ -1,110 +1,15 @@
 -- Pure-Lua monitor parser and layout planner for `kaze-display` (0 I/O).
 local M = {}
 
-local function parse_string(src, pos)
-    local out = {}
-    local i = pos + 1
-    local len = #src
-    while i <= len do
-        local c = src:sub(i, i)
-        if c == '"' then
-            return table.concat(out), i + 1
-        elseif c == "\\" then
-            local nxt = src:sub(i + 1, i + 1)
-            local escapes = { ['"'] = '"', ["\\"] = "\\", ["/"] = "/", n = "\n", r = "\r", t = "\t" }
-            if escapes[nxt] then
-                out[#out + 1] = escapes[nxt]
-                i = i + 2
-            elseif nxt == "u" then
-                out[#out + 1] = "?"
-                i = i + 6
-            else
-                out[#out + 1] = nxt
-                i = i + 2
-            end
-        else
-            out[#out + 1] = c
-            i = i + 1
-        end
-    end
-    return nil, i
-end
+local json = require("kaze.json")
 
-local function skip_ws(src, i)
-    while i <= #src and src:sub(i, i):match("%s") do
-        i = i + 1
-    end
-    return i
-end
-
-local function parse_value(src, i)
-    i = skip_ws(src, i)
-    local c = src:sub(i, i)
-    if c == '"' then
-        return parse_string(src, i)
-    elseif c == "{" then
-        local obj = {}
-        i = skip_ws(src, i + 1)
-        if src:sub(i, i) == "}" then
-            return obj, i + 1
-        end
-        while i <= #src do
-            i = skip_ws(src, i)
-            if src:sub(i, i) ~= '"' then
-                return nil, i
-            end
-            local key
-            key, i = parse_string(src, i)
-            if not key then return nil, i end
-            i = skip_ws(src, i)
-            if src:sub(i, i) ~= ":" then return nil, i end
-            local val
-            val, i = parse_value(src, i + 1)
-            obj[key] = val
-            i = skip_ws(src, i)
-            local sep = src:sub(i, i)
-            if sep == "," then
-                i = i + 1
-            elseif sep == "}" then
-                return obj, i + 1
-            else
-                return nil, i
-            end
-        end
-        return nil, i
-    elseif c == "[" then
-        local arr = {}
-        i = skip_ws(src, i + 1)
-        if src:sub(i, i) == "]" then
-            return arr, i + 1
-        end
-        while i <= #src do
-            local val
-            val, i = parse_value(src, i)
-            arr[#arr + 1] = val
-            i = skip_ws(src, i)
-            local sep = src:sub(i, i)
-            if sep == "," then
-                i = i + 1
-            elseif sep == "]" then
-                return arr, i + 1
-            else
-                return nil, i
-            end
-        end
-        return nil, i
-    elseif src:sub(i, i + 3) == "true" then
-        return true, i + 4
-    elseif src:sub(i, i + 4) == "false" then
-        return false, i + 5
-    elseif src:sub(i, i + 3) == "null" then
-        return nil, i + 4
+local function fmt_scale(m)
+    local s = tonumber(m and m.scale) or 1
+    if s <= 0 then s = 1 end
+    if s % 1 == 0 then
+        return tostring(math.floor(s))
     else
-        local num_str = src:match("^-?%d+%.?%d*[eE]?[+-]?%d*", i)
-        if num_str and #num_str > 0 then
-            return tonumber(num_str), i + #num_str
-        end
-        return nil, i + 1
+        return tostring(s)
     end
 end
 
@@ -112,8 +17,8 @@ function M.parse_monitors(json_str)
     if type(json_str) ~= "string" or not json_str:find("%S") then
         return {}
     end
-    local parsed = parse_value(json_str, 1)
-    if type(parsed) ~= "table" then
+    local ok, parsed = pcall(json.decode, json_str)
+    if not ok or type(parsed) ~= "table" then
         return {}
     end
     local out = {}
@@ -179,13 +84,13 @@ function M.plan(mode, monitors)
     if mode == "auto" then
         local rules = {}
         for _, m in ipairs(monitors) do
-            rules[#rules + 1] = m.name .. ",preferred,auto,1"
+            rules[#rules + 1] = m.name .. ",preferred,auto," .. fmt_scale(m)
         end
         return { rules = rules, summary = "Reset all monitors to auto" }
     end
 
     if mode == "internal" then
-        local rules = { internal.name .. ",preferred,0x0,1" }
+        local rules = { internal.name .. ",preferred,0x0," .. fmt_scale(internal) }
         for _, ext in ipairs(externals) do
             rules[#rules + 1] = ext.name .. ",disable"
         end
@@ -199,32 +104,32 @@ function M.plan(mode, monitors)
     if mode == "external" then
         local rules = {}
         for _, ext in ipairs(externals) do
-            rules[#rules + 1] = ext.name .. ",preferred,auto,1"
+            rules[#rules + 1] = ext.name .. ",preferred,auto," .. fmt_scale(ext)
         end
         rules[#rules + 1] = internal.name .. ",disable"
         return { rules = rules, summary = "External only (" .. primary_ext.name .. ")" }
     elseif mode == "extend-right" then
-        local rules = { internal.name .. ",preferred,0x0,1" }
+        local rules = { internal.name .. ",preferred,0x0," .. fmt_scale(internal) }
         for _, ext in ipairs(externals) do
-            rules[#rules + 1] = ext.name .. ",preferred,auto-right,1"
+            rules[#rules + 1] = ext.name .. ",preferred,auto-right," .. fmt_scale(ext)
         end
         return { rules = rules, summary = "Extend right (" .. internal.name .. " -> " .. primary_ext.name .. ")" }
     elseif mode == "extend-left" then
-        local rules = { internal.name .. ",preferred,0x0,1" }
+        local rules = { internal.name .. ",preferred,0x0," .. fmt_scale(internal) }
         for _, ext in ipairs(externals) do
-            rules[#rules + 1] = ext.name .. ",preferred,auto-left,1"
+            rules[#rules + 1] = ext.name .. ",preferred,auto-left," .. fmt_scale(ext)
         end
         return { rules = rules, summary = "Extend left (" .. primary_ext.name .. " <- " .. internal.name .. ")" }
     elseif mode == "extend-up" then
-        local rules = { internal.name .. ",preferred,0x0,1" }
+        local rules = { internal.name .. ",preferred,0x0," .. fmt_scale(internal) }
         for _, ext in ipairs(externals) do
-            rules[#rules + 1] = ext.name .. ",preferred,auto-up,1"
+            rules[#rules + 1] = ext.name .. ",preferred,auto-up," .. fmt_scale(ext)
         end
         return { rules = rules, summary = "Extend above (" .. primary_ext.name .. " above " .. internal.name .. ")" }
     elseif mode == "mirror" then
-        local rules = { internal.name .. ",preferred,0x0,1" }
+        local rules = { internal.name .. ",preferred,0x0," .. fmt_scale(internal) }
         for _, ext in ipairs(externals) do
-            rules[#rules + 1] = ext.name .. ",preferred,auto,1,mirror," .. internal.name
+            rules[#rules + 1] = ext.name .. ",preferred,auto," .. fmt_scale(ext) .. ",mirror," .. internal.name
         end
         return { rules = rules, summary = "Mirror (" .. primary_ext.name .. " -> " .. internal.name .. ")" }
     end

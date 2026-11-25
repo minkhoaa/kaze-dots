@@ -1,4 +1,5 @@
 local fs = require("kaze.fs")
+local popups = require("kaze.popups")
 
 local M = {}
 
@@ -184,9 +185,10 @@ function M.menu(opts)
 
     local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
     local cmd = string.format(
-        "%sprintf '%%s\\n' %s | fuzzel --dmenu --lines %d -p %s",
+        "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 40 --lines %d -p %s",
         utf8_guard,
         fs.shell_quote(table.concat(lines, "\n")),
+        popups.active_right_flags(),
         #lines,
         fs.shell_quote("Power Profile > ")
     )

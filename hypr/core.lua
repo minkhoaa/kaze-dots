@@ -6,6 +6,9 @@ local theme = ctx.theme
 local layout = ctx.layout
 
 local blur = cfg.blur or {}
+local op = cfg.opacity or {}
+local active_op = tonumber(op.active) or 1.0
+local inactive_op = tonumber(op.inactive) or 1.0
 
 hl.config({
     general = {
@@ -26,6 +29,9 @@ hl.config({
 
     decoration = {
         rounding = layout.hypr.rounding,
+        active_opacity = active_op,
+        inactive_opacity = inactive_op,
+        fullscreen_opacity = 1.0,
         blur = {
             enabled = blur.enabled ~= false,
             size = blur.size or 3,
@@ -37,6 +43,30 @@ hl.config({
         },
         shadow = {
             enabled = cfg.shadow == true,
+        },
+    },
+
+    group = {
+        col = {
+            border_active = themes.hypr_rgba(theme.accent, "cc"),
+            border_inactive = themes.hypr_rgba(theme.border, "88"),
+            border_locked_active = themes.hypr_rgba(theme.warn, "cc"),
+            border_locked_inactive = themes.hypr_rgba(theme.border, "aa"),
+        },
+        groupbar = {
+            font_family = cfg.font or "JetBrainsMono Nerd Font",
+            font_size = 11,
+            height = 18,
+            indicator_height = 2,
+            gradients = false,
+            text_color = themes.hypr_rgb(theme.fg),
+            text_color_inactive = themes.hypr_rgb(theme.fg_muted),
+            col = {
+                active = themes.hypr_rgba(theme.accent, "cc"),
+                inactive = themes.hypr_rgba(theme.surface, "cc"),
+                locked_active = themes.hypr_rgba(theme.warn, "cc"),
+                locked_inactive = themes.hypr_rgba(theme.surface, "cc"),
+            },
         },
     },
 
@@ -67,7 +97,21 @@ hl.config({
         mouse_move_enables_dpms = true,
         key_press_enables_dpms = true,
         middle_click_paste = false,
+        close_special_on_empty = true,
         background_color = themes.hypr_rgb(theme.bg),
+    },
+
+    render = {
+        direct_scanout = 1,
+    },
+
+    xwayland = {
+        force_zero_scaling = true,
+    },
+
+    ecosystem = {
+        no_update_news = true,
+        no_donation_nag = true,
     },
 })
 

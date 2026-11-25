@@ -1,0 +1,199 @@
+#!/usr/bin/env lua
+
+local script_dir
+
+local function setup_path()
+    local home = os.getenv("HOME") or ""
+    local xdg_data = os.getenv("XDG_DATA_HOME")
+    if not xdg_data or xdg_data == "" then
+        xdg_data = home .. "/.local/share"
+    end
+    local paths = {}
+    local script = arg and arg[0] or ""
+    local direct_base = script:match("^(.*)/[^/]+$")
+    local direct_lua = direct_base and (direct_base .. "/../lua") or nil
+    local f_direct = direct_lua and io.open(direct_lua .. "/kaze/defaults.lua", "r") or nil
+    if f_direct then
+        f_direct:close()
+        script_dir = direct_base
+        paths[#paths + 1] = direct_lua .. "/?.lua"
+        paths[#paths + 1] = direct_lua .. "/?/init.lua"
+    else
+        local q = "'" .. script:gsub("'", "'\\''") .. "'"
+        local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+        local resolved = p and p:read("*l") or nil
+        if p then p:close() end
+        script_dir = (resolved or script):match("^(.*)/[^/]+$")
+        if script_dir then
+            local repo_lua = script_dir .. "/../lua"
+            local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+            if f then
+                f:close()
+                paths[#paths + 1] = repo_lua .. "/?.lua"
+                paths[#paths + 1] = repo_lua .. "/?/init.lua"
+            end
+        end
+    end
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
+    paths[#paths + 1] = package.path
+    package.path = table.concat(paths, ";")
+end
+
+setup_path()
+
+local fs = require("kaze.fs")
+local popups = require("kaze.popups")
+
+local list_only = false
+local quiet = false
+for i = 1, #arg do
+    local a = arg[i]
+    if a == "-h" or a == "--help" then
+        io.stdout:write("Usage: kaze-audio-sink [--quiet] [--list]\n")
+        os.exit(0)
+    elseif a == "-q" or a == "--quiet" then
+        quiet = true
+    elseif a == "--list" then
+        list_only = true
+    else
+        io.stderr:write("Usage: kaze-audio-sink [--quiet] [--list]\n")
+        os.exit(2)
+    end
+end
+
+local function sibling_or_path(bin)
+    if script_dir and fs.file_exists(script_dir .. "/" .. bin) then
+        return script_dir .. "/" .. bin
+    end
+    return bin
+end
+
+if not list_only then
+    local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
+    if running == true or running == 0 then
+        os.execute("pkill -x fuzzel >/dev/null 2>&1")
+        os.exit(0)
+    end
+    if not fs.command_exists("fuzzel") then
+        io.stderr:write("kaze-audio-sink: fuzzel not found in PATH\n")
+        os.exit(1)
+    end
+end
+
+if not fs.command_exists("wpctl") then
+    io.stderr:write("kaze-audio-sink: wpctl not found in PATH\n")
+    os.exit(1)
+end
+
+local function parse_sinks(status_text)
+    local sinks = {}
+    local in_audio = false
+    local in_sinks = false
+    for line in (status_text or ""):gmatch("[^\r\n]+") do
+        if line:match("^%S") then
+            in_audio = (line:match("^Audio%s*$") ~= nil)
+            in_sinks = false
+        elseif in_audio then
+            local section = line:match("[├└]─%s*([^:]+):")
+            if section then
+                in_sinks = (section:match("^Sinks$") ~= nil)
+            elseif in_sinks then
+                local stripped = line:gsub("^[│%s]+", "")
+                local star, id, name, vol = stripped:match("^(%*?)%s*(%d+)%.%s+(.-)%s*%[vol:%s*([^%]]+)%]%s*$")
+                if not id then
+                    star, id, name = stripped:match("^(%*?)%s*(%d+)%.%s+(.-)%s*$")
+                end
+                if id and name and name ~= "" then
+                    local raw_v = vol and tonumber(vol:match("([%d%.]+)")) or nil
+                    local pct = raw_v and math.floor(raw_v * 100 + 0.5) or nil
+                    local muted = vol ~= nil and vol:find("MUTED", 1, true) ~= nil
+                    sinks[#sinks + 1] = {
+                        id = id,
+                        name = name,
+                        active = (star == "*"),
+                        pct = pct,
+                        muted = muted,
+                    }
+                end
+            end
+        end
+    end
+    return sinks
+end
+
+local status_out = fs.capture("wpctl status 2>/dev/null")
+local sinks = parse_sinks(status_out)
+
+local rows = {}
+local sink_by_row = {}
+for _, s in ipairs(sinks) do
+    local vol_tag = ""
+    if s.muted then
+        vol_tag = "  [Muted]"
+    elseif s.pct then
+        vol_tag = string.format("  [%d%%]", s.pct)
+    end
+    local act_tag = s.active and " (active)" or ""
+    local icon = s.active and "󰓃" or "󰓄"
+    local row = string.format("%s  %s. %s%s%s", icon, s.id, s.name, vol_tag, act_tag)
+    rows[#rows + 1] = row
+    sink_by_row[row] = s
+end
+
+if list_only then
+    if #rows > 0 then
+        io.stdout:write(table.concat(rows, "\n") .. "\n")
+    end
+    os.exit(0)
+end
+
+local mixer_row = "󰕾  Open Audio Mixer"
+rows[#rows + 1] = mixer_row
+
+local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
+local cmd = string.format(
+    "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 56 --lines %d -p %s",
+    utf8_guard,
+    fs.shell_quote(table.concat(rows, "\n")),
+    popups.active_right_flags(),
+    math.min(10, #rows),
+    fs.shell_quote("Audio Output > ")
+)
+local p = io.popen(cmd)
+if not p then
+    io.stderr:write("kaze-audio-sink: failed to launch fuzzel\n")
+    os.exit(1)
+end
+local out = p:read("*a") or ""
+p:close()
+
+local choice = out:gsub("[\r\n]+$", "")
+if choice == "" then
+    os.exit(0)
+end
+
+if choice == mixer_row then
+    local ok_tui = os.execute(fs.shell_quote(sibling_or_path("kaze-tui")) .. " audio")
+    os.exit((ok_tui == true or ok_tui == 0) and 0 or 1)
+end
+
+local target = sink_by_row[choice]
+if not target then
+    io.stderr:write("kaze-audio-sink: unrecognized selection\n")
+    os.exit(1)
+end
+
+local ok_set = os.execute("wpctl set-default " .. fs.shell_quote(target.id))
+if not (ok_set == true or ok_set == 0) then
+    io.stderr:write("kaze-audio-sink: failed to switch sink to " .. target.id .. "\n")
+    os.exit(1)
+end
+
+if not quiet and fs.command_exists("notify-send") then
+    os.execute(string.format(
+        "notify-send -a kaze-audio-sink -t 1600 -u low -h string:x-canonical-private-synchronous:kaze-switch %s %s >/dev/null 2>&1 || true",
+        fs.shell_quote("Audio output"),
+        fs.shell_quote(target.name)
+    ))
+end

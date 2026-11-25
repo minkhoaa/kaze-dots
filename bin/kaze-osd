@@ -8,20 +8,34 @@ local function setup_path()
     end
     local paths = {}
     local script = arg and arg[0] or ""
-    local q = "'" .. script:gsub("'", "'\\''") .. "'"
-    local p = io.popen("readlink -f " .. q .. " 2>/dev/null")
-    local resolved = p and p:read("*l") or nil
-    if p then
-        p:close()
-    end
-    local base = (resolved or script):match("^(.*)/[^/]+$")
-    if base then
-        local repo_lua = base .. "/../lua"
-        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
-        if f then
-            f:close()
-            paths[#paths + 1] = repo_lua .. "/?.lua"
-            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+    local direct_base = script:match("^(.*)/[^/]+$")
+    local direct_lua = direct_base and (direct_base .. "/../lua") or nil
+    local f_direct = direct_lua and io.open(direct_lua .. "/kaze/defaults.lua", "r") or nil
+    if f_direct then
+        f_direct:close()
+        paths[#paths + 1] = direct_lua .. "/?.lua"
+        paths[#paths + 1] = direct_lua .. "/?/init.lua"
+    else
+        local f_inst = io.open(xdg_data .. "/kaze-dots/lua/kaze/defaults.lua", "r")
+        if f_inst then
+            f_inst:close()
+        else
+            local q = "'" .. script:gsub("'", "'\\''") .. "'"
+            local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+            local resolved = p and p:read("*l") or nil
+            if p then
+                p:close()
+            end
+            local base = (resolved or script):match("^(.*)/[^/]+$")
+            if base then
+                local repo_lua = base .. "/../lua"
+                local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+                if f then
+                    f:close()
+                    paths[#paths + 1] = repo_lua .. "/?.lua"
+                    paths[#paths + 1] = repo_lua .. "/?/init.lua"
+                end
+            end
         end
     end
     paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
@@ -42,17 +56,18 @@ local VALID_ACTIONS = {
     ["mic-mute"] = true,
     ["bright-up"] = true,
     ["bright-down"] = true,
+    ["media-info"] = true,
 }
 
 local action = arg[1]
 if action == "-h" or action == "--help" then
-    io.stdout:write("Usage: kaze-osd <vol-up|vol-down|vol-mute|mic-mute|bright-up|bright-down>\n")
+    io.stdout:write("Usage: kaze-osd <vol-up|vol-down|vol-mute|mic-mute|bright-up|bright-down|media-info>\n")
     os.exit(0)
 end
 
 if not action or not VALID_ACTIONS[action] then
     io.stderr:write(string.format(
-        "kaze-osd: invalid action '%s' (expected: vol-up, vol-down, vol-mute, mic-mute, bright-up, bright-down)\n",
+        "kaze-osd: invalid action '%s' (expected: vol-up, vol-down, vol-mute, mic-mute, bright-up, bright-down, media-info)\n",
         tostring(action or "")
     ))
     os.exit(1)
@@ -74,9 +89,10 @@ local function clamp_pct(v)
     return n
 end
 
-local function send_osd(title, body, pct)
+local function send_osd(title, body, pct, timeout_ms)
     local cmd = string.format(
-        "exec notify-send -a kaze-osd -t 1400 -u low -h string:x-canonical-private-synchronous:kaze-osd -h int:value:%d %s %s >/dev/null 2>&1",
+        "exec notify-send -a kaze-osd -t %d -u low -h string:x-canonical-private-synchronous:kaze-osd -h int:value:%d %s %s >/dev/null 2>&1",
+        tonumber(timeout_ms) or 1400,
         clamp_pct(pct),
         fs.shell_quote(title),
         fs.shell_quote(body)
@@ -97,6 +113,41 @@ end
 
 local function step(value)
     return math.floor(math.max(1, math.min(100, tonumber(value) or 5)))
+end
+
+if action == "media-info" then
+    require_cmd("playerctl")
+    local meta = fs.capture(
+        "exec playerctl metadata --format '{{status}}\t{{artist}}\t{{title}}\t{{position}}\t{{mpris:length}}' 2>/dev/null"
+    )
+    if not meta or not meta:find("%S") then
+        send_osd("󰎊  Now Playing", "No active media player", 0, 1800)
+        os.exit(0)
+    end
+    local line = meta:match("^([^\r\n]+)") or ""
+    local status, artist, title, pos_s, len_s = line:match("^([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)$")
+    status = (status and status ~= "") and status or "Stopped"
+    title = (title and title ~= "") and title or "Unknown track"
+    local body = (artist and artist ~= "") and artist or status
+    local pos_us = tonumber(pos_s)
+    local len_us = tonumber(len_s)
+    local pct = 0
+    local function fmt_time(us)
+        local sec = math.max(0, math.floor(us / 1000000 + 0.5))
+        if sec >= 3600 then
+            return string.format("%d:%02d:%02d", sec // 3600, (sec % 3600) // 60, sec % 60)
+        end
+        return string.format("%d:%02d", sec // 60, sec % 60)
+    end
+    if pos_us and len_us and len_us > 0 then
+        pct = clamp_pct((pos_us / len_us) * 100)
+        body = string.format("%s · %s / %s", body, fmt_time(pos_us), fmt_time(len_us))
+    elseif pos_us and pos_us > 0 then
+        body = string.format("%s · %s", body, fmt_time(pos_us))
+    end
+    local icon = (status == "Playing") and "󰎈" or ((status == "Paused") and "󰏤" or "󰎊")
+    send_osd(icon .. "  " .. title, body, pct, 2200)
+    os.exit(0)
 end
 
 if action:match("^bright-") then

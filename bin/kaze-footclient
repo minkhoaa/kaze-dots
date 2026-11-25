@@ -1,15 +1,36 @@
 #!/usr/bin/env lua
 
-local script = arg[0]:gsub("'", "'\\''")
-local link = io.popen("readlink -f -- '" .. script .. "' 2>/dev/null")
-local resolved = link and link:read("*l")
-if link then link:close() end
-local repo = ((resolved or arg[0]):match("^(.*)/[^/]+$") or ".") .. "/../lua"
+local script = arg and arg[0] or ""
 local data = os.getenv("XDG_DATA_HOME") or ""
 if data == "" then data = (os.getenv("HOME") or "") .. "/.local/share" end
 local installed = data .. "/kaze-dots/lua"
-package.path = table.concat({ repo .. "/?.lua", repo .. "/?/init.lua",
-    installed .. "/?.lua", installed .. "/?/init.lua", package.path }, ";")
+local direct_dir = script:match("^(.*)/[^/]+$")
+local repo = direct_dir and (direct_dir .. "/../lua") or nil
+local f_repo = repo and io.open(repo .. "/kaze/defaults.lua", "r") or nil
+if f_repo then
+    f_repo:close()
+else
+    local f_inst = io.open(installed .. "/kaze/defaults.lua", "r")
+    if f_inst then
+        f_inst:close()
+        repo = nil
+    else
+        local q = "'" .. script:gsub("'", "'\\''") .. "'"
+        local link = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+        local resolved = link and link:read("*l")
+        if link then link:close() end
+        repo = ((resolved or script):match("^(.*)/[^/]+$") or ".") .. "/../lua"
+    end
+end
+local paths = {}
+if repo then
+    paths[#paths + 1] = repo .. "/?.lua"
+    paths[#paths + 1] = repo .. "/?/init.lua"
+end
+paths[#paths + 1] = installed .. "/?.lua"
+paths[#paths + 1] = installed .. "/?/init.lua"
+paths[#paths + 1] = package.path
+package.path = table.concat(paths, ";")
 
 local fs = require("kaze.fs")
 local command = { "exec footclient -E" }

@@ -8,20 +8,34 @@ local function setup_path()
     end
     local paths = {}
     local script = arg and arg[0] or ""
-    local q = "'" .. script:gsub("'", "'\\''") .. "'"
-    local p = io.popen("readlink -f " .. q .. " 2>/dev/null")
-    local resolved = p and p:read("*l") or nil
-    if p then
-        p:close()
-    end
-    local base = (resolved or script):match("^(.*)/[^/]+$")
-    if base then
-        local repo_lua = base .. "/../lua"
-        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
-        if f then
-            f:close()
-            paths[#paths + 1] = repo_lua .. "/?.lua"
-            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+    local direct_base = script:match("^(.*)/[^/]+$")
+    local direct_lua = direct_base and (direct_base .. "/../lua") or nil
+    local f_direct = direct_lua and io.open(direct_lua .. "/kaze/defaults.lua", "r") or nil
+    if f_direct then
+        f_direct:close()
+        paths[#paths + 1] = direct_lua .. "/?.lua"
+        paths[#paths + 1] = direct_lua .. "/?/init.lua"
+    else
+        local f_inst = io.open(xdg_data .. "/kaze-dots/lua/kaze/defaults.lua", "r")
+        if f_inst then
+            f_inst:close()
+        else
+            local q = "'" .. script:gsub("'", "'\\''") .. "'"
+            local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+            local resolved = p and p:read("*l") or nil
+            if p then
+                p:close()
+            end
+            local base = (resolved or script):match("^(.*)/[^/]+$")
+            if base then
+                local repo_lua = base .. "/../lua"
+                local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+                if f then
+                    f:close()
+                    paths[#paths + 1] = repo_lua .. "/?.lua"
+                    paths[#paths + 1] = repo_lua .. "/?/init.lua"
+                end
+            end
         end
     end
     paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
@@ -38,10 +52,12 @@ local emit_fnott = require("kaze.emit_fnott")
 local emit_foot = require("kaze.emit_foot")
 local emit_fuzzel = require("kaze.emit_fuzzel")
 local emit_hyprlock = require("kaze.emit_hyprlock")
+local emit_palette = require("kaze.emit_palette")
 local emit_waybar = require("kaze.emit_waybar")
 local fs = require("kaze.fs")
 local session = require("kaze.session")
 local state = require("kaze.state")
+local themes = require("kaze.themes")
 local transaction = require("kaze.transaction")
 
 local function usage(output)
@@ -100,9 +116,6 @@ while i <= #arg do
             ["--set-profile"] = "profile",
         })[a]
         updates[key] = v
-        if key == "theme" and v == "dynamic" then
-            set_dynamic_theme = true
-        end
         has_updates = true
         do_reload = true
         i = i + 2
@@ -169,6 +182,7 @@ if has_updates then
     end
 
     candidate = state.load()
+    local prev_theme = user_tbl.theme or candidate.theme or defaults.theme
 
     if updates.wallpaper then
         local resolved_wall = resolve_wallpaper_arg(updates.wallpaper)
@@ -184,8 +198,24 @@ if has_updates then
         candidate[k] = v
     end
 
+    if updates.theme then
+        if updates.theme == "paper" then
+            if prev_theme ~= "paper" then
+                candidate.last_dark_theme = prev_theme
+            end
+        else
+            candidate.last_dark_theme = updates.theme
+        end
+    end
+
     local effective_theme = user_tbl.theme or candidate.theme or defaults.theme
-    if set_dynamic_theme or (updates.wallpaper and effective_theme == "dynamic") then
+    local refresh_cached_dyn = effective_theme == "paper"
+        and candidate.last_dark_theme == "dynamic"
+        and candidate.dynamic_palette ~= nil
+    if set_dynamic_theme
+        or (effective_theme == "dynamic" and candidate.dynamic_palette == nil)
+        or (updates.wallpaper and (effective_theme == "dynamic" or refresh_cached_dyn))
+    then
         local raw_wall = user_tbl.wallpaper or candidate.wallpaper or defaults.wallpaper
         local wall_for_theme = fs.expand_home(raw_wall)
         local pal, pal_err = transaction.extract_matugen_palette(wall_for_theme)
@@ -193,7 +223,7 @@ if has_updates then
             fail(pal_err)
         end
         candidate.dynamic_palette = pal
-    elseif updates.theme and updates.theme ~= "dynamic" then
+    elseif updates.theme and updates.theme ~= "dynamic" and updates.theme ~= "paper" then
         candidate.dynamic_palette = nil
     end
 end
@@ -214,6 +244,7 @@ local foot_ini = emit_foot.emit(cfg, theme, layout)
 local fuzzel_ini = emit_fuzzel.emit(cfg, theme, layout)
 local fnott_ini = emit_fnott.emit(cfg, theme, layout)
 local hyprlock_conf = emit_hyprlock.emit(cfg, theme, layout)
+local palette_out = emit_palette.emit(cfg, theme, layout)
 
 if check_only then
     io.stdout:write(string.format("kaze-sync: check ok (layout=%s, theme=%s)\n", cfg.layout, cfg.theme))
@@ -221,6 +252,7 @@ if check_only then
 end
 
 local cfg_dir = fs.config_dir()
+local cache_dir = fs.cache_dir()
 local outputs = {
     { cfg_dir .. "/waybar/colors.css", waybar.colors_css },
     { cfg_dir .. "/waybar/config.jsonc", waybar.config_jsonc },
@@ -229,6 +261,9 @@ local outputs = {
     { cfg_dir .. "/fuzzel/fuzzel.ini", fuzzel_ini, "fuzzel --check-config --config" },
     { cfg_dir .. "/fnott/fnott.ini", fnott_ini },
     { cfg_dir .. "/hypr/hyprlock.conf", hyprlock_conf },
+    { cache_dir .. "/kaze/palette.lua", palette_out.lua },
+    { cache_dir .. "/kaze/palette.json", palette_out.json },
+    { cache_dir .. "/kaze/palette.sh", palette_out.sh },
 }
 
 local appearance
@@ -255,5 +290,6 @@ local applied, err = transaction.apply(outputs, {
     work_dir = work_dir,
     zero_flash_wallpaper = zero_flash_wallpaper,
     sync_prefer_dark = cfg.sync_prefer_dark == true,
+    is_light_theme = themes.is_light(theme),
 })
 if not applied then fail(err) end

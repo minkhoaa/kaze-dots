@@ -249,13 +249,14 @@ end
 
 io.stdout:write("Running kaze-dots unit tests...\n")
 
-test("themes: all 4 presets validate and helpers format properly", function()
+test("themes: all 5 presets validate and helpers format properly", function()
     local list = themes.list()
-    assert_eq(#list, 4, "preset count")
+    assert_eq(#list, 5, "preset count")
     assert_eq(list[1], "kaze", "first theme")
     assert_eq(list[2], "lavender", "second theme")
     assert_eq(list[3], "tokyonight", "third theme")
     assert_eq(list[4], "carbon", "fourth theme")
+    assert_eq(list[5], "paper", "fifth theme")
 
     for _, name in ipairs(list) do
         local t = themes.get(name)
@@ -388,7 +389,7 @@ local function assert_no_unresolved_tokens(text, label)
     assert_true(not text:find("=nil", 1, true), label .. ": unresolved nil value")
 end
 
-test("emitters: all 3 layouts x 4 themes (12 combinations) produce valid configs with zero polling", function()
+test("emitters: all 3 layouts x 5 themes (15 combinations) produce valid configs with zero polling", function()
     local tmp = make_tmp_dir()
     local has_foot = cmd_exists("foot")
     local has_fuzzel = cmd_exists("fuzzel")
@@ -478,6 +479,10 @@ test("emitters: all 3 layouts x 4 themes (12 combinations) produce valid configs
             assert_eq(parsed["custom/menu"].interval, nil, tag .. ": custom/menu must have zero polling interval")
             assert_eq(parsed["custom/power"].exec, nil, tag .. ": custom/power must have zero polling exec")
             assert_eq(parsed["custom/power"].interval, nil, tag .. ": custom/power must have zero polling interval")
+            assert_eq(parsed.clock["on-click"], "kaze-dashboard", tag .. ": clock opens top dashboard")
+            assert_eq(parsed.battery["on-click"], "kaze-panel", tag .. ": battery opens right control panel")
+            assert_eq(parsed.network["on-click"], "kaze-wifi", tag .. ": network opens right wifi switcher")
+            assert_eq(parsed.wireplumber["on-click"], "kaze-audio-sink", tag .. ": wireplumber opens right sink switcher")
             for _, feature in ipairs({ { "recording", "record", 8, "stop" }, { "night", "night", 9, "off" },
                 { "inhibit", "inhibit", 11, "off" } }) do
                 local name, unit, signal, action = table.unpack(feature)
@@ -494,6 +499,25 @@ test("emitters: all 3 layouts x 4 themes (12 combinations) produce valid configs
                     assert_contains(service, "Exec" .. phase .. "Post=-/usr/bin/pkill -RTMIN+" .. signal .. " -x")
                 end
             end
+            assert_contains(table.concat(parsed["modules-right"], " "), "custom/passthrough", tag .. ": missing passthrough indicator")
+            local pt_ind = assert(parsed["custom/passthrough"])
+            assert_eq(pt_ind.interval, "once", "custom/passthrough must not poll")
+            assert_eq(pt_ind.signal, 12, "custom/passthrough signal 12")
+            assert_eq(pt_ind["exec-on-event"], false)
+            assert_contains(pt_ind.exec, "hyprctl submap")
+            assert_contains(pt_ind["on-click"], "hl.dsp.submap('reset')")
+
+            local pal_out = require("kaze.emit_palette").emit(cfg, theme, layout)
+            local pal_chunk = assert(load(pal_out.lua, "=palette.lua", "t", {}))
+            local pal_tbl = pal_chunk()
+            assert_eq(pal_tbl.name, theme_name)
+            assert_eq(pal_tbl.polarity, theme_name == "paper" and "light" or "dark")
+            assert_eq(pal_tbl.accent, "#" .. theme.accent)
+            assert_eq(pal_tbl.raw.accent, theme.accent)
+            local pal_json = require("kaze.json").decode(pal_out.json)
+            assert_eq(pal_json.colors.bg, "#" .. theme.bg)
+            assert_eq(#pal_json.term, 16)
+            assert_contains(pal_out.sh, "KAZE_ACCENT='#" .. theme.accent .. "'")
 
             local foot_ini = emit_foot.emit(cfg, theme, layout)
             assert_contains(foot_ini, "background=" .. theme.bg, tag .. ": foot background")
@@ -506,6 +530,9 @@ test("emitters: all 3 layouts x 4 themes (12 combinations) produce valid configs
             end
 
             local fuzzel_ini = emit_fuzzel.emit(cfg, theme, layout)
+            assert_contains(fuzzel_ini, "anchor=top\n", tag .. ": fuzzel anchored top")
+            assert_contains(fuzzel_ini, "y-margin=" .. tostring(layout.ui.popup_top_y) .. "\n", tag .. ": fuzzel y-margin")
+            assert_contains(fuzzel_ini, "message=" .. theme.fg .. "ff\n", tag .. ": fuzzel message color")
             assert_contains(fuzzel_ini, "radius=" .. exp.fuzzel_radius, tag .. ": fuzzel radius")
             assert_contains(fuzzel_ini, "background=" .. theme.bg_alt .. "e8", tag .. ": fuzzel bg")
             assert_no_unresolved_tokens(fuzzel_ini, tag .. ": fuzzel.ini")
@@ -538,7 +565,7 @@ test("emitters: all 3 layouts x 4 themes (12 combinations) produce valid configs
             assert_no_unresolved_tokens(hl_conf, tag .. ": hyprlock.conf")
         end
     end
-    assert_eq(combo_count, 12, "3 layouts x 4 themes combinations")
+    assert_eq(combo_count, 15, "3 layouts x 5 themes combinations")
 
     rm_rf(tmp)
 end)
@@ -1200,6 +1227,355 @@ fi
         end
     end)
 end)
+
+do
+    local json = require("kaze.json")
+    test("kaze.json: strict decode of objects, arrays, escapes, surrogate pairs, and invalid inputs", function()
+        local parsed = json.decode('{"hello": "world", "num": 123.45, "esc": "\\b\\f\\n\\t", "arr": [true, false, null], "surrogate": "\\uD83D\\uDE00"}')
+        assert_eq(parsed.hello, "world")
+        assert_eq(parsed.num, 123.45)
+        assert_eq(parsed.esc, "\b\f\n\t")
+        assert_eq(parsed.arr[1], true)
+        assert_eq(parsed.arr[2], false)
+        assert_eq(parsed.arr[3], nil)
+        assert_eq(parsed.surrogate, "😀")
+
+        assert_true(not pcall(json.decode, '{"a": 1} trailing'), "must reject trailing garbage")
+        assert_true(not pcall(json.decode, '{"unterminated'), "must reject unterminated string")
+        assert_true(not pcall(json.decode, '{"bad": \\x}'), "must reject invalid token")
+        assert_true(not pcall(json.decode, '"\\u12G4"'), "must reject invalid hex escape")
+    end)
+
+    local display = require("kaze.display")
+    test("display.plan: preserves HiDPI scale and formats whole scale as integer", function()
+        local monitors = {
+            { name = "eDP-1", width = 2880, height = 1800, refresh = 60, scale = 2.0, focused = true },
+            { name = "HDMI-A-1", width = 1920, height = 1080, refresh = 60, scale = 1.0, focused = false },
+            { name = "DP-1", width = 3840, height = 2160, refresh = 60, scale = 1.5, focused = false },
+        }
+        local p_auto = display.plan("auto", monitors)
+        assert_eq(p_auto.rules[1], "eDP-1,preferred,auto,2")
+        assert_eq(p_auto.rules[2], "HDMI-A-1,preferred,auto,1")
+        assert_eq(p_auto.rules[3], "DP-1,preferred,auto,1.5")
+
+        local p_ext = display.plan("extend-right", monitors)
+        assert_eq(p_ext.rules[1], "eDP-1,preferred,0x0,2")
+        assert_eq(p_ext.rules[2], "HDMI-A-1,preferred,auto-right,1")
+    end)
+
+    test("optimizations: fuzzel icon-theme & -N, foot bell/mouse/csd, hyprlock, rules, kaze-tui locked-title, clipboard MIME", function()
+        local theme = themes.get("kaze")
+        local layout = layouts.get("sidebar")
+        local cfg_def = config.load({ home = "/tmp/nonexistent-kaze-home", strict = false })
+        local fz = emit_fuzzel.emit(cfg_def, theme, layout)
+        assert_contains(fz, "terminal=kaze-footclient -N\n", "fuzzel default terminal uses -N")
+        assert_contains(fz, "icon-theme=hicolor\n", "fuzzel uses icon_theme instead of cursor_theme")
+        assert_contains(fz, "[dmenu]\nexit-immediately-if-empty=yes\n", "fuzzel dmenu empty guard")
+
+        local ft = emit_foot.emit(cfg_def, theme, layout)
+        assert_contains(ft, "[bell]\nurgent=yes\n", "foot urgent bell")
+        assert_contains(ft, "[mouse]\nhide-when-typing=yes\n", "foot hide mouse")
+        assert_contains(ft, "[csd]\npreferred=none\n", "foot csd none")
+
+        local lk = emit_hyprlock.emit(cfg_def, theme, layout)
+        assert_contains(lk, "immediate_render = true", "hyprlock immediate_render")
+        assert_contains(lk, "capslock_color = rgb(" .. theme.warn .. ")", "hyprlock capslock_color")
+
+        -- Verify hypr/rules.lua registers suppress-maximize, xwayland-drags, dialog floats, and selection no_anim
+        local win_rules, layer_rules = {}, {}
+        local prev_hl = rawget(_G, "hl")
+        rawset(_G, "hl", {
+            window_rule = function(r) win_rules[#win_rules + 1] = r end,
+            layer_rule = function(r) layer_rules[#layer_rules + 1] = r end,
+        })
+        local ok_rules, rules_err = pcall(dofile, repo_dir .. "/hypr/rules.lua")
+        rawset(_G, "hl", prev_hl)
+        assert_true(ok_rules, tostring(rules_err))
+        assert_true(#win_rules >= 7, "expected >= 7 window rules")
+        local saw_selection_no_anim = false
+        for _, lr in ipairs(layer_rules) do
+            if lr.match and lr.match.namespace == "^(selection|hyprpicker)$" and lr.no_anim == true then
+                saw_selection_no_anim = true
+            end
+        end
+        assert_true(saw_selection_no_anim, "selection/hyprpicker layer rule disables animation")
+
+        -- Verify kaze-tui passes -o main.locked-title=yes and matches JSON hyprctl clients
+        with_stubs(function(tmp, stub, run)
+            stub("btop", "exit 0")
+            stub("footclient", [[printf '%s\n' "$@" > "$HOME/tui-foot-args"]])
+            stub("hyprctl", [[
+if [ "$1" = "-j" ] && [ "$2" = "activewindow" ]; then
+    printf '{"address":"0xdeadbeef","class":"kaze-tui","title":"System Monitor"}\n'
+    exit 0
+elif [ "$1" = "-j" ] && [ "$2" = "clients" ]; then
+    if [ "${TUI_OPEN:-0}" = "1" ]; then
+        printf '[{"address":"0xdeadbeef","class":"kaze-tui","title":"System Monitor"}]\n'
+    else
+        printf '[]\n'
+    fi
+    exit 0
+elif [ "$1" = "dispatch" ]; then
+    printf '%s\n' "$2" > "$HOME/tui-dispatch"
+    exit 0
+fi
+exit 1
+]])
+            assert(os.execute(run("kaze-tui", "sysmon", "HYPRLAND_INSTANCE_SIGNATURE=live TUI_OPEN=0")))
+            local fargs = assert(fs.read_file(tmp .. "/tui-foot-args"))
+            assert_contains(fargs, "-o\nmain.locked-title=yes\n-a\nkaze-tui\n-T\nSystem Monitor\nbtop\n")
+
+            assert(os.execute(run("kaze-tui", "sysmon", "HYPRLAND_INSTANCE_SIGNATURE=live TUI_OPEN=1")))
+            assert_contains(assert(fs.read_file(tmp .. "/tui-dispatch")), "window.close")
+
+            -- Verify kaze-clipboard JPEG & WebP MIME inference
+            stub("cliphist", [[
+case "$7" in
+  list) printf '1\timg\n' ;;
+  decode) cat "$4" ;;
+  *) exit 0 ;;
+esac
+]])
+            stub("fuzzel", [[cat >/dev/null; printf '1\timg\n']])
+            stub("wl-copy", [[printf '%s' "$*" > "$HOME/clip-mime"; cat >/dev/null]])
+            local db = tmp .. "/runtime/kaze/cliphist.db"
+            fs.write_atomic(db, "\255\216\255\224jpegdata")
+            assert(os.execute(run("kaze-clipboard", "pick")))
+            assert_eq(fs.read_file(tmp .. "/clip-mime"), "--type image/jpeg")
+            fs.write_atomic(db, "RIFF\16\0\0\0WEBPdata")
+            assert(os.execute(run("kaze-clipboard", "pick")))
+            assert_eq(fs.read_file(tmp .. "/clip-mime"), "--type image/webp")
+        end)
+    end)
+
+    test("rules: smart_gaps C++ rules, state borders, and layout-directional notification slide", function()
+        local prev_hl = rawget(_G, "hl")
+        local prev_ctx = package.loaded["kaze._ctx"]
+        local function eval_rules(custom_cfg, layout_name)
+            local seen = { win = {}, ws = {}, layer = {} }
+            package.loaded["kaze._ctx"] = {
+                cfg = custom_cfg,
+                theme = themes.get("kaze"),
+                layout = layouts.get(layout_name),
+            }
+            rawset(_G, "hl", {
+                window_rule = function(r) seen.win[#seen.win + 1] = r end,
+                workspace_rule = function(r) seen.ws[#seen.ws + 1] = r end,
+                layer_rule = function(r) seen.layer[#seen.layer + 1] = r end,
+            })
+            dofile(repo_dir .. "/hypr/rules.lua")
+            return seen
+        end
+        local ok, err = pcall(function()
+            local off_sidebar = eval_rules({ smart_gaps = false }, "sidebar")
+            assert_eq(#off_sidebar.ws, 1, "smart_gaps=false registers s[true] special workspace rule")
+            local notif_sb, top_layer, left_layer, right_layer = nil, nil, nil, nil
+            local saw_pin, saw_fs, saw_sb_drawer, saw_sb_dash, saw_sb_panel, saw_top_dd = false, false, false, false, false, false
+            for _, lr in ipairs(off_sidebar.layer) do
+                if lr.match and lr.match.namespace == "^notifications$" then notif_sb = lr.animation end
+                if lr.match and lr.match.namespace == "^(launcher|kaze-popup-top)$" then top_layer = lr.animation end
+                if lr.match and lr.match.namespace == "^kaze-popup-left$" then left_layer = lr.animation end
+                if lr.match and lr.match.namespace == "^kaze-popup-right$" then right_layer = lr.animation end
+            end
+            for _, wr in ipairs(off_sidebar.win) do
+                if wr.name == "state-border-pinned" and wr.match.pin == true then saw_pin = true end
+                if wr.name == "state-border-fullscreen" and wr.match.fullscreen == true then saw_fs = true end
+                if wr.name == "kaze-right-drawer" and wr.animation == "slide left" then saw_sb_drawer = true end
+                if wr.name == "kaze-widget-dash" and wr.animation == "slide left" then saw_sb_dash = true end
+                if wr.name == "kaze-widget-panel" and wr.animation == "slide left" then saw_sb_panel = true end
+                if wr.name == "kaze-top-dropdown" and wr.animation == "slide top" then saw_top_dd = true end
+            end
+            assert_eq(notif_sb, "slide right", "sidebar notifications slide right")
+            assert_eq(top_layer, "slide top", "top popups slide top")
+            assert_eq(left_layer, "slide left", "left sidebar popups slide left")
+            assert_eq(right_layer, "slide right", "right popups slide right")
+            assert_true(saw_pin and saw_fs, "pinned and fullscreen state borders registered")
+            assert_true(saw_sb_drawer and saw_sb_dash and saw_sb_panel and saw_top_dd, "sidebar spatial rules registered")
+
+            local on_islands = eval_rules({ smart_gaps = true }, "islands")
+            assert_eq(#on_islands.ws, 3, "smart_gaps=true registers s[true], w[tv1], and f[1] workspace rules")
+            local notif_is, saw_is_drawer, saw_is_dash, saw_is_panel = nil, false, false, false
+            for _, lr in ipairs(on_islands.layer) do
+                if lr.match and lr.match.namespace == "^notifications$" then notif_is = lr.animation end
+            end
+            for _, wr in ipairs(on_islands.win) do
+                if wr.name == "kaze-right-drawer" and wr.animation == "slide right" then saw_is_drawer = true end
+                if wr.name == "kaze-widget-dash" and wr.animation == "slide top" then saw_is_dash = true end
+                if wr.name == "kaze-widget-panel" and wr.animation == "slide top" then saw_is_panel = true end
+            end
+            assert_eq(notif_is, "slide top", "islands notifications slide top")
+            assert_true(saw_is_drawer and saw_is_dash and saw_is_panel, "islands spatial rules registered")
+        end)
+        rawset(_G, "hl", prev_hl)
+        package.loaded["kaze._ctx"] = prev_ctx
+        assert_true(ok, tostring(err))
+    end)
+
+    test("workflow CLIs: kaze-perf, kaze-windows, kaze-audio-sink, kaze-wifi, kaze-osd media-info, and kaze-calc", function()
+        with_stubs(function(tmp, stub, run)
+            -- 1. kaze-calc --eval + sandbox security + Fuzzel copy
+            assert_eq(fs.capture(run("kaze-calc", "--eval '2^10 + sqrt(144)'")), "1036\n")
+            assert_eq(fs.capture(run("kaze-calc", "--eval '0.1 + 0.2'")), "0.3\n")
+            assert_eq(fs.capture(run("kaze-calc", "--eval 'hex(255)'")), "0xff\n")
+            for _, unsafe in ipairs({ "while true do end", "function() end", "os.execute(1)", "'a'..'b'", "1/0", "0/0" }) do
+                local bad = os.execute(run("kaze-calc", "--eval " .. fs.shell_quote(unsafe)) .. " 2>/dev/null")
+                assert_true(bad ~= true and bad ~= 0, "kaze-calc must reject: " .. unsafe)
+            end
+            stub("pgrep", "exit 1")
+            stub("wl-copy", [[cat > "$HOME/calc-copied"]])
+            stub("notify-send", [[printf '%s\n' "$@" > "$HOME/toast"]])
+            stub("fuzzel", [[
+cat > "$HOME/calc-rows"
+if [ ! -f "$HOME/calc-step1" ]; then
+    : > "$HOME/calc-step1"
+    printf '6 * 7\n'
+else
+    printf '= 42   (Enter to copy)\n'
+fi
+]])
+            assert(os.execute(run("kaze-calc", "")))
+            assert_eq(fs.read_file(tmp .. "/calc-copied"), "42")
+
+            -- 2. kaze-perf status / toggle (systemd unit stop/start + fallback pkill)
+            assert_eq(fs.capture(run("kaze-perf", "status")), "off\n")
+            stub("systemctl", [[
+case "$*" in
+  '--user show -p LoadState --value kaze-waybar.service') printf 'loaded\n' ;;
+  '--user is-active --quiet kaze-waybar.service') [ "${BAR_ACTIVE:-1}" = 1 ] ;;
+  '--user stop kaze-waybar.service') printf 'stop\n' >> "$HOME/perf-bar" ;;
+  '--user reset-failed kaze-waybar.service') : ;;
+  '--user start kaze-waybar.service') printf 'start\n' >> "$HOME/perf-bar" ;;
+  *) exit 1 ;;
+esac
+]])
+            stub("hyprctl", [[
+case "$1" in
+  eval) printf '%s' "$2" > "$HOME/perf-eval"; printf 'ok\n' ;;
+  reload) printf 'ok\n' ;;
+  layers) printf 'namespace: waybar\n' ;;
+  *) exit 1 ;;
+esac
+]])
+            assert(os.execute(run("kaze-perf", "--quiet toggle")))
+            assert_eq(fs.capture(run("kaze-perf", "status")), "on\n")
+            assert_contains(assert(fs.read_file(tmp .. "/perf-eval")), "animations = { enabled = false }")
+            assert_eq(fs.read_file(tmp .. "/perf-bar"), "stop\n")
+            assert(os.execute(run("kaze-perf", "--quiet toggle", "BAR_ACTIVE=0")))
+            assert_eq(fs.capture(run("kaze-perf", "status")), "off\n")
+            assert_eq(fs.read_file(tmp .. "/perf-bar"), "stop\nstart\n")
+
+            -- 3. kaze-windows --list & special workspace focus
+            stub("pgrep", "exit 1")
+            stub("hyprctl", [[
+if [ "$1" = "-j" ] && [ "$2" = "clients" ]; then
+    printf '[{"address":"0xbbb","class":"foot","title":"scratch-sh","workspace":{"id":-99,"name":"special:scratch"},"focusHistoryID":1},{"address":"0xaaa","class":"firefox","title":"Docs","workspace":{"id":2,"name":"2"},"focusHistoryID":0}]\n'
+elif [ "$1" = "-j" ] && [ "$2" = "monitors" ]; then
+    printf '[{"name":"eDP-1","specialWorkspace":{"id":0,"name":""}}]\n'
+elif [ "$1" = "dispatch" ]; then
+    printf '%s\n' "$2" >> "$HOME/win-dispatches"
+fi
+]])
+            local wlist = assert(fs.capture(run("kaze-windows", "--list")))
+            assert_eq(wlist, "1. [2]  firefox  —  Docs\n2. [S:scratch]  foot  —  scratch-sh\n")
+            stub("fuzzel", [[cat >/dev/null; printf '2. [S:scratch]  foot  —  scratch-sh\n']])
+            assert(os.execute(run("kaze-windows", "")))
+            local wdisp = assert(fs.read_file(tmp .. "/win-dispatches"))
+            assert_contains(wdisp, 'hl.dsp.workspace.toggle_special("scratch")')
+            assert_contains(wdisp, "hl.dsp.focus({ window = 'address:0xbbb' })")
+
+            -- 4. kaze-audio-sink --list & set-default
+            stub("wpctl", [[
+if [ "$1" = "status" ]; then
+cat <<'EOF'
+Audio
+ ├─ Devices:
+ │      40. Built-in Audio [alsa]
+ ├─ Sinks:
+ │  *   48. Analog Stereo [vol: 0.45]
+ │      54. USB DAC [vol: 0.80 MUTED]
+ ├─ Sources:
+ │  *   49. Mic [vol: 1.00]
+EOF
+elif [ "$1" = "set-default" ]; then
+    printf '%s\n' "$2" > "$HOME/sink-set"
+fi
+]])
+            local slist = assert(fs.capture(run("kaze-audio-sink", "--list")))
+            assert_contains(slist, "48. Analog Stereo  [45%] (active)")
+            assert_contains(slist, "54. USB DAC  [Muted]")
+            stub("fuzzel", [[cat >/dev/null; printf '󰓄  54. USB DAC  [Muted]\n']])
+            assert(os.execute(run("kaze-audio-sink", "--quiet")))
+            assert_eq(fs.read_file(tmp .. "/sink-set"), "54\n")
+
+            -- 5. kaze-wifi --list & escaped SSID connect
+            stub("systemctl", "exit 1")
+            stub("nmtui", "exit 0")
+            stub("nmcli", [[
+if [ "$1" = "-t" ]; then
+    printf '*:Home\\:5G:WPA2:88\n :Cafe\\:Free:--:62\n :Home\\:5G:WPA2:50\n'
+elif [ "$3" = "device" ] && [ "$4" = "wifi" ] && [ "$5" = "connect" ]; then
+    printf '%s\n' "$6" > "$HOME/wifi-conn"
+fi
+]])
+            local net_list = assert(fs.capture(run("kaze-wifi", "--list")))
+            assert_contains(net_list, "Home:5G  (88%, WPA2) (connected)")
+            assert_contains(net_list, "Cafe:Free  (62%)")
+            stub("fuzzel", [[cat >/dev/null; printf '󰤨  Cafe:Free  (62%%)\n']])
+            assert(os.execute(run("kaze-wifi", "")))
+            assert_eq(fs.read_file(tmp .. "/wifi-conn"), "Cafe:Free\n")
+
+            -- 6. kaze-osd media-info
+            stub("playerctl", [[printf 'Playing\tNujabes\tFeather\t60000000\t180000000\n']])
+            os.remove(tmp .. "/toast")
+            assert(os.execute(run("kaze-osd", "media-info")))
+            local mtoast = assert(fs.read_file(tmp .. "/toast"))
+            assert_contains(mtoast, "int:value:33")
+            assert_contains(mtoast, "󰎈  Feather")
+            assert_contains(mtoast, "Nujabes · 1:00 / 3:00")
+
+            -- 7. popups.lua, widget.lua, kaze-dashboard, and kaze-panel
+            local popups = require("kaze.popups")
+            assert_contains(popups.menu_flags(layouts.get("sidebar")), "--namespace=kaze-popup-left --anchor=top-left")
+            assert_contains(popups.status_flags(layouts.get("sidebar")), "--namespace=kaze-popup-left --anchor=bottom-left")
+            assert_contains(popups.status_flags(layouts.get("islands")), "--namespace=kaze-popup-top --anchor=top-right --x-margin=10")
+            local leap_ts = os.time({ year = 2024, month = 2, day = 29, hour = 14, min = 30 })
+            local cal = popups.render_calendar(leap_ts)
+            assert_contains(cal, "February 2024")
+            assert_contains(cal, " Mo  Tu  We  Th  Fr  Sa  Su ")
+            assert_contains(cal, "[29]")
+
+            local dash_print = assert(fs.capture(run("kaze-dashboard", "--print")))
+            assert_contains(dash_print, "Mo  Tu  We  Th  Fr  Sa  Su")
+            assert_contains(dash_print, "Nujabes — Feather [1:00/3:00]")
+
+            stub("footclient", [[printf '%s\n' "$@" > "$HOME/widget-foot-args"]])
+            stub("hyprctl", [[
+if [ "$1" = "-j" ] && [ "$2" = "clients" ]; then
+    if [ "${WIDGET_OPEN:-0}" = "1" ]; then
+        printf '[{"address":"0xfeed","class":"kaze-widget-dash"}]\n'
+    else
+        printf '[]\n'
+    fi
+elif [ "$1" = "dispatch" ]; then
+    printf '%s\n' "$2" > "$HOME/widget-close"
+fi
+]])
+            assert(os.execute(run("kaze-dashboard", "", "HYPRLAND_INSTANCE_SIGNATURE=live WIDGET_OPEN=0")))
+            local wf_args = assert(fs.read_file(tmp .. "/widget-foot-args"))
+            assert_contains(wf_args, "-W\n38x15\n-a\nkaze-widget-dash\n")
+            assert(os.execute(run("kaze-dashboard", "", "HYPRLAND_INSTANCE_SIGNATURE=live WIDGET_OPEN=1")))
+            assert_contains(assert(fs.read_file(tmp .. "/widget-close")), "window.close")
+
+            stub("wpctl", [[printf 'Volume: 0.65\n']])
+            local panel_st = assert(fs.capture(run("kaze-panel", "--status")))
+            assert_contains(panel_st, "󰕾 65%")
+            assert_contains(panel_st, "󰓃  Audio Output  —  65%")
+            assert_contains(panel_st, "󰔎 Appearance")
+            assert(os.execute(run("kaze-panel", "", "HYPRLAND_INSTANCE_SIGNATURE=live WIDGET_OPEN=0")))
+            assert_contains(assert(fs.read_file(tmp .. "/widget-foot-args")), "-W\n42x16\n-a\nkaze-widget-panel\n")
+        end)
+    end)
+end
 
 dofile(repo_dir .. "/tests/test_stage3_keys.lua")(test, assert_eq, assert_true, assert_contains, repo_dir)
 dofile(repo_dir .. "/tests/test_stage3_theme_wall.lua")(test, assert_eq, assert_true, assert_contains, repo_dir)

@@ -9,7 +9,7 @@ if help or #arg > 1 or not (region or action == "toggle" or action == "stop" or 
 end
 
 local script = arg[0]:gsub("'", "'\\''")
-local link = io.popen("readlink -f -- '" .. script .. "'")
+local link = io.popen("(readlink -f -- '" .. script .. "' || /usr/bin/readlink -f -- '" .. script .. "') 2>/dev/null")
 local resolved = link and link:read("*l")
 if link then link:close() end
 local repo = ((resolved or arg[0]):match("^(.*)/[^/]+$") or ".") .. "/../lua"

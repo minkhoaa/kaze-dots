@@ -29,11 +29,12 @@ return {
 ### Shared Rules Across All 3 Layouts
 - **Zero polling scripts**: Prefer native Waybar modules (`hyprland/workspaces`, `hyprland/window`, `mpris`, `clock`, `network`, `wireplumber`, `battery`, `tray`). Static launchers `custom/menu` / `custom/power` are click-only, with **no `exec` or `interval`**. Stateful indicators use `interval: "once"`, `exec-on-event: false`, and a dedicated `signal`: the command queries the unit once at startup and on unit start/stop, including external kills and expiry. Empty output hides the whole widget (no blank padding). `pkill --require-handler` avoids signalling a Waybar that has not installed its RT handler yet.
 - **Consistent click targets**:
-  - `custom/menu` → `kaze-menu`
-  - `network` → `kaze-tui wifi`
-  - `wireplumber` → left-click `kaze-tui audio`, right-click `kaze-osd vol-mute`, scroll up/down `kaze-osd vol-up` / `vol-down`
-  - `battery` → tooltip shows power draw & time remaining; click opens `kaze-tui sysmon`
-  - `custom/power` → `kaze-power`
+  - `custom/menu` → left-click `kaze-menu` (Top drop-down), right-click `kaze-panel` (Right drawer)
+  - `clock` → `kaze-dashboard` (Top drop-down Calendar & Media popup)
+  - `network` → left-click `kaze-wifi` (Right popup), right-click `kaze-tui wifi` (Right TUI drawer)
+  - `wireplumber` → left-click `kaze-audio-sink` (Right popup), middle-click `kaze-tui audio` (Right TUI drawer), right-click `kaze-osd vol-mute`, scroll up/down `kaze-osd vol-up` / `vol-down`
+  - `battery` → left-click `kaze-panel` (Right Quick Control Drawer), right-click `kaze-tui sysmon` (Right TUI drawer)
+  - `custom/power` → left-click `kaze-power` (Right popup), right-click `kaze-panel` (Right drawer)
   - `custom/recording` (`RTMIN+8`) → red dot while recording; click runs `kaze-record stop`
   - `custom/night` (`RTMIN+9`) → moon while Night Light is on; click runs `kaze-night off`
   - `custom/inhibit` (`RTMIN+11`) → coffee cup while Caffeine is on; click runs `kaze-inhibit off`

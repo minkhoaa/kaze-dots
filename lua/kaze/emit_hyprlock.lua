@@ -9,6 +9,7 @@ function M.emit(cfg, theme, layout)
 general {
     hide_cursor = true
     ignore_empty_input = true
+    immediate_render = true
 }
 
 background {
@@ -56,6 +57,7 @@ input-field {
     rounding = %d
     check_color = %s
     fail_color = %s
+    capslock_color = %s
     position = 0, -60
     halign = center
     valign = center
@@ -72,7 +74,8 @@ input-field {
         themes.hypr_rgb(theme.fg),
         rounding,
         themes.hypr_rgb(theme.ok),
-        themes.hypr_rgb(theme.danger)
+        themes.hypr_rgb(theme.danger),
+        themes.hypr_rgb(theme.warn)
     )
 end
 

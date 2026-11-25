@@ -11,7 +11,7 @@ local function setup_path()
     local paths = {}
     local script = arg and arg[0] or ""
     local q = "'" .. script:gsub("'", "'\\''") .. "'"
-    local p = io.popen("readlink -f " .. q .. " 2>/dev/null")
+    local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
     local resolved = p and p:read("*l") or nil
     if p then
         p:close()
@@ -36,6 +36,7 @@ setup_path()
 
 local config = require("kaze.config")
 local fs = require("kaze.fs")
+local popups = require("kaze.popups")
 local transaction = require("kaze.transaction")
 
 local function cmd_exists(bin)
@@ -156,9 +157,10 @@ local function pick_from_menu(wall_dir)
 
     local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
     local cmd = string.format(
-        "%sprintf '%%s\\n' %s | fuzzel --dmenu --lines %d -p %s",
+        "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 44 --lines %d -p %s",
         utf8_guard,
         fs.shell_quote(table.concat(lines, "\n")),
+        popups.active_right_flags(),
         math.min(#lines, 12),
         fs.shell_quote("Wallpaper > ")
     )

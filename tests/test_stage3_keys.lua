@@ -100,6 +100,16 @@ local function register_tests(test, assert_eq, assert_true, assert_contains, rep
         assert_eq(by_chord["SUPER + D"].workspace, "communication", "communication special workspace")
         assert_eq(by_chord["SUPER + R"].workspace, "todo", "todo special workspace")
         assert_eq(by_chord["CTRL + SUPER + Space"].cmd, "playerctl play-pause", "keyboard media toggle")
+        assert_eq(by_chord["SUPER + N"].cmd, "kaze-dashboard", "top calendar & media dashboard bind")
+        assert_eq(by_chord["SUPER + A"].cmd, "kaze-panel", "right quick control panel bind")
+        assert_eq(by_chord["SUPER + SHIFT + Z"].cmd, "kaze-perf", "Zen performance mode bind")
+        assert_eq(by_chord["SUPER + Escape"].kind, "submap", "VM passthrough submap bind")
+        assert_eq(by_chord["SUPER + Escape"].submap, "passthrough", "VM passthrough submap target")
+        assert_eq(by_chord["SUPER + TAB"].cmd, "kaze-windows", "fuzzy window switcher bind")
+        assert_eq(by_chord["SUPER + SHIFT + A"].cmd, "kaze-audio-sink", "audio output switcher bind")
+        assert_eq(by_chord["CTRL + SUPER + N"].cmd, "kaze-osd media-info", "now playing toast bind")
+        assert_eq(by_chord["SUPER + ALT + C"].cmd, "kaze-calc", "calculator bind")
+        assert_eq(by_chord["XF86Calculator"].cmd, "kaze-calc", "hardware calculator key bind")
 
         for i = 1, 10 do
             local key = tostring(i % 10)
@@ -248,6 +258,15 @@ printf '[Launchers]  Super + /  —  Search keyboard shortcuts\n'
         assert_eq(#default_seen.configs, 1, "hl.config called once")
         assert_eq(default_seen.configs[1].input.accel_profile, "flat", "default accel_profile is flat")
         assert_eq(default_seen.configs[1].input.touchpad.natural_scroll, true, "touchpad natural_scroll preserved")
+        assert_eq(default_seen.configs[1].decoration.active_opacity, 1.0, "default active_opacity is 1.0")
+        assert_eq(default_seen.configs[1].decoration.inactive_opacity, 1.0, "default inactive_opacity is 1.0")
+        assert_eq(default_seen.configs[1].decoration.fullscreen_opacity, 1.0, "fullscreen_opacity is 1.0")
+        assert_true(type(default_seen.configs[1].group) == "table", "group config block defined")
+        assert_eq(default_seen.configs[1].group.groupbar.gradients, false, "groupbar flat minimalism")
+        assert_eq(default_seen.configs[1].misc.close_special_on_empty, true, "scratchpad closes on empty")
+        assert_eq(default_seen.configs[1].render.direct_scanout, 1, "direct_scanout enabled")
+        assert_eq(default_seen.configs[1].xwayland.force_zero_scaling, true, "xwayland zero scaling")
+        assert_eq(default_seen.configs[1].ecosystem.no_update_news, true, "ecosystem update news suppressed")
         assert_eq(#default_seen.gestures, 1, "default enables 3-finger swipe gesture")
         assert_eq(default_seen.gestures[1].fingers, 3, "gesture fingers")
         assert_eq(default_seen.gestures[1].direction, "horizontal", "gesture direction")
@@ -267,6 +286,9 @@ printf '[Launchers]  Super + /  —  Search keyboard shortcuts\n'
         local timers = {}
 
         local dispatches = {}
+        local submaps = {}
+        local events = {}
+        local ws_windows = {}
         with_mock_hl({ cfg = defaults, theme = theme, layout = layout }, function()
             rawset(_G, "hl", {
                 bind = function(keys, dispatcher, opts)
@@ -274,14 +296,30 @@ printf '[Launchers]  Super + /  —  Search keyboard shortcuts\n'
                     binds[#binds + 1] = rec
                     by_chord[keys] = rec
                 end,
+                define_submap = function(name, fn)
+                    local sub_binds = {}
+                    local orig_bind = hl.bind
+                    hl.bind = function(keys, dispatcher, opts)
+                        sub_binds[#sub_binds + 1] = { keys = keys, dispatcher = dispatcher, opts = opts }
+                    end
+                    fn()
+                    hl.bind = orig_bind
+                    submaps[name] = sub_binds
+                end,
+                on = function(ev, cb)
+                    events[ev] = cb
+                end,
                 timer = function(cb, opts)
                     timers[#timers + 1] = { cb = cb, opts = opts }
                 end,
-                exec_cmd = function(cmd)
-                    exec_calls[#exec_calls + 1] = cmd
+                exec_cmd = function(cmd, opts)
+                    exec_calls[#exec_calls + 1] = opts and { cmd = cmd, opts = opts } or cmd
                 end,
                 dispatch = function(action)
                     dispatches[#dispatches + 1] = action
+                end,
+                get_workspace_windows = function(ws_name)
+                    return ws_windows[ws_name] or {}
                 end,
                 get_active_window = function()
                     return { address = "0x1234", floating = false, size = { x = 1000, y = 800 } }
@@ -292,6 +330,7 @@ printf '[Launchers]  Super + /  —  Search keyboard shortcuts\n'
                 dsp = {
                     exec_cmd = function(cmd) return { dsp = "exec_cmd", cmd = cmd } end,
                     focus = function(args) return { dsp = "focus", args = args } end,
+                    submap = function(name) return { dsp = "submap", name = name } end,
                     group = {
                         toggle = function() return { dsp = "group.toggle" } end,
                         lock = function() return { dsp = "group.lock" } end,
@@ -374,6 +413,30 @@ printf '[Launchers]  Super + /  —  Search keyboard shortcuts\n'
             vol_down.dispatcher()
             assert_eq(#exec_calls, 3, "volume channel unlocked after 80ms timer")
             assert_eq(exec_calls[3], "kaze-osd vol-down")
+
+            -- Verify passthrough submap and Waybar RTMIN+12 hook
+            assert_eq(by_chord["SUPER + Escape"].dispatcher.dsp, "submap")
+            assert_eq(by_chord["SUPER + Escape"].dispatcher.name, "passthrough")
+            assert_true(submaps.passthrough ~= nil and #submaps.passthrough == 1, "passthrough submap has reset bind")
+            assert_eq(submaps.passthrough[1].keys, "SUPER + Escape")
+            assert_eq(submaps.passthrough[1].dispatcher.name, "reset")
+            assert_true(type(events["keybinds.submap"]) == "function", "keybinds.submap listener registered")
+            events["keybinds.submap"]()
+            assert_contains(exec_calls[#exec_calls], "pkill -RTMIN+12 -x --require-handler waybar")
+
+            -- Verify Smart Scratchpad auto-spawns when empty, and only toggles when populated
+            by_chord["SUPER + S"].dispatcher()
+            local spawn_rec = exec_calls[#exec_calls]
+            assert_eq(type(spawn_rec), "table", "empty scratchpad calls hl.exec_cmd with workspace opts")
+            assert_eq(spawn_rec.cmd, "kaze-footclient -N -a kaze-dropdown")
+            assert_eq(spawn_rec.opts.workspace, "special:scratch")
+            assert_eq(dispatches[#dispatches].dsp, "workspace.toggle_special")
+            assert_eq(dispatches[#dispatches].ws, "scratch")
+
+            local prev_exec_len = #exec_calls
+            ws_windows["special:scratch"] = { { address = "0x999" } }
+            by_chord["SUPER + S"].dispatcher()
+            assert_eq(#exec_calls, prev_exec_len, "populated scratchpad does not spawn another terminal")
         end)
     end)
 end

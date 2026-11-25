@@ -60,7 +60,25 @@ local function pin_pip()
         hl.dispatch(hl.dsp.window.resize({ x = rw, y = rh, window = win }))
         hl.dispatch(hl.dsp.window.move({ x = mx, y = my, relative = false, window = win }))
         hl.dispatch(hl.dsp.window.set_prop({ prop = "keep_aspect_ratio", value = "true", window = win }))
-        hl.dispatch(hl.dsp.window.pin({ action = "on", window = "address:" .. tostring(win.address) }))
+        hl.dispatch(hl.dsp.window.pin({ action = "on", window = win }))
+    end
+end
+
+local scratchpads = type(cfg.scratchpads) == "table" and cfg.scratchpads or {}
+
+local function toggle_or_spawn_special(ws)
+    local spawn_cmd = scratchpads[ws]
+    if type(spawn_cmd) ~= "string" or spawn_cmd == "" then
+        return hl.dsp.workspace.toggle_special(ws)
+    end
+    return function()
+        if hl.get_workspace_windows then
+            local wins = hl.get_workspace_windows("special:" .. ws)
+            if type(wins) == "table" and #wins == 0 then
+                hl.exec_cmd(spawn_cmd, { workspace = "special:" .. ws })
+            end
+        end
+        hl.dispatch(hl.dsp.workspace.toggle_special(ws))
     end
 end
 
@@ -104,7 +122,12 @@ local function make_dispatcher(entry)
     elseif kind == "window_move" then
         return hl.dsp.window.move(entry.args)
     elseif kind == "toggle_special" then
-        return hl.dsp.workspace.toggle_special(entry.workspace)
+        return toggle_or_spawn_special(entry.workspace)
+    elseif kind == "submap" then
+        if hl.dsp.submap then
+            return hl.dsp.submap(entry.submap)
+        end
+        return hl.dsp.exec_cmd("hyprctl dispatch submap " .. tostring(entry.submap))
     elseif kind == "window_drag" then
         return hl.dsp.window.drag()
     elseif kind == "window_resize" then
@@ -135,4 +158,18 @@ for _, entry in ipairs(keybinds_data.build(cfg)) do
     else
         hl.bind(entry.chord, make_dispatcher(entry))
     end
+end
+
+if hl.define_submap and hl.dsp.submap then
+    hl.define_submap("passthrough", function()
+        hl.bind("SUPER + Escape", hl.dsp.submap("reset"), {
+            description = "Exit VM keybind passthrough mode",
+        })
+    end)
+end
+
+if hl.on then
+    hl.on("keybinds.submap", function()
+        hl.exec_cmd("pkill -RTMIN+12 -x --require-handler waybar || true")
+    end)
 end

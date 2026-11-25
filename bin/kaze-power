@@ -8,20 +8,34 @@ local function setup_path()
     end
     local paths = {}
     local script = arg and arg[0] or ""
-    local q = "'" .. script:gsub("'", "'\\''") .. "'"
-    local p = io.popen("readlink -f " .. q .. " 2>/dev/null")
-    local resolved = p and p:read("*l") or nil
-    if p then
-        p:close()
-    end
-    local base = (resolved or script):match("^(.*)/[^/]+$")
-    if base then
-        local repo_lua = base .. "/../lua"
-        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
-        if f then
-            f:close()
-            paths[#paths + 1] = repo_lua .. "/?.lua"
-            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+    local direct_base = script:match("^(.*)/[^/]+$")
+    local direct_lua = direct_base and (direct_base .. "/../lua") or nil
+    local f_direct = direct_lua and io.open(direct_lua .. "/kaze/defaults.lua", "r") or nil
+    if f_direct then
+        f_direct:close()
+        paths[#paths + 1] = direct_lua .. "/?.lua"
+        paths[#paths + 1] = direct_lua .. "/?/init.lua"
+    else
+        local f_inst = io.open(xdg_data .. "/kaze-dots/lua/kaze/defaults.lua", "r")
+        if f_inst then
+            f_inst:close()
+        else
+            local q = "'" .. script:gsub("'", "'\\''") .. "'"
+            local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+            local resolved = p and p:read("*l") or nil
+            if p then
+                p:close()
+            end
+            local base = (resolved or script):match("^(.*)/[^/]+$")
+            if base then
+                local repo_lua = base .. "/../lua"
+                local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+                if f then
+                    f:close()
+                    paths[#paths + 1] = repo_lua .. "/?.lua"
+                    paths[#paths + 1] = repo_lua .. "/?/init.lua"
+                end
+            end
         end
     end
     paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
@@ -33,6 +47,7 @@ end
 setup_path()
 
 local fs = require("kaze.fs")
+local popups = require("kaze.popups")
 local session = require("kaze.session")
 
 local function cmd_exists(bin)
@@ -83,9 +98,10 @@ end
 
 local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
 local cmd = string.format(
-    "%sprintf '%%s\\n' %s | fuzzel --dmenu --lines %d -p %s",
+    "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 34 --lines %d -p %s",
     utf8_guard,
     fs.shell_quote(table.concat(labels, "\n")),
+    popups.active_right_flags(),
     #labels,
     fs.shell_quote("Power > ")
 )

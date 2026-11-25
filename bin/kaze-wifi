@@ -1,0 +1,272 @@
+#!/usr/bin/env lua
+
+local script_dir
+
+local function setup_path()
+    local home = os.getenv("HOME") or ""
+    local xdg_data = os.getenv("XDG_DATA_HOME")
+    if not xdg_data or xdg_data == "" then
+        xdg_data = home .. "/.local/share"
+    end
+    local paths = {}
+    local script = arg and arg[0] or ""
+    local direct_base = script:match("^(.*)/[^/]+$")
+    local direct_lua = direct_base and (direct_base .. "/../lua") or nil
+    local f_direct = direct_lua and io.open(direct_lua .. "/kaze/defaults.lua", "r") or nil
+    if f_direct then
+        f_direct:close()
+        script_dir = direct_base
+        paths[#paths + 1] = direct_lua .. "/?.lua"
+        paths[#paths + 1] = direct_lua .. "/?/init.lua"
+    else
+        local q = "'" .. script:gsub("'", "'\\''") .. "'"
+        local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+        local resolved = p and p:read("*l") or nil
+        if p then p:close() end
+        script_dir = (resolved or script):match("^(.*)/[^/]+$")
+        if script_dir then
+            local repo_lua = script_dir .. "/../lua"
+            local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+            if f then
+                f:close()
+                paths[#paths + 1] = repo_lua .. "/?.lua"
+                paths[#paths + 1] = repo_lua .. "/?/init.lua"
+            end
+        end
+    end
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
+    paths[#paths + 1] = package.path
+    package.path = table.concat(paths, ";")
+end
+
+setup_path()
+
+local fs = require("kaze.fs")
+local popups = require("kaze.popups")
+local power_profile = require("kaze.power_profile")
+
+local list_only = false
+local rescan = false
+for i = 1, #arg do
+    local a = arg[i]
+    if a == "-h" or a == "--help" then
+        io.stdout:write("Usage: kaze-wifi [--list] [--rescan]\n")
+        os.exit(0)
+    elseif a == "--list" then
+        list_only = true
+    elseif a == "--rescan" then
+        rescan = true
+    else
+        io.stderr:write("Usage: kaze-wifi [--list] [--rescan]\n")
+        os.exit(2)
+    end
+end
+
+local function sibling_or_path(bin)
+    if script_dir and fs.file_exists(script_dir .. "/" .. bin) then
+        return script_dir .. "/" .. bin
+    end
+    return bin
+end
+
+if not list_only then
+    local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
+    if running == true or running == 0 then
+        os.execute("pkill -x fuzzel >/dev/null 2>&1")
+        os.exit(0)
+    end
+end
+
+local wifi_backend = power_profile.wifi_tool()
+if wifi_backend == "impala" or not fs.command_exists("nmcli") then
+    if list_only then
+        io.stderr:write("kaze-wifi: nmcli is not available (active backend: " .. tostring(wifi_backend or "none") .. ")\n")
+        os.exit(1)
+    end
+    local ok_tui = os.execute(fs.shell_quote(sibling_or_path("kaze-tui")) .. " wifi")
+    os.exit((ok_tui == true or ok_tui == 0) and 0 or 1)
+end
+
+if not list_only and not fs.command_exists("fuzzel") then
+    io.stderr:write("kaze-wifi: fuzzel not found in PATH\n")
+    os.exit(1)
+end
+
+local function split_nmcli_terse(line)
+    local fields = {}
+    local buf = {}
+    local i = 1
+    local len = #line
+    while i <= len do
+        local c = line:sub(i, i)
+        if c == "\\" and i < len then
+            buf[#buf + 1] = line:sub(i + 1, i + 1)
+            i = i + 2
+        elseif c == ":" then
+            fields[#fields + 1] = table.concat(buf)
+            buf = {}
+            i = i + 1
+        else
+            buf[#buf + 1] = c
+            i = i + 1
+        end
+    end
+    fields[#fields + 1] = table.concat(buf)
+    return fields
+end
+
+local rescan_arg = rescan and "yes" or "no"
+local raw = fs.capture("nmcli -t -e yes -f IN-USE,SSID,SECURITY,SIGNAL device wifi list --rescan " .. rescan_arg .. " 2>/dev/null")
+if not raw then
+    io.stderr:write("kaze-wifi: failed to query NetworkManager Wi-Fi list\n")
+    os.exit(1)
+end
+
+local by_ssid = {}
+local networks = {}
+for line in raw:gmatch("[^\r\n]+") do
+    local f = split_nmcli_terse(line)
+    local in_use = (f[1] == "*")
+    local ssid = f[2] or ""
+    local sec = (f[3] or ""):gsub("^%-%-$", "")
+    local sig = tonumber(f[4]) or 0
+    if ssid ~= "" then
+        local existing = by_ssid[ssid]
+        if not existing then
+            existing = {
+                ssid = ssid,
+                active = in_use,
+                security = sec,
+                secured = (sec ~= "" and sec ~= "NONE"),
+                signal = sig,
+            }
+            by_ssid[ssid] = existing
+            networks[#networks + 1] = existing
+        else
+            if in_use then existing.active = true end
+            if sig > existing.signal then existing.signal = sig end
+            if sec ~= "" and existing.security == "" then
+                existing.security = sec
+                existing.secured = (sec ~= "NONE")
+            end
+        end
+    end
+end
+
+table.sort(networks, function(a, b)
+    if a.active ~= b.active then return a.active end
+    if a.signal ~= b.signal then return a.signal > b.signal end
+    return a.ssid < b.ssid
+end)
+
+local rows = {}
+local net_by_row = {}
+for _, n in ipairs(networks) do
+    local clean_ssid = n.ssid:gsub("[\r\n\t]+", " ")
+    local icon = n.active and "󰤨" or (n.secured and "󰤪" or "󰤨")
+    local sec_label = n.secured and (", " .. n.security) or ""
+    local act_label = n.active and " (connected)" or ""
+    local row = string.format("%s  %s  (%d%%%s)%s", icon, clean_ssid, n.signal, sec_label, act_label)
+    rows[#rows + 1] = row
+    net_by_row[row] = n
+end
+
+if list_only then
+    if #rows > 0 then
+        io.stdout:write(table.concat(rows, "\n") .. "\n")
+    end
+    os.exit(0)
+end
+
+local rescan_row = "󰑐  Rescan Wi-Fi Networks"
+local tui_row = "󰖩  Advanced Network Settings (nmtui)"
+rows[#rows + 1] = rescan_row
+rows[#rows + 1] = tui_row
+
+local right_flags = popups.active_right_flags()
+local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
+local cmd = string.format(
+    "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 52 --lines %d -p %s",
+    utf8_guard,
+    fs.shell_quote(table.concat(rows, "\n")),
+    right_flags,
+    math.min(12, #rows),
+    fs.shell_quote("Wi-Fi > ")
+)
+local p = io.popen(cmd)
+if not p then
+    io.stderr:write("kaze-wifi: failed to launch fuzzel\n")
+    os.exit(1)
+end
+local out = p:read("*a") or ""
+p:close()
+
+local choice = out:gsub("[\r\n]+$", "")
+if choice == "" then
+    os.exit(0)
+end
+
+if choice == rescan_row then
+    os.execute("nmcli device wifi rescan >/dev/null 2>&1 || true")
+    local self_bin = arg and arg[0] or sibling_or_path("kaze-wifi")
+    local ok_re = os.execute(fs.shell_quote(self_bin) .. " --rescan")
+    os.exit((ok_re == true or ok_re == 0) and 0 or 1)
+elseif choice == tui_row then
+    local ok_tui = os.execute(fs.shell_quote(sibling_or_path("kaze-tui")) .. " wifi")
+    os.exit((ok_tui == true or ok_tui == 0) and 0 or 1)
+end
+
+local target = net_by_row[choice]
+if not target then
+    io.stderr:write("kaze-wifi: unrecognized selection\n")
+    os.exit(1)
+end
+
+local function notify(title, body, urgency)
+    if not fs.command_exists("notify-send") then return end
+    os.execute(string.format(
+        "notify-send -a kaze-wifi -t 2200 -u %s -h string:x-canonical-private-synchronous:kaze-switch %s %s >/dev/null 2>&1 || true",
+        urgency or "low",
+        fs.shell_quote(title),
+        fs.shell_quote(body)
+    ))
+end
+
+if target.active then
+    notify("Wi-Fi", "Already connected to " .. target.ssid, "low")
+    os.exit(0)
+end
+
+local ok_conn = os.execute("nmcli --wait 12 device wifi connect " .. fs.shell_quote(target.ssid) .. " >/dev/null 2>&1")
+if ok_conn == true or ok_conn == 0 then
+    notify("Wi-Fi connected", target.ssid, "low")
+    os.exit(0)
+end
+
+if target.secured then
+    local pw_cmd = string.format(
+        "%sfuzzel --dmenu %s --password --prompt-only=%s </dev/null",
+        utf8_guard,
+        right_flags,
+        fs.shell_quote("Password (" .. target.ssid:gsub("[\r\n\t]+", " ") .. ") > ")
+    )
+    local pw_proc = io.popen(pw_cmd)
+    local pw = pw_proc and (pw_proc:read("*a") or "") or ""
+    if pw_proc then pw_proc:close() end
+    pw = pw:gsub("[\r\n]+$", "")
+    if pw == "" then
+        os.exit(0)
+    end
+    local ok_pw = os.execute(
+        "nmcli --wait 15 device wifi connect " .. fs.shell_quote(target.ssid)
+            .. " password " .. fs.shell_quote(pw) .. " >/dev/null 2>&1"
+    )
+    if ok_pw == true or ok_pw == 0 then
+        notify("Wi-Fi connected", target.ssid, "low")
+        os.exit(0)
+    end
+end
+
+notify("Wi-Fi connection failed", "Could not connect to " .. target.ssid, "normal")
+os.exit(1)

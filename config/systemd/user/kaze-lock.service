@@ -6,6 +6,7 @@ After=kaze-session.target
 
 [Service]
 Type=exec
+Slice=session.slice
 EnvironmentFile=%t/kaze/session.env
 ExecStart=/usr/bin/hyprlock
 TimeoutStopSec=5s

@@ -1,0 +1,296 @@
+#!/usr/bin/env lua
+
+local script_dir
+local self_path
+
+local function setup_path()
+    local home = os.getenv("HOME") or ""
+    local xdg_data = os.getenv("XDG_DATA_HOME")
+    if not xdg_data or xdg_data == "" then
+        xdg_data = home .. "/.local/share"
+    end
+    local paths = {}
+    local script = arg and arg[0] or ""
+    local q = "'" .. script:gsub("'", "'\\''") .. "'"
+    local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+    local resolved = p and p:read("*l") or nil
+    if p then p:close() end
+    self_path = resolved or script
+    script_dir = self_path:match("^(.*)/[^/]+$")
+    if script_dir then
+        local repo_lua = script_dir .. "/../lua"
+        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+        if f then
+            f:close()
+            paths[#paths + 1] = repo_lua .. "/?.lua"
+            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+        end
+    end
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
+    paths[#paths + 1] = package.path
+    package.path = table.concat(paths, ";")
+end
+
+setup_path()
+
+local config = require("kaze.config")
+local fs = require("kaze.fs")
+local popups = require("kaze.popups")
+local themes = require("kaze.themes")
+local widget = require("kaze.widget")
+
+local mode = arg[1]
+if #arg > 1 or (mode and mode ~= "--print" and mode ~= "--ui" and mode ~= "-h" and mode ~= "--help") then
+    io.stderr:write("Usage: kaze-dashboard [--print]\n")
+    os.exit(2)
+end
+if mode == "-h" or mode == "--help" then
+    io.stdout:write("Usage: kaze-dashboard [--print]\n")
+    os.exit(0)
+end
+
+local function sibling_or_path(bin)
+    if script_dir and fs.file_exists(script_dir .. "/" .. bin) then
+        return script_dir .. "/" .. bin
+    end
+    return bin
+end
+
+local ok_cfg, cfg, theme = pcall(config.load, { strict = false })
+if not ok_cfg or type(cfg) ~= "table" then
+    cfg = { layout = "sidebar", theme = "kaze" }
+    theme = themes.get("kaze")
+end
+
+local function query_media()
+    if not fs.command_exists("playerctl") then
+        return { active = false }
+    end
+    local meta = fs.capture(
+        "playerctl metadata --format '{{status}}\t{{artist}}\t{{title}}\t{{position}}\t{{mpris:length}}' 2>/dev/null"
+    )
+    if not meta or not meta:find("%S") then
+        return { active = false }
+    end
+    local line = meta:match("^([^\r\n]+)") or ""
+    local st, artist, title, pos_s, len_s = line:match("^([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)$")
+    if not title or title == "" then
+        return { active = false }
+    end
+    local pos_us = tonumber(pos_s) or 0
+    local len_us = tonumber(len_s) or 0
+    local pct = (len_us > 0) and math.max(0, math.min(100, math.floor((pos_us / len_us) * 100 + 0.5))) or 0
+    local function fmt(us)
+        local s = math.max(0, math.floor(us / 1000000 + 0.5))
+        return string.format("%d:%02d", s // 60, s % 60)
+    end
+    return {
+        active = true,
+        playing = (st == "Playing"),
+        artist = artist or "",
+        title = title,
+        pct = pct,
+        time_str = (len_us > 0) and (fmt(pos_us) .. "/" .. fmt(len_us)) or "",
+    }
+end
+
+if mode == "--print" then
+    local cal = popups.render_calendar()
+    local m = query_media()
+    local media_line = m.active
+        and string.format("%s  %s — %s [%s]", m.playing and "󰎈" or "󰏤", m.artist, m.title, m.time_str)
+        or "󰎊  No active media"
+    io.stdout:write(cal .. "\n\n" .. media_line .. "\n")
+    os.exit(0)
+end
+
+local COLS, ROWS = 38, 15
+
+if mode ~= "--ui" then
+    widget.toggle_or_open({
+        app_id = "kaze-widget-dash",
+        title = "Kaze Calendar",
+        cols = COLS,
+        rows = ROWS,
+        theme = theme,
+        foot_bin = sibling_or_path("kaze-footclient"),
+        script_path = self_path,
+    })
+    os.exit(0)
+end
+
+local today = os.date("*t")
+local view_year = today.year
+local view_month = today.month
+local notif_cleared = false
+
+local function shift_month(delta)
+    local d = os.date("*t", os.time({ year = view_year, month = view_month + delta, day = 1, hour = 12 }))
+    view_year = d.year
+    view_month = d.month
+end
+
+local function trunc(s, max_len)
+    local len = tonumber(utf8.len(s)) or #s
+    if len <= max_len then return s end
+    local out = {}
+    local n = 0
+    for _, code in utf8.codes(s) do
+        n = n + 1
+        if n > max_len - 1 then break end
+        out[#out + 1] = utf8.char(code)
+    end
+    return table.concat(out) .. "…"
+end
+
+widget.run_loop({
+    cols = COLS,
+    rows = ROWS,
+    theme = theme,
+    on_scroll = function(dir)
+        shift_month(-dir)
+    end,
+    on_key = function(k)
+        if k == "h" or k == "CSI:D" or k == "," or k == "<" then
+            shift_month(-1)
+            return "redraw"
+        elseif k == "l" or k == "CSI:C" or k == "." or k == ">" then
+            shift_month(1)
+            return "redraw"
+        elseif k == "t" or k == "T" then
+            local now = os.date("*t")
+            view_year, view_month = now.year, now.month
+            return "redraw"
+        elseif k == " " and fs.command_exists("playerctl") then
+            os.execute("playerctl play-pause >/dev/null 2>&1 || true")
+            return "redraw"
+        elseif k == "n" and fs.command_exists("playerctl") then
+            os.execute("playerctl next >/dev/null 2>&1 || true")
+            return "redraw"
+        elseif k == "p" and fs.command_exists("playerctl") then
+            os.execute("playerctl previous >/dev/null 2>&1 || true")
+            return "redraw"
+        end
+    end,
+    render = function(ui)
+        today = os.date("*t")
+        ui:begin_frame(theme.bg_alt, theme.fg)
+
+        -- Row 1: Live Date & Time + Close pill
+        local date_str = os.date("󰃭  %a, %d %b %Y")
+        local clock_str = os.date("%H:%M")
+        ui:put(1, 2, date_str, theme.fg, theme.bg_alt, true)
+        ui:put(1, COLS - 9, clock_str, theme.accent, theme.bg_alt, true)
+        ui:pill(1, COLS - 2, " ✕ ", theme.fg_muted, theme.surface, true, function()
+            return "close"
+        end)
+
+        ui:rule(2, 2, COLS - 2, theme.border)
+
+        -- Row 3: Month switcher (<  Month YYYY  >)
+        local grid = popups.calendar_grid(view_year, view_month)
+        ui:pill(3, 3, " ◀ ", theme.fg, theme.surface, true, function()
+            shift_month(-1)
+        end)
+        local m_hdr = string.format("%s %d", grid.month_name, grid.year)
+        local m_col = math.max(8, math.floor((COLS - #m_hdr) / 2) + 1)
+        ui:put(3, m_col, m_hdr, theme.fg, theme.bg_alt, true)
+        ui:pill(3, COLS - 4, " ▶ ", theme.fg, theme.surface, true, function()
+            shift_month(1)
+        end)
+
+        -- Row 4: Weekday headers (5-col cells across cols 3..37 = 35 cols)
+        local wdays = { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" }
+        for i, wd in ipairs(wdays) do
+            local col = 3 + (i - 1) * 5
+            local c_hex = (i >= 6) and theme.accent or theme.fg_muted
+            ui:put(4, col + 1, wd, c_hex, theme.bg_alt, true)
+        end
+
+        -- Rows 5..10: Calendar grid
+        local r = 5
+        local c_idx = grid.offset
+        for day = 1, grid.days do
+            local cell_col = 3 + c_idx * 5
+            local is_today = (day == today.day and grid.month == today.month and grid.year == today.year)
+            local is_wknd = (c_idx >= 5)
+            local label = string.format(" %2d ", day)
+            if is_today then
+                ui:put(r, cell_col, label, theme.accent_fg, theme.accent, true)
+            else
+                ui:put(r, cell_col, label, is_wknd and theme.fg_muted or theme.fg, theme.bg_alt, false)
+            end
+            c_idx = c_idx + 1
+            if c_idx >= 7 then
+                c_idx = 0
+                r = r + 1
+            end
+        end
+
+        ui:rule(11, 2, COLS - 2, theme.border)
+
+        -- Rows 12..14: Media card
+        local media = query_media()
+        if media.active then
+            local icon = media.playing and "󰎈 " or "󰏤 "
+            local full_track = (media.artist ~= "") and (media.title .. " · " .. media.artist) or media.title
+            local max_t = COLS - 4 - #media.time_str - 3
+            ui:put(12, 2, icon .. trunc(full_track, math.max(12, max_t)), theme.fg, theme.bg_alt, true)
+            if media.time_str ~= "" then
+                ui:put(12, COLS - #media.time_str, media.time_str, theme.fg_muted, theme.bg_alt, false)
+            end
+            ui:slider(13, 3, COLS - 4, media.pct, not media.playing, theme, nil)
+        else
+            ui:put(12, 2, "󰎊  No active media playback", theme.fg_muted, theme.bg_alt, false)
+            ui:slider(13, 3, COLS - 4, 0, true, theme, nil)
+        end
+
+        -- Row 15: Transport + Today + Clear Notifications pills
+        ui:pill(15, 2, " 󰒮 ", media.active and theme.fg or theme.fg_muted, theme.surface, true, function()
+            if fs.command_exists("playerctl") then
+                os.execute("playerctl previous >/dev/null 2>&1 || true")
+            end
+        end)
+        ui:pill(
+            15,
+            7,
+            media.playing and " 󰏤 " or " 󰐎 ",
+            media.playing and theme.accent_fg or theme.fg,
+            media.playing and theme.accent or theme.surface,
+            true,
+            function()
+                if fs.command_exists("playerctl") then
+                    os.execute("playerctl play-pause >/dev/null 2>&1 || true")
+                end
+            end
+        )
+        ui:pill(15, 12, " 󰒭 ", media.active and theme.fg or theme.fg_muted, theme.surface, true, function()
+            if fs.command_exists("playerctl") then
+                os.execute("playerctl next >/dev/null 2>&1 || true")
+            end
+        end)
+
+        local is_cur_month = (view_year == today.year and view_month == today.month)
+        ui:pill(
+            15,
+            18,
+            " Today ",
+            is_cur_month and theme.fg_muted or theme.accent_fg,
+            is_cur_month and theme.surface or theme.accent,
+            true,
+            function()
+                view_year, view_month = today.year, today.month
+            end
+        )
+
+        local clr_lbl = notif_cleared and " ✓ Cleared " or " 󰂚 Clear "
+        local clr_w = tonumber(utf8.len(clr_lbl)) or #clr_lbl
+        ui:pill(15, COLS - clr_w, clr_lbl, notif_cleared and theme.ok or theme.fg, theme.surface, true, function()
+            if fs.command_exists("fnottctl") then
+                os.execute("fnottctl dismiss all >/dev/null 2>&1 || true")
+                notif_cleared = true
+            end
+        end)
+    end,
+})

@@ -11,16 +11,37 @@ end
 -- Reject unknown states too: this must only store wl-paste events marked as data.
 if action == "store" and os.getenv("CLIPBOARD_STATE") ~= "data" then os.exit(0) end
 
-local script = arg[0]:gsub("'", "'\\''")
-local link = io.popen("readlink -f -- '" .. script .. "' 2>/dev/null")
-local resolved = link and link:read("*l")
-if link then link:close() end
-local repo = ((resolved or arg[0]):match("^(.*)/[^/]+$") or ".") .. "/../lua"
+local script = arg and arg[0] or ""
 local data_home = os.getenv("XDG_DATA_HOME") or ""
 if data_home == "" then data_home = (os.getenv("HOME") or "") .. "/.local/share" end
 local installed = data_home .. "/kaze-dots/lua"
-package.path = table.concat({ repo .. "/?.lua", repo .. "/?/init.lua",
-    installed .. "/?.lua", installed .. "/?/init.lua", package.path }, ";")
+local direct_dir = script:match("^(.*)/[^/]+$")
+local repo = direct_dir and (direct_dir .. "/../lua") or nil
+local f_repo = repo and io.open(repo .. "/kaze/defaults.lua", "r") or nil
+if f_repo then
+    f_repo:close()
+else
+    local f_inst = io.open(installed .. "/kaze/defaults.lua", "r")
+    if f_inst then
+        f_inst:close()
+        repo = nil
+    else
+        local q = "'" .. script:gsub("'", "'\\''") .. "'"
+        local link = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+        local resolved = link and link:read("*l")
+        if link then link:close() end
+        repo = ((resolved or script):match("^(.*)/[^/]+$") or ".") .. "/../lua"
+    end
+end
+local paths = {}
+if repo then
+    paths[#paths + 1] = repo .. "/?.lua"
+    paths[#paths + 1] = repo .. "/?/init.lua"
+end
+paths[#paths + 1] = installed .. "/?.lua"
+paths[#paths + 1] = installed .. "/?/init.lua"
+paths[#paths + 1] = package.path
+package.path = table.concat(paths, ";")
 
 local cfg = require("kaze.config").load({ strict = false })
 local fs = require("kaze.fs")
@@ -94,8 +115,17 @@ if not selected:match("^%d+\t") then os.exit(0) end
 -- Decode completely before opening wl-copy; deleted/stale selection must be a no-op.
 local data = fs.capture(cliphist .. "decode " .. quote(selected))
 if not data or data == "" then fail("clipboard entry could not be decoded") end
--- wl-copy uses xdg-mime for other formats. Do not depend on that path for PNGs.
-local mime = data:sub(1, 8) == "\137PNG\r\n\26\n" and " --type image/png" or ""
+-- wl-copy uses xdg-mime for other formats. Do not depend on that path for PNGs, JPEGs, WebPs, or GIFs.
+local mime = ""
+if data:sub(1, 8) == "\137PNG\r\n\26\n" then
+    mime = " --type image/png"
+elseif #data >= 4 and data:sub(1, 3) == "\255\216\255" then
+    mime = " --type image/jpeg"
+elseif #data >= 12 and data:sub(1, 4) == "RIFF" and data:sub(9, 12) == "WEBP" then
+    mime = " --type image/webp"
+elseif data:sub(1, 6) == "GIF87a" or data:sub(1, 6) == "GIF89a" then
+    mime = " --type image/gif"
+end
 local copy = io.popen("exec wl-copy" .. mime .. " >/dev/null 2>&1", "w")
 if not copy then fail("cannot launch wl-copy") end
 local written = copy:write(data)

@@ -80,6 +80,9 @@ function M.load(path)
     if type(res.prev_color_scheme) == "string" and res.prev_color_scheme ~= "" then
         out.prev_color_scheme = res.prev_color_scheme
     end
+    if type(res.last_dark_theme) == "string" and res.last_dark_theme ~= "" and res.last_dark_theme ~= "paper" then
+        out.last_dark_theme = res.last_dark_theme
+    end
     if res.dynamic_palette ~= nil then
         local pal = clean_palette(res.dynamic_palette)
         if pal then
@@ -114,6 +117,9 @@ function M.save(tbl, path)
     end
     if type(tbl.prev_color_scheme) == "string" and tbl.prev_color_scheme ~= "" then
         lines[#lines + 1] = string.format("    prev_color_scheme = %q,", tbl.prev_color_scheme)
+    end
+    if type(tbl.last_dark_theme) == "string" and tbl.last_dark_theme ~= "" and tbl.last_dark_theme ~= "paper" then
+        lines[#lines + 1] = string.format("    last_dark_theme = %q,", tbl.last_dark_theme)
     end
     if tbl.dynamic_palette ~= nil then
         local pal = assert(clean_palette(tbl.dynamic_palette), "state.save: invalid dynamic_palette")

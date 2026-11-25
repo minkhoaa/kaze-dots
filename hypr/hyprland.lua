@@ -22,6 +22,7 @@ for _, mod in ipairs({
     "kaze.state",
     "kaze.color",
     "kaze.themes",
+    "kaze.json",
     "kaze.keybinds_data",
     "kaze.power_profile",
     "kaze.layouts",
@@ -52,12 +53,21 @@ package.loaded["kaze._ctx"] = {
 local monitors = cfg.monitors
 if type(monitors) == "table" and #monitors > 0 then
     for _, mon in ipairs(monitors) do
-        hl.monitor({
+        local spec = {
             output = mon.output or "",
             mode = mon.mode or "preferred",
             position = mon.position or "auto",
             scale = mon.scale or 1,
-        })
+        }
+        if mon.disabled == true then
+            spec.disabled = true
+        end
+        for _, k in ipairs({ "mirror", "bitdepth", "transform", "vrr", "cm", "sdrbrightness", "sdrsaturation", "reserved", "reserved_area" }) do
+            if mon[k] ~= nil then
+                spec[k] = mon[k]
+            end
+        end
+        hl.monitor(spec)
     end
 else
     hl.monitor({

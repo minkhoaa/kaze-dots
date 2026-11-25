@@ -11,7 +11,7 @@ local function setup_path()
     local paths = {}
     local script = arg and arg[0] or ""
     local q = "'" .. script:gsub("'", "'\\''") .. "'"
-    local p = io.popen("readlink -f " .. q .. " 2>/dev/null")
+    local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
     local resolved = p and p:read("*l") or nil
     if p then
         p:close()
@@ -36,6 +36,8 @@ setup_path()
 
 local config = require("kaze.config")
 local fs = require("kaze.fs")
+local popups = require("kaze.popups")
+local state = require("kaze.state")
 local themes = require("kaze.themes")
 local transaction = require("kaze.transaction")
 
@@ -53,7 +55,7 @@ end
 
 local function usage(output)
     (output or io.stdout):write(
-        "Usage: kaze-theme [--quiet] [kaze|lavender|tokyonight|carbon|dynamic|--menu|--current|-h|--help]\n"
+        "Usage: kaze-theme [--quiet] [kaze|lavender|tokyonight|carbon|paper|dynamic|toggle-polarity|--menu|--current|-h|--help]\n"
     )
 end
 
@@ -78,9 +80,10 @@ local function pick_from_menu(current_theme)
 
     local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
     local cmd = string.format(
-        "%sprintf '%%s\\n' %s | fuzzel --dmenu --lines %d -p %s",
+        "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 44 --lines %d -p %s",
         utf8_guard,
         fs.shell_quote(table.concat(lines, "\n")),
+        popups.active_right_flags(),
         #lines,
         fs.shell_quote("Theme > ")
     )
@@ -136,24 +139,50 @@ end
 local sync_bin = sibling_or_path("kaze-sync")
 local label
 
+local reuse_cached_dynamic = false
+if target == "toggle-polarity" then
+    local cur_cfg = config.load({ strict = false })
+    if cur_cfg.theme == "paper" then
+        local st = state.load()
+        local prev_dark = st.last_dark_theme or "kaze"
+        if prev_dark == "dynamic" then
+            if st.dynamic_palette ~= nil then
+                reuse_cached_dynamic = true
+            elseif not cmd_exists("matugen") then
+                prev_dark = "kaze"
+            end
+        end
+        target = prev_dark
+    else
+        target = "paper"
+    end
+end
+
 if target == "dynamic" then
     if config.user_overrides().theme ~= nil then
         io.stderr:write("kaze-theme: theme is pinned by user.lua\n")
         os.exit(1)
     end
-    if not cmd_exists("matugen") then
-        io.stderr:write("kaze-theme: matugen not found in PATH\n")
-        os.exit(1)
-    end
-    local cur_cfg = config.load({ strict = false })
-    local ok_wall, wall_err = transaction.validate_wallpaper(cur_cfg.wallpaper_expanded)
-    if not ok_wall then
-        io.stderr:write("kaze-theme: " .. tostring(wall_err) .. "\n")
-        os.exit(1)
-    end
-    if not os.execute(fs.shell_quote(sync_bin) .. " --set-dynamic-theme") then
-        io.stderr:write("kaze-theme: dynamic theme switch failed\n")
-        os.exit(1)
+    if reuse_cached_dynamic then
+        if not os.execute(fs.shell_quote(sync_bin) .. " --set-theme dynamic") then
+            io.stderr:write("kaze-theme: dynamic theme switch failed\n")
+            os.exit(1)
+        end
+    else
+        if not cmd_exists("matugen") then
+            io.stderr:write("kaze-theme: matugen not found in PATH\n")
+            os.exit(1)
+        end
+        local cur_cfg = config.load({ strict = false })
+        local ok_wall, wall_err = transaction.validate_wallpaper(cur_cfg.wallpaper_expanded)
+        if not ok_wall then
+            io.stderr:write("kaze-theme: " .. tostring(wall_err) .. "\n")
+            os.exit(1)
+        end
+        if not os.execute(fs.shell_quote(sync_bin) .. " --set-dynamic-theme") then
+            io.stderr:write("kaze-theme: dynamic theme switch failed\n")
+            os.exit(1)
+        end
     end
     label = "Dynamic (Wallpaper)"
 else

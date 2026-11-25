@@ -80,10 +80,27 @@ local function find_existing_tui(title)
         return nil, false
     end
 
-    local active_out = read_cmd("hyprctl activewindow 2>/dev/null")
-    local active_addr = active_out:match("Window%s+(%x+)%s+->")
+    local active_out = read_cmd("hyprctl -j activewindow 2>/dev/null")
+    local ok_act, parsed_act = pcall(require("kaze.json").decode, active_out)
+    local active_addr = nil
+    if ok_act and type(parsed_act) == "table" and type(parsed_act.address) == "string" then
+        active_addr = parsed_act.address:gsub("^0x", "")
+    else
+        active_addr = active_out:match("Window%s+(%x+)%s+->")
+    end
 
-    local clients_out = read_cmd("hyprctl clients 2>/dev/null")
+    local clients_out = read_cmd("hyprctl -j clients 2>/dev/null")
+    local ok_cli, parsed_cli = pcall(require("kaze.json").decode, clients_out)
+    if ok_cli and type(parsed_cli) == "table" then
+        for _, c in ipairs(parsed_cli) do
+            if type(c) == "table" and c.class == "kaze-tui" and c.title == title and type(c.address) == "string" then
+                local addr = c.address:gsub("^0x", "")
+                return addr, addr == active_addr
+            end
+        end
+        return nil, false
+    end
+
     local cur_addr, cur_class, cur_title
     local function check_match()
         if cur_addr and cur_class == "kaze-tui" and cur_title == title then
@@ -183,7 +200,7 @@ end
 
 local footclient_bin = sibling_or_path("kaze-footclient")
 local cmd = string.format(
-    "%s -N -a kaze-tui -T %s %s",
+    "%s -N -o main.locked-title=yes -a kaze-tui -T %s %s",
     fs.shell_quote(footclient_bin),
     fs.shell_quote(title),
     fs.shell_quote(tool_bin)

@@ -15,6 +15,15 @@ lines=5000
 style=beam
 blink=no
 
+[bell]
+urgent=yes
+
+[mouse]
+hide-when-typing=yes
+
+[csd]
+preferred=none
+
 [colors-dark]
 alpha=0.92
 background=%s

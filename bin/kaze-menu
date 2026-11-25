@@ -35,6 +35,7 @@ end
 setup_path()
 
 local fs = require("kaze.fs")
+local popups = require("kaze.popups")
 local power_profile = require("kaze.power_profile")
 
 local function cmd_exists(bin)
@@ -81,16 +82,25 @@ local wifi_label = wifi_bin == "impala" and "󰖩  Wi-Fi (impala)" or "󰖩  Wi-
 
 local items = {
     { label = "󰀻  App Launcher",       cmd = "fuzzel", needs = { "fuzzel" } },
+    { label = "󰃭  Calendar & Dashboard", cmd = fs.shell_quote(sibling_or_path("kaze-dashboard")), check = function() return kaze_tool_exists("kaze-dashboard") end },
+    { label = "󰒓  Quick Control Panel", cmd = fs.shell_quote(sibling_or_path("kaze-panel")), check = function() return kaze_tool_exists("kaze-panel") end },
+    { label = "󰂬  Switch Window",      cmd = fs.shell_quote(sibling_or_path("kaze-windows")), needs = { "hyprctl" } },
     { label = "󰆍  Terminal",           cmd = fs.shell_quote(sibling_or_path("kaze-footclient")) .. " -N", needs = { "footclient" } },
     { label = "󰙵  Switch Layout",      cmd = fs.shell_quote(sibling_or_path("kaze-layout")) .. " --menu" },
     { label = "󰏘  Switch Theme",       cmd = fs.shell_quote(sibling_or_path("kaze-theme")) .. " --menu" },
+    { label = "󰔎  Toggle Light / Dark", cmd = fs.shell_quote(sibling_or_path("kaze-theme")) .. " toggle-polarity" },
     { label = "󰸉  Switch Wallpaper",   cmd = fs.shell_quote(sibling_or_path("kaze-wall")) .. " --menu", check = function() return kaze_tool_exists("kaze-wall") end },
+    { label = "󱐋  Zen Performance Mode", cmd = fs.shell_quote(sibling_or_path("kaze-perf")), needs = { "hyprctl" } },
     { label = "󰍹  Displays",           cmd = fs.shell_quote(sibling_or_path("kaze-display")) .. " --menu", check = function() return kaze_tool_exists("kaze-display") end },
     { label = "󰌌  Keyboard Shortcuts", cmd = fs.shell_quote(sibling_or_path("kaze-keys")), check = function() return kaze_tool_exists("kaze-keys") end },
+    { label = "󰪚  Calculator",         cmd = fs.shell_quote(sibling_or_path("kaze-calc")), needs = { "wl-copy" } },
+    { label = "󰖩  Quick Wi-Fi",        cmd = fs.shell_quote(sibling_or_path("kaze-wifi")), needs = { "nmcli" }, check = function() return wifi_bin ~= "impala" end },
     { label = wifi_label,              cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " wifi", check = function() return wifi_bin ~= nil end },
+    { label = "󰓃  Audio Output",       cmd = fs.shell_quote(sibling_or_path("kaze-audio-sink")), needs = { "wpctl" } },
+    { label = "󰕾  Audio Mixer",         cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " audio", any_of = { "wiremix", "pulsemixer", "alsamixer" } },
+    { label = "󰎈  Now Playing",        cmd = fs.shell_quote(sibling_or_path("kaze-osd")) .. " media-info", needs = { "playerctl", "notify-send" } },
     { label = "󰓅  Power Profile",      cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " power-profile", check = power_profile.available },
     { label = "󰂯  Bluetooth",           cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " bluetooth", any_of = { "bluetui", "bluetoothctl" } },
-    { label = "󰕾  Audio Mixer",         cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " audio", any_of = { "wiremix", "pulsemixer", "alsamixer" } },
     { label = "󰍛  System Monitor",       cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " sysmon", any_of = { "btop", "htop", "top" } },
     { label = "󰅌  Clipboard History",  cmd = fs.shell_quote(sibling_or_path("kaze-clipboard")) .. " pick", needs = { "cliphist", "wl-copy" } },
     { label = "󰄀  Screenshot Region",  cmd = fs.shell_quote(sibling_or_path("kaze-screenshot")) .. " region", needs = { "slurp", "grim", "wl-copy" } },
@@ -136,10 +146,11 @@ end
 
 local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
 local cmd = string.format(
-    "%sprintf '%%s\\n' %s | fuzzel --dmenu --lines %d -p %s",
+    "%sprintf '%%s\\n' %s | fuzzel --dmenu %s --lines %d -p %s",
     utf8_guard,
     fs.shell_quote(table.concat(labels, "\n")),
-    #labels,
+    popups.active_menu_flags(),
+    math.min(16, #labels),
     fs.shell_quote("Kaze > ")
 )
 local p = io.popen(cmd)

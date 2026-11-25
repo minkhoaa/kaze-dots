@@ -173,13 +173,27 @@ local function build_suite(test, assert_eq, assert_true, assert_contains, repo_d
         assert_palette_wcag(from_v2, "matugen-v2-json")
     end)
 
-    test("stage3 themes: dynamic theme stays pure, preserves 4 built-in presets, and emits cleanly", function()
-        assert_eq(#themes.list(), 4, "themes.list() must keep 4 built-in presets")
-        assert_eq(#themes.list_selectable(false), 4, "selectable without matugen")
-        assert_eq(#themes.list_selectable(true), 5, "selectable with matugen")
-        assert_eq(themes.list_selectable(true)[5], "dynamic", "5th selectable entry")
+    test("stage3 themes: dynamic & paper presets stay pure, validate WCAG, and emit cleanly", function()
+        assert_eq(#themes.list(), 5, "themes.list() must keep 5 built-in presets")
+        assert_eq(#themes.list_selectable(false), 5, "selectable without matugen")
+        assert_eq(#themes.list_selectable(true), 6, "selectable with matugen")
+        assert_eq(themes.list_selectable(true)[5], "paper", "5th selectable entry")
+        assert_eq(themes.list_selectable(true)[6], "dynamic", "6th selectable entry")
 
-        for _, rel in ipairs({ "/lua/kaze/color.lua", "/lua/kaze/themes.lua" }) do
+        local paper = themes.get("paper")
+        assert_eq(themes.is_light(paper), true, "paper must be detected as light")
+        assert_eq(themes.is_light(themes.get("kaze")), false, "kaze must be detected as dark")
+        for _, bg_key in ipairs({ "bg", "bg_alt" }) do
+            local bg_hex = paper[bg_key]
+            assert_true(color.contrast_ratio(paper.fg, bg_hex) >= 4.5, "paper fg vs " .. bg_key .. " >= 4.5")
+            assert_true(color.contrast_ratio(paper.fg_muted, bg_hex) >= 4.5, "paper fg_muted vs " .. bg_key .. " >= 4.5")
+            for _, tok in ipairs({ "border", "ok", "warn", "danger" }) do
+                assert_true(color.contrast_ratio(paper[tok], bg_hex) >= 3.0, "paper " .. tok .. " vs " .. bg_key .. " >= 3.0")
+            end
+        end
+        assert_true(color.contrast_ratio(paper.accent_fg, paper.accent) >= 4.5, "paper accent_fg vs accent >= 4.5")
+
+        for _, rel in ipairs({ "/lua/kaze/color.lua", "/lua/kaze/themes.lua", "/lua/kaze/emit_palette.lua" }) do
             local src = assert(fs.read_file(repo_dir .. rel))
             assert_true(not src:find("os%.execute"), rel .. " must not call os.execute")
             assert_true(not src:find("io%.popen"), rel .. " must not call io.popen")
@@ -323,6 +337,21 @@ esac
             assert(os.execute(run("kaze-sync", "")))
             assert_eq(fs.read_file(tmp .. "/gsettings-set"), "prefer-dark\n")
             assert_eq(state.load(tmp .. "/cfg/kaze/state.lua").prev_color_scheme, "'default'")
+
+            -- toggle-polarity switches dynamic <-> paper, syncs prefer-light, and reuses cached dynamic_palette
+            os.remove(tmp .. "/gsettings-set")
+            assert(os.execute(run("kaze-theme", "--quiet toggle-polarity")))
+            assert_eq(fs.capture(run("kaze-theme", "--current")), "paper\n")
+            assert_eq(fs.read_file(tmp .. "/gsettings-set"), "prefer-light\n")
+            local st_paper = state.load(tmp .. "/cfg/kaze/state.lua")
+            assert_eq(st_paper.last_dark_theme, "dynamic")
+            assert_true(type(st_paper.dynamic_palette) == "table", "dynamic_palette preserved while in paper mode")
+
+            os.remove(tmp .. "/gsettings-set")
+            assert(os.execute(run("kaze-theme", "--quiet toggle-polarity", "FAIL_MATUGEN=1")))
+            assert_eq(fs.capture(run("kaze-theme", "--current")), "dynamic\n", "returns to dynamic without re-invoking matugen")
+            assert_eq(fs.read_file(tmp .. "/gsettings-set"), "prefer-dark\n")
+
             for _, forbidden in ipairs({ "/cfg/gtk-3.0", "/cfg/gtk-4.0", "/cfg/qt6ct", "/cfg/btop", "/cfg/nvim" }) do
                 assert_true(not fs.file_exists(tmp .. forbidden), "must never write " .. forbidden)
             end

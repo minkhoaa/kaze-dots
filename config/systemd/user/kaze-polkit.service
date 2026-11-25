@@ -9,6 +9,7 @@ StartLimitBurst=5
 
 [Service]
 Type=exec
+Slice=session.slice
 EnvironmentFile=%t/kaze/session.env
 ExecCondition=:/usr/bin/sh -c 'test "${KAZE_ENABLE_POLKIT:-0}" = 1'
 ExecStart=/usr/lib/mate-polkit/polkit-mate-authentication-agent-1

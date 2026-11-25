@@ -11,10 +11,15 @@ return {
     wallpaper_dir = "~/Pictures/Wallpapers",
     cursor_theme = "Adwaita",
     cursor_size = 24,
+    icon_theme = "hicolor",
     kb_layout = "us",
     accel_profile = "flat",
     workspace_swipe = true,
+    smart_gaps = false,
     sync_prefer_dark = false,
+    scratchpads = {
+        scratch = "kaze-footclient -N -a kaze-dropdown",
+    },
     vol_step = 5,
     vol_max = 1.5,
     bright_step = 5,
@@ -32,8 +37,8 @@ return {
     },
     shadow = false,
     opacity = {
-        active = 0.96,
-        inactive = 0.92,
+        active = 1.0,
+        inactive = 1.0,
     },
     monitors = {
         {

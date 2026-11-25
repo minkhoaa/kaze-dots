@@ -34,6 +34,7 @@ setup_path()
 
 local display = require("kaze.display")
 local fs = require("kaze.fs")
+local popups = require("kaze.popups")
 
 local function usage(out)
     out:write("Usage: kaze-display [--menu | --list | extend-right | extend-left | extend-up | mirror | external | internal | auto | -h | --help]\n")
@@ -124,9 +125,10 @@ if mode == "--menu" then
 
     local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
     local cmd = string.format(
-        "%sprintf '%%s\\n' %s | fuzzel --dmenu -w 46 --lines %d -p %s",
+        "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 46 --lines %d -p %s",
         utf8_guard,
         fs.shell_quote(table.concat(labels, "\n")),
+        popups.active_right_flags(),
         #labels,
         fs.shell_quote("Display > ")
     )

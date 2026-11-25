@@ -7,7 +7,7 @@
 return {
     -- profile = "minimal", -- "minimal" | "full" (normally persisted via install.sh / kaze-sync --set-profile)
     -- layout = "sidebar",  -- "sidebar" | "islands" | "slim"
-    -- theme = "kaze",      -- "kaze" | "lavender" | "tokyonight" | "carbon" | "dynamic"
+    -- theme = "kaze",      -- "kaze" | "lavender" | "tokyonight" | "carbon" | "paper" | "dynamic"
 
     -- font = "JetBrainsMono Nerd Font",
     -- terminal = "kaze-footclient",
@@ -20,9 +20,16 @@ return {
     -- kb_layout = "us",
     -- accel_profile = "flat", -- "flat" | "adaptive"
     -- workspace_swipe = true, -- 3-finger horizontal touchpad workspace gesture
+    -- smart_gaps = false,     -- collapse gaps/borders when only 1 tiled window is on workspace
     -- cursor_theme = "Adwaita",
     -- cursor_size = 24,
-    -- sync_prefer_dark = false, -- sync org.gnome.desktop.interface color-scheme = 'prefer-dark' on reload
+    -- icon_theme = "hicolor",
+    -- sync_prefer_dark = false, -- sync org.gnome.desktop.interface color-scheme on reload
+    -- scratchpads = {
+    --     scratch = "kaze-footclient -N -a kaze-dropdown",
+    --     -- music = "kaze-footclient -N -e wiremix",
+    --     -- todo = "kaze-footclient -N -e nvim ~/todo.md",
+    -- },
 
     -- Optional per-service overrides (default: enabled in "full", disabled in "minimal"):
     -- polkit = true,
@@ -47,8 +54,8 @@ return {
     -- },
     -- shadow = false,
     -- opacity = {
-    --     active = 0.96,
-    --     inactive = 0.92,
+    --     active = 1.0,   -- set e.g. 0.96 / 0.92 if global window translucency is desired
+    --     inactive = 1.0,
     -- },
 
     -- Override layout-derived Hyprland geometry:

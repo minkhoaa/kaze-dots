@@ -287,10 +287,12 @@ function M.apply(outputs, opts)
                 os.execute("kill " .. cand_pid .. " >/dev/null 2>&1 || true")
                 cand_pid = nil
             end
+            os.remove(opts.work_dir .. "/perf.state")
         end
 
         if opts.sync_prefer_dark and os.getenv("GSETTINGS_BACKEND") ~= "memory"
             and fs.command_exists("gsettings") and fs.command_exists("dconf") then
+            local target_scheme = opts.is_light_theme and "'prefer-light'" or "'prefer-dark'"
             local cur_scheme = fs.capture("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null")
             if cur_scheme then
                 cur_scheme = cur_scheme:gsub("[\r\n]+$", "")
@@ -300,7 +302,7 @@ function M.apply(outputs, opts)
                         candidate = candidate or persisted
                         candidate.prev_color_scheme = cur_scheme
                     end
-                    if os.execute("gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' >/dev/null 2>&1") then
+                    if os.execute("gsettings set org.gnome.desktop.interface color-scheme " .. target_scheme .. " >/dev/null 2>&1") then
                         changed_color_scheme = cur_scheme
                     end
                 end

@@ -8,6 +8,7 @@ StartLimitBurst=5
 
 [Service]
 Type=exec
+Slice=session.slice
 EnvironmentFile=%t/kaze/session.env
 ExecStartPre=:/usr/bin/sh -c 'if [ -n "${KAZE_SESSION_ID:-}" ]; then for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do [ "$(loginctl show-user "$(id -u)" -p Display --value 2>/dev/null)" = "$KAZE_SESSION_ID" ] && exit 0; sleep 0.2; done; fi; exit 0'
 ExecStart=/usr/bin/hypridle

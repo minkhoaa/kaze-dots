@@ -63,14 +63,14 @@ Ephemeral processes (`fuzzel`, `hyprlock`, `grim`, `slurp`, `swappy`, `hyprpicke
    - `browser = "firefox"`
    - `files = "kaze-footclient -e yazi"` (shows an installation/configuration hint if Yazi is missing)
    - `wallpaper = "~/Pictures/Wallpapers/wallpaper.png"`, `wallpaper_dir = "~/Pictures/Wallpapers"`
-   - `cursor_theme = "Adwaita"`, `cursor_size = 24`
+   - `cursor_theme = "Adwaita"`, `cursor_size = 24`, `icon_theme = "hicolor"`
    - `kb_layout = "us"`, `accel_profile = "flat"`, `workspace_swipe = true`
    - `sync_prefer_dark = false`
    - `vol_step = 5`, `vol_max = 1.5`, `bright_step = 5`
    - `night_temp = 4500` K (on-demand `hyprsunset`; applied on next start)
    - `blur = { enabled = true, size = 3, passes = 1, xray = true }`
    - `shadow = false`
-   - `opacity = { active = 0.96, inactive = 0.92 }`
+   - `opacity = { active = 1.0, inactive = 1.0 }`
 2. **Active Persisted State** (`~/.config/kaze/state.lua`):
    - Committed by `kaze-sync` after successful layout/theme/wallpaper/profile changes. The transaction holds `$XDG_RUNTIME_DIR/kaze/sync.lock`, stages and snapshots files, and uses a compositor-instance-local candidate state until reload succeeds. On failure it restores the previous files and reloads the previous configuration.
    - Stores `{ layout, theme, wallpaper, profile, dynamic_palette, prev_color_scheme }` so switching runtime state never clobbers the user's manual overrides in `user.lua`.
@@ -85,7 +85,8 @@ Ephemeral processes (`fuzzel`, `hyprlock`, `grim`, `slurp`, `swappy`, `hyprpicke
 ```text
 lua/kaze/
 ├── defaults.lua        # Base default configuration table
-├── color.lua           # Pure-Lua WCAG 2.1 luminance/contrast clamping & JSON parser
+├── json.lua            # Strict pure-Lua JSON decoder with UTF-16 surrogate pair support
+├── color.lua           # Pure-Lua WCAG 2.1 luminance/contrast clamping & dynamic palette builder
 ├── themes.lua          # Built-in color palettes + dynamic palette loader + hex/rgba helpers
 ├── keybinds_data.lua   # Single pure-Lua shortcut registry shared by Hyprland & kaze-keys
 ├── power_profile.lua   # Standalone iwd/NM detection & zero-Python busctl PowerProfiles

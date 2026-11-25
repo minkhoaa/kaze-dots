@@ -50,6 +50,22 @@ function M.build(cfg)
         },
         {
             group = "Launchers",
+            chord = "SUPER + N",
+            display = "Super + N",
+            desc = "Open top calendar & media dashboard",
+            kind = "exec",
+            cmd = "kaze-dashboard",
+        },
+        {
+            group = "Launchers",
+            chord = "SUPER + A",
+            display = "Super + A",
+            desc = "Open right quick control panel",
+            kind = "exec",
+            cmd = "kaze-panel",
+        },
+        {
+            group = "Launchers",
             chord = "SUPER + slash",
             display = "Super + /",
             desc = "Search keyboard shortcuts",
@@ -80,6 +96,22 @@ function M.build(cfg)
             kind = "exec",
             cmd = "pkill -x fuzzel || kaze-clipboard pick",
         },
+        {
+            group = "Launchers",
+            chord = "SUPER + ALT + C",
+            display = "Super + Alt + C / Calc",
+            desc = "Open calculator",
+            kind = "exec",
+            cmd = "kaze-calc",
+        },
+        {
+            group = "Launchers",
+            chord = "XF86Calculator",
+            display = false,
+            desc = "Open calculator",
+            kind = "exec",
+            cmd = "kaze-calc",
+        },
 
         -- Session & Shell Controls
         {
@@ -106,6 +138,22 @@ function M.build(cfg)
             kind = "exec",
             cmd = "fnottctl dismiss all",
             locked = true,
+        },
+        {
+            group = "System",
+            chord = "SUPER + SHIFT + Z",
+            display = "Super + Shift + Z",
+            desc = "Toggle Zen performance mode",
+            kind = "exec",
+            cmd = "kaze-perf",
+        },
+        {
+            group = "System",
+            chord = "SUPER + Escape",
+            display = "Super + Esc",
+            desc = "Enter VM keybind passthrough",
+            kind = "submap",
+            submap = "passthrough",
         },
         {
             group = "System",
@@ -326,6 +374,14 @@ function M.build(cfg)
             display = "Super + Alt + \\",
             desc = "Pin window as Picture-in-Picture",
             kind = "window_pip",
+        },
+        {
+            group = "Windows",
+            chord = "SUPER + TAB",
+            display = "Super + Tab",
+            desc = "Fuzzy switch window",
+            kind = "exec",
+            cmd = "kaze-windows",
         },
         {
             group = "Windows",
@@ -729,6 +785,21 @@ function M.build(cfg)
             desc = "Stop media playback",
             kind = "exec",
             cmd = "playerctl stop",
+            locked = true,
+        },
+        {
+            chord = "SUPER + SHIFT + A",
+            display = "Super + Shift + A",
+            desc = "Switch audio output sink",
+            kind = "exec",
+            cmd = "kaze-audio-sink",
+        },
+        {
+            chord = "CTRL + SUPER + N",
+            display = "Ctrl + Super + N",
+            desc = "Show Now Playing toast",
+            kind = "exec",
+            cmd = "kaze-osd media-info",
             locked = true,
         },
     }

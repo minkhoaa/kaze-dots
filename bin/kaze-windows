@@ -1,0 +1,219 @@
+#!/usr/bin/env lua
+
+local function setup_path()
+    local home = os.getenv("HOME") or ""
+    local xdg_data = os.getenv("XDG_DATA_HOME")
+    if not xdg_data or xdg_data == "" then
+        xdg_data = home .. "/.local/share"
+    end
+    local paths = {}
+    local script = arg and arg[0] or ""
+    local direct_base = script:match("^(.*)/[^/]+$")
+    local direct_lua = direct_base and (direct_base .. "/../lua") or nil
+    local f_direct = direct_lua and io.open(direct_lua .. "/kaze/defaults.lua", "r") or nil
+    if f_direct then
+        f_direct:close()
+        paths[#paths + 1] = direct_lua .. "/?.lua"
+        paths[#paths + 1] = direct_lua .. "/?/init.lua"
+    else
+        local f_inst = io.open(xdg_data .. "/kaze-dots/lua/kaze/defaults.lua", "r")
+        if f_inst then
+            f_inst:close()
+        else
+            local q = "'" .. script:gsub("'", "'\\''") .. "'"
+            local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+            local resolved = p and p:read("*l") or nil
+            if p then p:close() end
+            local base = (resolved or script):match("^(.*)/[^/]+$")
+            if base then
+                local repo_lua = base .. "/../lua"
+                local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+                if f then
+                    f:close()
+                    paths[#paths + 1] = repo_lua .. "/?.lua"
+                    paths[#paths + 1] = repo_lua .. "/?/init.lua"
+                end
+            end
+        end
+    end
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
+    paths[#paths + 1] = package.path
+    package.path = table.concat(paths, ";")
+end
+
+setup_path()
+
+local fs = require("kaze.fs")
+local json = require("kaze.json")
+
+local list_only = false
+if #arg > 0 then
+    if #arg == 1 and (arg[1] == "-h" or arg[1] == "--help") then
+        io.stdout:write("Usage: kaze-windows [--list]\n")
+        os.exit(0)
+    elseif #arg == 1 and arg[1] == "--list" then
+        list_only = true
+    else
+        io.stderr:write("Usage: kaze-windows [--list]\n")
+        os.exit(2)
+    end
+end
+
+if not list_only then
+    local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
+    if running == true or running == 0 then
+        os.execute("pkill -x fuzzel >/dev/null 2>&1")
+        os.exit(0)
+    end
+    if not fs.command_exists("fuzzel") then
+        io.stderr:write("kaze-windows: fuzzel not found in PATH\n")
+        os.exit(1)
+    end
+end
+
+if not fs.command_exists("hyprctl") then
+    io.stderr:write("kaze-windows: hyprctl not found in PATH\n")
+    os.exit(1)
+end
+
+local raw_clients = fs.capture("hyprctl -j clients 2>/dev/null")
+if not raw_clients or raw_clients == "" then
+    io.stderr:write("kaze-windows: failed to query hyprctl clients\n")
+    os.exit(1)
+end
+
+local ok_dec, clients = pcall(json.decode, raw_clients)
+if not ok_dec or type(clients) ~= "table" then
+    io.stderr:write("kaze-windows: invalid JSON from hyprctl clients\n")
+    os.exit(1)
+end
+
+local function clean_str(s)
+    if type(s) ~= "string" then return "" end
+    return (s:gsub("[\r\n\t]+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local entries = {}
+for _, c in ipairs(clients) do
+    if type(c) == "table" and c.mapped ~= false and type(c.address) == "string" then
+        local addr = c.address:gsub("^0x", "")
+        local cls = clean_str(c.class)
+        local ttl = clean_str(c.title)
+        if addr:match("^[0-9a-fA-F]+$") and (cls ~= "" or ttl ~= "") then
+            local ws = type(c.workspace) == "table" and c.workspace or {}
+            local ws_name = clean_str(ws.name)
+            if ws_name == "" then
+                ws_name = tostring(ws.id or "?")
+            end
+            local ws_id = tonumber(ws.id) or 9999
+            local is_special = ws_name:sub(1, 8) == "special:"
+            local focus_hist = tonumber(c.focusHistoryID) or 9999
+            entries[#entries + 1] = {
+                addr = addr,
+                class = cls ~= "" and cls or "Window",
+                title = ttl,
+                ws_name = ws_name,
+                ws_id = ws_id,
+                is_special = is_special,
+                focus_hist = focus_hist,
+            }
+        end
+    end
+end
+
+table.sort(entries, function(a, b)
+    if a.is_special ~= b.is_special then
+        return not a.is_special
+    end
+    if not a.is_special and a.ws_id ~= b.ws_id then
+        return a.ws_id < b.ws_id
+    end
+    if a.ws_name ~= b.ws_name then
+        return a.ws_name < b.ws_name
+    end
+    if a.focus_hist ~= b.focus_hist then
+        return a.focus_hist < b.focus_hist
+    end
+    return a.addr < b.addr
+end)
+
+local rows = {}
+for idx, e in ipairs(entries) do
+    local ws_badge = e.is_special and ("S:" .. e.ws_name:sub(9)) or e.ws_name
+    local pin_tag = ""
+    if e.title ~= "" and e.title ~= e.class then
+        rows[idx] = string.format("%d. [%s]  %s  —  %s%s", idx, ws_badge, e.class, e.title, pin_tag)
+    else
+        rows[idx] = string.format("%d. [%s]  %s%s", idx, ws_badge, e.class, pin_tag)
+    end
+end
+
+if list_only then
+    if #rows > 0 then
+        io.stdout:write(table.concat(rows, "\n") .. "\n")
+    end
+    os.exit(0)
+end
+
+if #rows == 0 then
+    if fs.command_exists("notify-send") then
+        os.execute(
+            "notify-send -a kaze-windows -t 1400 -u low -h string:x-canonical-private-synchronous:kaze-switch 'Windows' 'No open windows' >/dev/null 2>&1 || true"
+        )
+    end
+    os.exit(0)
+end
+
+local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
+local cmd = string.format(
+    "%sprintf '%%s\\n' %s | fuzzel --dmenu -w 64 --lines %d -p %s",
+    utf8_guard,
+    fs.shell_quote(table.concat(rows, "\n")),
+    math.min(12, #rows),
+    fs.shell_quote("Window > ")
+)
+local p = io.popen(cmd)
+if not p then
+    io.stderr:write("kaze-windows: failed to launch fuzzel\n")
+    os.exit(1)
+end
+local out = p:read("*a") or ""
+p:close()
+
+local choice = out:gsub("[\r\n]+$", "")
+if choice == "" then
+    os.exit(0)
+end
+
+local idx = tonumber(choice:match("^(%d+)%."))
+local target = idx and entries[idx] or nil
+if not target then
+    io.stderr:write("kaze-windows: unrecognized window selection\n")
+    os.exit(1)
+end
+
+if target.is_special then
+    local spec_name = target.ws_name:sub(9)
+    local spec_visible = false
+    local raw_mon = fs.capture("hyprctl -j monitors 2>/dev/null")
+    local ok_m, monitors = pcall(json.decode, raw_mon or "")
+    if ok_m and type(monitors) == "table" then
+        for _, m in ipairs(monitors) do
+            if type(m) == "table" and type(m.specialWorkspace) == "table" and m.specialWorkspace.name == target.ws_name then
+                spec_visible = true
+                break
+            end
+        end
+    end
+    if not spec_visible and spec_name ~= "" then
+        local toggle_expr = string.format("hl.dsp.workspace.toggle_special(%q)", spec_name)
+        os.execute("hyprctl dispatch " .. fs.shell_quote(toggle_expr) .. " >/dev/null 2>&1")
+    end
+end
+
+local focus_expr = string.format("hl.dsp.focus({ window = 'address:0x%s' })", target.addr)
+local ok_focus = os.execute("hyprctl dispatch " .. fs.shell_quote(focus_expr) .. " >/dev/null 2>&1")
+if not (ok_focus == true or ok_focus == 0) then
+    os.exit(1)
+end

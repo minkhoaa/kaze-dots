@@ -1,6 +1,6 @@
 local M = {}
 
-local ORDER = { "kaze", "lavender", "tokyonight", "carbon" }
+local ORDER = { "kaze", "lavender", "tokyonight", "carbon", "paper" }
 
 local REQUIRED_KEYS = {
     "bg",
@@ -91,6 +91,25 @@ local PRESETS = {
         term = {
             "141417", "f87171", "86efac", "fde047", "a1a1aa", "d4d4d8", "94e2d5", "d4d4d8",
             "3f3f46", "fca5a5", "bbf7d0", "fef08a", "d4d4d8", "e4e4e7", "a5f3fc", "fafafa",
+        },
+    },
+    paper = {
+        name = "paper",
+        label = "Paper (Warm Ivory Light)",
+        bg = "f7f6f2",
+        bg_alt = "efede7",
+        surface = "e3e0d8",
+        border = "8c887e",
+        fg = "1c1e24",
+        fg_muted = "555963",
+        accent = "2563eb",
+        accent_fg = "f7f6f2",
+        ok = "15803d",
+        warn = "b45309",
+        danger = "dc2626",
+        term = {
+            "efede7", "dc2626", "15803d", "b45309", "2563eb", "7c3aed", "0f766e", "4b5563",
+            "8c887e", "b91c1c", "166534", "92400e", "1d4ed8", "6d28d9", "115e59", "1c1e24",
         },
     },
 }
@@ -206,6 +225,16 @@ end
 function M.hypr_rgb(c)
     assert(is_hex6(c), "themes.hypr_rgb expects a 6-digit hex color")
     return "rgb(" .. c .. ")"
+end
+
+function M.is_light(t)
+    if type(t) ~= "table" or not is_hex6(t.bg) then
+        return false
+    end
+    local r = tonumber(t.bg:sub(1, 2), 16) or 0
+    local g = tonumber(t.bg:sub(3, 4), 16) or 0
+    local b = tonumber(t.bg:sub(5, 6), 16) or 0
+    return (0.299 * r + 0.587 * g + 0.114 * b) > 140
 end
 
 return M

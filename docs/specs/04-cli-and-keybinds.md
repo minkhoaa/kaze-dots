@@ -15,10 +15,27 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 - `<name>`: Validates, delegates the serialized switch to `kaze-sync`, then sends a confirmation notification (suppressed with `--quiet`). State is committed only after the switch succeeds.
 - `--current`: Prints active layout name to `stdout`.
 
-### `kaze-theme [--quiet] [kaze|lavender|tokyonight|carbon|dynamic|--menu|--current]`
-- No args or `--menu`: Opens `fuzzel --dmenu -p "Theme > "` listing all themes (including `dynamic` when `matugen` is installed or active) with `(active)` marker.
-- `<name>`: Validates (`dynamic` extracts colors via `matugen` and WCAG-clamps tokens before calling `kaze-sync --set-dynamic-theme`), delegates the serialized switch to `kaze-sync`, then sends a confirmation notification (suppressed with `--quiet`). State is committed only after the switch succeeds.
+### `kaze-theme [--quiet] [kaze|lavender|tokyonight|carbon|paper|dynamic|toggle-polarity|--menu|--current]`
+- No args or `--menu`: Opens `fuzzel --dmenu -p "Theme > "` listing all themes (including `paper` light mode and `dynamic` when `matugen` is installed or active) with `(active)` marker.
+- `toggle-polarity`: Instant outdoor Light (`paper`) ↔ Dark (`last_dark_theme` or `kaze`, reusing cached `dynamic_palette` when returning to `dynamic`) switch.
+- `<name>`: Validates (`dynamic` extracts colors via `matugen` and WCAG-clamps tokens before calling `kaze-sync --set-dynamic-theme`), delegates the serialized switch to `kaze-sync` (which also exports read-only `~/.cache/kaze/palette.{lua,json,sh}`), then sends a confirmation notification (suppressed with `--quiet`). State is committed only after the switch succeeds.
 - `--current`: Prints active theme name to `stdout`.
+
+### `kaze-perf [--quiet] [on|off|toggle|status]`
+- Instant 0-MiB Zen / Gamemode toggle (`Super + Shift + Z`): uses `hyprctl eval` to disable animations, blur, shadow, rounding, gaps and translucency (`1.0` opacity) and hides Waybar (`SIGUSR1`); restores layout via `hyprctl reload` on exit.
+
+### `kaze-dashboard [--print]` · `kaze-panel [--status]`
+- Zero-daemon (`0 MiB` background RAM) Top Drop-down & Right Drawer popups synced to active layout margins:
+  - `kaze-dashboard` (`Super + N` / click `clock` on Waybar): Top drop-down popup (`--namespace=kaze-popup-top --anchor=top`, `animation = "slide top"`) rendering a pure-Lua monthly calendar, date/time, active MPRIS track & playback actions, notification clear, and polarity switch.
+  - `kaze-panel` (`Super + A` / click `battery` or right-click `menu`/`power` on Waybar): Right-side Quick Control Center drawer (`--namespace=kaze-popup-right --anchor=top-right`, `animation = "slide right"`) aggregating live Volume/Mute, Brightness, Battery, Wi-Fi SSID, Audio Sink, Bluetooth, Power Profile, Night Light, Caffeine, Polarity, Zen Mode, Layout/Theme, and Power Menu.
+  - Floating TUIs (`kaze-tui`) dock flush along the right edge (`animation = "slide right"`), and the default `Super + S` scratchpad (`kaze-dropdown`) drops down from the top (`animation = "slide top"`).
+
+### `kaze-windows [--list]` · `kaze-audio-sink [--quiet] [--list]` · `kaze-wifi [--list] [--rescan]` · `kaze-calc [--eval EXPR]`
+- On-demand Fuzzel workflow helpers (`0 MiB` background footprint):
+  - `kaze-windows` (`Super + Tab`): Fuzzy window switcher across all normal and `special:*` workspaces via `hyprctl -j clients`.
+  - `kaze-audio-sink` (`Super + Shift + A`): 1-step PipeWire default sink switcher via `wpctl status` + `wpctl set-default`.
+  - `kaze-wifi`: Fast `<20 ms` `nmcli --rescan no` Wi-Fi switcher with password prompt, rescan, and `nmtui`/`impala` fallback.
+  - `kaze-calc` (`Super + Alt + C` / `XF86Calculator`): Pure-Lua 5.5 sandboxed expression calculator (`--eval` for CLI, interactive `fuzzel` + `wl-copy`).
 
 ### `kaze-wall [--quiet] [<path> | --random | --menu | --preview | --current]`
 - Validates image magic bytes (PNG/JPEG/WebP/GIF/BMP/SVG), rejects pinned `user.lua` `wallpaper` overrides with exit `1`, serializes switches under `wall.lock` + `sync.lock`, updates `dynamic_palette` automatically when `theme == "dynamic"`, and transitions `swaybg` without flashing black.

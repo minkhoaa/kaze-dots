@@ -25,8 +25,9 @@ Every palette is a pure Lua table of **uppercase/lowercase 6-digit hex strings w
 
 ### Required Helper Functions in `lua/kaze/themes.lua` & `lua/kaze/color.lua`
 - `themes.get(name, overrides, dynamic_palette)` → returns validated palette table (supports `"dynamic"` when supplied a 11-token `dynamic_palette` table) or errors with available names.
-- `themes.list()` → ordered built-in presets `{ "kaze", "lavender", "tokyonight", "carbon" }`.
+- `themes.list()` → ordered built-in presets `{ "kaze", "lavender", "tokyonight", "carbon", "paper" }`.
 - `themes.list_selectable(include_dynamic)` → appends `"dynamic"` when `matugen` is installed or active.
+- `themes.is_light(t)` → returns `true` for high-luminance light palettes (`paper`), `false` for dark palettes.
 - `themes.hex(c)` → `"#" .. c` (for CSS, `hyprlock`).
 - `themes.hex_alpha(c, aa)` → `c .. aa` (for `fuzzel` `RRGGBBAA` and `fnott` `RRGGBBAA`).
 - `themes.hypr_rgba(c, aa)` → `"rgba(" .. c .. aa .. ")"` (for Hyprland border/bg colors).
@@ -63,11 +64,13 @@ Produces 3 files under `~/.config/waybar/`:
 
 ### 3.2 `emit_foot.lua` → `~/.config/foot/foot.ini`
 - `[main]`: `font=<cfg.font>:size=10.5`, `pad=14x12 center`, `dpi-aware=no`.
-- `[colors-dark]`: `alpha=0.92`, `background=<bg>`, `foreground=<fg>`, crisp harmonious 16-color ANSI table derived from theme.
-- `[cursor]`: `style=beam`, `blink=no`, `color=<bg> <accent>`.
+- `[cursor]`: `style=beam`, `blink=no`.
+- `[bell]`: `urgent=yes`; `[mouse]`: `hide-when-typing=yes`; `[csd]`: `preferred=none`.
+- `[colors-dark]`: `alpha=0.92`, `background=<bg>`, `foreground=<fg>`, `cursor=<bg> <accent>`, crisp harmonious 16-color ANSI table derived from theme.
 
 ### 3.3 `emit_fuzzel.lua` → `~/.config/fuzzel/fuzzel.ini`
-- `[main]`: `font=<cfg.font> Propo:size=11,<cfg.font>:size=11`, `dpi-aware=no`, `use-bold=yes`, `width=40`, `lines=8`, `horizontal-pad=20`, `vertical-pad=16`, `inner-pad=12`, `line-height=26`, `image-size-ratio=0.45`, `layer=overlay`, `exit-on-keyboard-focus-loss=yes`.
+- `[main]`: `font=<cfg.font> Propo:size=11,<cfg.font>:size=11`, `dpi-aware=no`, `use-bold=yes`, `terminal=kaze-footclient -N` (or custom `cfg.terminal`), `icon-theme=<cfg.icon_theme>` (`hicolor` default), `width=40`, `lines=8`, `horizontal-pad=20`, `vertical-pad=16`, `inner-pad=12`, `line-height=26`, `image-size-ratio=0.45`, `layer=overlay`, `exit-on-keyboard-focus-loss=yes`.
+- `[dmenu]`: `exit-immediately-if-empty=yes`.
 - `[border]`: `width=1`, `radius=<layout.ui.fuzzel_radius>`.
 - `[colors]` (`RRGGBBAA` format):
   - `background=<bg_alt>e8`
@@ -102,7 +105,7 @@ Produces 3 files under `~/.config/waybar/`:
 The verification harness also generates a themed Mako config on its disposable image. It shares the layout's notification anchor, outer margins and radius, enables bounded history, and orders criteria as OSD no-history → DND invisible → OSD-visible DND exception. The emitter performs no I/O. It is not installed by `kaze-sync` while Fnott is the default.
 
 ### 3.5 `emit_hyprlock.lua` → `~/.config/hypr/hyprlock.conf`
-- Clean minimal lockscreen matching `bg`, `bg_alt`, `fg`, `fg_muted`, `accent`, `danger` with blurred wallpaper background, large centered time (`68px`), date subtitle (`15px`), and minimalist rounded password pill (`fade_on_empty = true`).
+- Clean minimal lockscreen matching `bg`, `bg_alt`, `fg`, `fg_muted`, `accent`, `warn`, `danger` with `immediate_render = true`, blurred wallpaper background, large centered time (`68px`), date subtitle (`15px`), and minimalist rounded password pill (`fade_on_empty = true`, `capslock_color = rgb(<warn>)`).
 
 ### 3.6 Hyprland Live Colors (`hypr/core.lua`)
 - `hypr/core.lua` does **not** need a generated file — it calls `require("kaze.config").load()` directly inside Hyprland's Lua engine!

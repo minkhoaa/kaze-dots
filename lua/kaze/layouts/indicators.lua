@@ -4,14 +4,25 @@ local specs = {
     { "recording", "record", 8, "●", "Stop recording", "kaze-record stop", "danger" },
     { "night", "night", 9, "󰖔", "Turn off Night Light", "kaze-night off", "warn" },
     { "inhibit", "inhibit", 11, "󰅶", "Turn off Caffeine", "kaze-inhibit off", "accent" },
+    {
+        "passthrough",
+        nil,
+        12,
+        "󰌌",
+        "Exit VM Passthrough (Super+Esc)",
+        "hyprctl dispatch \\\"hl.dsp.submap('reset')\\\"",
+        "warn",
+        "if [ \\\"$(hyprctl submap 2>/dev/null)\\\" = 'passthrough' ]; then echo '󰌌'; fi",
+    },
 }
 local M = { slots = "", config = "" }
 
 for _, spec in ipairs(specs) do
-    local name, unit, signal, glyph, tooltip, click = table.unpack(spec)
+    local name, unit, signal, glyph, tooltip, click, _, custom_exec = table.unpack(spec)
+    local exec_cmd = custom_exec or ("if systemctl --user show -p SubState --value kaze-%s.service | grep -qxE 'running|start-post'; then echo '%s'; fi"):format(unit, glyph)
     M.slots = M.slots .. ('    "custom/%s",\n'):format(name)
     M.config = M.config .. ([=[  "custom/%s": {
-    "exec": "if systemctl --user show -p SubState --value kaze-%s.service | grep -qxE 'running|start-post'; then echo '%s'; fi",
+    "exec": "%s",
     "interval": "once",
     "signal": %d,
     "exec-on-event": false,
@@ -22,11 +33,11 @@ for _, spec in ipairs(specs) do
     "on-click": "%s"
   },
 
-]=]):format(name, unit, glyph, signal, tooltip, click)
+]=]):format(name, exec_cmd, signal, tooltip, click)
 end
 
 function M.css(vertical)
-    local result = "\n#custom-recording,\n#custom-night,\n#custom-inhibit {\n    font-size: 14px;\n"
+    local result = "\n#custom-recording,\n#custom-night,\n#custom-inhibit,\n#custom-passthrough {\n    font-size: 14px;\n"
     result = result .. (vertical and "    min-width: 32px;\n    min-height: 26px;\n    margin: 0 4px;\n    padding: 0;\n" or "    padding: 0 7px;\n") .. "}\n"
     for _, spec in ipairs(specs) do
         result = result .. ("#custom-%s { color: @%s; }\n"):format(spec[1], spec[7])
