@@ -180,7 +180,9 @@ All measurements run inside an isolated Arch Linux KVM guest (`4 vCPU`, `6 GiB R
 
 ### 2. Head-to-Head Under Real Browser Load: `kaze-dots` vs Noctalia v5.6.0
 
-Interleaved `AB/BA/AB` (3 trials each, `linux 7.3.5-arch1-1`, `hyprland 0.57.2-1`, `chromium 158.0.8127.88-1` Wayland, deterministic local DOM + Canvas + JS tabs, fresh browser profile per trial):
+Interleaved `AB/BA/AB` (3 trials each, `linux 7.3.5-arch1-1`, `hyprland 0.57.2-1`, `chromium 158.0.8127.88-1` Wayland, deterministic local DOM + Canvas + JS tabs, fresh browser profile per trial; zero range overlap on loaded workloads):
+
+#### A. Minimal Shell (`kaze minimal` vs `Noctalia v5.6.0`)
 
 | Workload (`1920×1080`) | **`kaze-dots`** (`minimal`) Total System RAM | **Noctalia v5.6.0** Total System RAM | Delta (`Noctalia - Kaze`) | Shell CPU / CS/s (`Kaze` vs `Noctalia`) |
 |---|---:|---:|---:|---|
@@ -188,7 +190,15 @@ Interleaved `AB/BA/AB` (3 trials each, `linux 7.3.5-arch1-1`, `hyprland 0.57.2-1
 | **1 Chromium tab** *(14 PIDs)* | **844.62 MiB** *(841.7–867.0)* | **888.96 MiB** *(883.0–896.4)* | **+44.3 MiB** | `0.00% / 0.50` vs `0.12% / 8.62` |
 | **8 Chromium tabs** *(22 PIDs)* | **1,032.61 MiB** *(1,026.9–1,035.5)* | **1,070.33 MiB** *(1,068.3–1,079.6)* | **+37.7 MiB** | `0.00% / 0.25` vs `0.25% / 8.75` |
 
-*Chromium PSS itself was identical on both shells (`~437 MiB` for 1 tab, `~609 MiB` for 8 tabs). Under 8 tabs, `kaze-dots` shell PSS dropped to **`43.51 MiB`** due to shared Cairo/Pango/fontconfig pages with Chromium.*
+#### B. Full Desktop Parity (`kaze full` vs `Noctalia v5.6.0` + `fcitx5-bamboo` + `mate-polkit`)
+
+| Workload (`1920×1080`) | **`kaze full`** Total RAM (`Shell + IME/Polkit PSS`) | **Noctalia + IME/Polkit** Total RAM (`Shell + IME/Polkit PSS`) | Delta (`Noctalia - Kaze`) | Shell CPU / CS/s (`Kaze` vs `Noctalia`) |
+|---|---:|---:|---:|---|
+| **0 tabs (Idle)** | **645.86 MiB** *(635.6–648.3)* · `97.42 MiB`* | **674.06 MiB** *(672.2–676.8)* · `122.38 MiB` | **+28.2 MiB** | `0.00% / 0.25` vs `0.12% / 6.12` |
+| **1 Chromium tab** *(14 PIDs)* | **884.28 MiB** *(877.7–885.3)* · **`80.09 MiB`** | **923.89 MiB** *(914.9–933.8)* · **`118.56 MiB`** | **+39.6 MiB** | `0.00% / 2.50` vs `0.12% / 6.87` |
+| **8 Chromium tabs** *(22 PIDs)* | **1,062.59 MiB** *(1,061.2–1,068.4)* · **`81.52 MiB`** | **1,102.73 MiB** *(1,095.8–1,120.6)* · **`118.90 MiB`** | **+40.1 MiB** | `0.00% / 0.75` vs `0.25% / 7.37` |
+
+*Chromium PSS itself was identical on both shells (`~434–437 MiB` for 1 tab, `~609–610 MiB` for 8 tabs). Under 1–8 tabs, `kaze-dots` shell-only PSS dropped to **`43.5–45.1 MiB`** (vs **`83.5–83.9 MiB`** for `noctalia`) due to shared Cairo/Pango/fontconfig pages with Chromium. \*At 0 tabs, `kaze full` still included short-lived `glycin` image-decode workers right after restarting Waybar/swaybg; once settled (`tabs_1`/`tabs_8`), shell + IME/Polkit held steady at **`80.1–81.5 MiB`**.*
 
 ---
 
