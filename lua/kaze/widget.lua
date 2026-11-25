@@ -33,9 +33,97 @@ function M.style(fg_hex, bg_hex, bold)
     return table.concat(parts)
 end
 
--- Launch or toggle off a floating footclient widget window.
+function M.clean_text(s)
+    local str = tostring(s or "")
+    str = str:gsub("\27%[[0-9;?]*[ -/]*[@-~]", "")
+    str = str:gsub("[\r\n\t]+", " ")
+    str = str:gsub("[%z\1-\31\127]", "")
+    if utf8.len(str) then
+        return str
+    end
+    local out = {}
+    local i, n = 1, #str
+    while i <= n do
+        local ok_len, err_pos = utf8.len(str, i)
+        if ok_len then
+            out[#out + 1] = str:sub(i)
+            break
+        end
+        if err_pos > i then
+            out[#out + 1] = str:sub(i, err_pos - 1)
+        end
+        out[#out + 1] = ""
+        i = err_pos + 1
+    end
+    return table.concat(out)
+end
+
+function M.vis_len(s)
+    local clean = M.clean_text(s)
+    return utf8.len(clean) or #clean
+end
+
+function M.trunc(s, max_len)
+    s = M.clean_text(s)
+    local len = utf8.len(s) or #s
+    if len <= max_len then return s end
+    if max_len <= 0 then return "" end
+    if max_len == 1 then return "…" end
+    local out = {}
+    local n = 0
+    for _, code in utf8.codes(s) do
+        n = n + 1
+        if n > max_len - 1 then break end
+        out[#out + 1] = utf8.char(code)
+    end
+    return table.concat(out) .. "…"
+end
+
+function M.pad_right(s, width)
+    s = M.trunc(s, width)
+    local len = utf8.len(s) or #s
+    if len < width then
+        return s .. string.rep(" ", width - len)
+    end
+    return s
+end
+
+function M.wrap_lines(s, first_w, next_w)
+    local clean = M.clean_text(s):gsub("^%s+", ""):gsub("%s+$", "")
+    if clean == "" or first_w <= 0 then
+        return "", M.trunc(clean, math.max(0, next_w or 0))
+    end
+    local chars = {}
+    for _, code in utf8.codes(clean) do
+        chars[#chars + 1] = utf8.char(code)
+    end
+    if #chars <= first_w then
+        return clean, ""
+    end
+    local split = first_w
+    for idx = first_w, math.max(1, first_w - 14), -1 do
+        if chars[idx] == " " then
+            split = idx
+            break
+        end
+    end
+    local line1 = table.concat(chars, "", 1, split):gsub("%s+$", "")
+    local rest_start = split + 1
+    while rest_start <= #chars and chars[rest_start] == " " do
+        rest_start = rest_start + 1
+    end
+    local rest = (rest_start <= #chars) and table.concat(chars, "", rest_start) or ""
+    return line1, M.trunc(rest, math.max(0, next_w or first_w))
+end
+
+-- Launch, switch view, or toggle off a floating footclient widget window.
 function M.toggle_or_open(opts)
     local app_id = assert(opts.app_id, "missing app_id")
+    local target_title = opts.title or app_id
+    local popups = require("kaze.popups")
+    if popups.consume_dismiss_guard(app_id) then
+        return false
+    end
     local running_fuzzel = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
     if running_fuzzel == true or running_fuzzel == 0 then
         os.execute("pkill -x fuzzel >/dev/null 2>&1 || true")
@@ -46,7 +134,7 @@ function M.toggle_or_open(opts)
         local raw = fs.capture("hyprctl -j clients 2>/dev/null")
         local ok, clients = pcall(json.decode, raw or "")
         if ok and type(clients) == "table" then
-            local closed_self = false
+            local closed_same_view = false
             for _, c in ipairs(clients) do
                 if type(c) == "table" and type(c.class) == "string" and type(c.address) == "string" then
                     local addr = c.address:gsub("^0x", "")
@@ -54,7 +142,9 @@ function M.toggle_or_open(opts)
                         if c.class == app_id then
                             local expr = string.format("hl.dsp.window.close({ window = 'address:0x%s' })", addr)
                             os.execute("hyprctl dispatch " .. fs.shell_quote(expr) .. " >/dev/null 2>&1")
-                            closed_self = true
+                            if c.title == nil or c.title == "" or c.title == target_title then
+                                closed_same_view = true
+                            end
                         elseif c.class:match("^kaze%-widget%-") then
                             local expr = string.format("hl.dsp.window.close({ window = 'address:0x%s' })", addr)
                             os.execute("hyprctl dispatch " .. fs.shell_quote(expr) .. " >/dev/null 2>&1")
@@ -62,9 +152,16 @@ function M.toggle_or_open(opts)
                     end
                 end
             end
-            if closed_self then
+            if closed_same_view then
                 return false
             end
+        end
+    end
+
+    local extra_args = ""
+    if type(opts.ui_args) == "table" then
+        for _, a in ipairs(opts.ui_args) do
+            extra_args = extra_args .. " " .. fs.shell_quote(tostring(a))
         end
     end
 
@@ -73,18 +170,21 @@ function M.toggle_or_open(opts)
     local cmd = string.format(
         "%s -N -o main.locked-title=yes -o 'main.pad=14x12 center' -o 'text-bindings.\\x04=Escape'"
             .. " -o colors-dark.background=%s -o colors-dark.alpha=0.94"
-            .. " -W %dx%d -a %s -T %s %s --ui",
+            .. " -W %dx%d -a %s -T %s %s --ui%s",
         fs.shell_quote(foot_bin),
         fs.shell_quote(bg_alt),
         tonumber(opts.cols) or 38,
         tonumber(opts.rows) or 16,
         fs.shell_quote(app_id),
-        fs.shell_quote(opts.title or app_id),
-        fs.shell_quote(opts.script_path)
+        fs.shell_quote(target_title),
+        fs.shell_quote(opts.script_path),
+        extra_args
     )
     local ok = os.execute(cmd)
     return ok == true or ok == 0
 end
+
+local METER_PARTIALS = { "▏", "▎", "▍", "▌", "▋", "▊", "▉" }
 
 local function create_canvas(cols, rows, base_bg, base_fg)
     local canvas = {
@@ -93,6 +193,7 @@ local function create_canvas(cols, rows, base_bg, base_fg)
         base_bg = base_bg,
         base_fg = base_fg,
         buf = {},
+        cell_bg = {},
         hitboxes = {},
     }
 
@@ -100,6 +201,14 @@ local function create_canvas(cols, rows, base_bg, base_fg)
         if bg_hex then self.base_bg = bg_hex end
         if fg_hex then self.base_fg = fg_hex end
         self.hitboxes = {}
+        self.cell_bg = {}
+        for r = 1, self.rows do
+            local row_cells = {}
+            for c = 1, self.cols do
+                row_cells[c] = self.base_bg
+            end
+            self.cell_bg[r] = row_cells
+        end
         self.buf = { "\27[?2026h\27[H", M.style(self.base_fg, self.base_bg, false) }
         local blank = string.rep(" ", self.cols)
         for r = 1, self.rows do
@@ -111,27 +220,149 @@ local function create_canvas(cols, rows, base_bg, base_fg)
         if row < 1 or row > self.rows or col < 1 or col > self.cols then
             return
         end
+        local fg_c = fg_hex or self.base_fg
+        local bg_c = bg_hex or self.base_bg
+        local row_cells = self.cell_bg[row]
+        if row_cells then
+            local span = M.vis_len(text)
+            local max_c = math.min(self.cols, col + span - 1)
+            for c = col, max_c do
+                row_cells[c] = bg_c
+            end
+        end
         self.buf[#self.buf + 1] = string.format(
             "\27[%d;%dH%s%s%s",
             row,
             col,
-            M.style(fg_hex or self.base_fg, bg_hex or self.base_bg, bold),
+            M.style(fg_c, bg_c, bold),
             text,
             M.style(self.base_fg, self.base_bg, false)
         )
     end
 
-    function canvas:rule(row, col, width, color_hex)
-        self:put(row, col, string.rep("─", width), color_hex or self.base_fg, self.base_bg, false)
+    function canvas:card(r1, c1, width, height, fill_hex)
+        local fill = fill_hex or self.base_bg
+        local blank = string.rep(" ", width)
+        for r = r1, r1 + height - 1 do
+            if r >= 1 and r <= self.rows then
+                self:put(r, c1, blank, self.base_fg, fill, false)
+            end
+        end
     end
 
-    function canvas:pill(row, col, label, fg_hex, bg_hex, bold, on_click)
-        self:put(row, col, label, fg_hex, bg_hex, bold)
-        local vis_w = tonumber(utf8.len(label)) or #label
+    function canvas:accent_card(r1, c1, width, height, fill_hex, stripe_hex, on_click)
+        local fill = fill_hex or self.base_bg
+        self:card(r1, c1, width, height, fill)
+        if stripe_hex then
+            for r = r1, r1 + height - 1 do
+                if r >= 1 and r <= self.rows then
+                    self:put(r, c1, "▎", stripe_hex, fill, true)
+                end
+            end
+        end
         if on_click then
-            self:hitbox(row, col, row, col + vis_w - 1, { click = on_click })
+            self:hitbox(r1, c1, r1 + height - 1, c1 + width - 1, { click = on_click })
+        end
+    end
+
+    function canvas:rule(row, col, width, color_hex, bg_hex)
+        self:put(row, col, string.rep("─", width), color_hex or self.base_fg, bg_hex or self.base_bg, false)
+    end
+
+    function canvas:pill(row, col, label, fg_hex, bg_hex, bold, on_click, outer_bg_or_rc, on_right_click)
+        local right_click = on_right_click
+        if type(outer_bg_or_rc) == "function" then
+            right_click = outer_bg_or_rc
+        end
+
+        local text = tostring(label or "")
+        local vis_w = M.vis_len(text)
+        -- Crisp sharp rectangular chip (Omarchy aesthetic, no rounded semicircles).
+        self:put(row, col, text, fg_hex, bg_hex, bold)
+
+        if on_click or right_click then
+            self:hitbox(row, col, row, col + vis_w - 1, {
+                click = on_click,
+                right_click = right_click,
+            })
         end
         return vis_w
+    end
+
+    function canvas:badge(row, col, text, fg_hex, bg_hex, bold, on_click, outer_bg_hex)
+        return self:pill(row, col, " " .. M.clean_text(text) .. " ", fg_hex, bg_hex, bold, on_click, outer_bg_hex)
+    end
+
+    function canvas:scrollbar(r1, height, col, total, visible, offset, active_hex, track_hex, bg_hex)
+        if not total or not visible or total <= visible or height < 1 then
+            return
+        end
+        local max_off = math.max(1, total - visible)
+        local clamped = math.max(0, math.min(max_off, tonumber(offset) or 0))
+        local thumb_h = math.max(1, math.min(height, math.floor((height * visible) / total + 0.5)))
+        local thumb_start = math.floor((clamped / max_off) * (height - thumb_h) + 0.5)
+        local bg_c = bg_hex or self.base_bg
+        for i = 0, height - 1 do
+            local r = r1 + i
+            local in_thumb = (i >= thumb_start and i < thumb_start + thumb_h)
+            self:put(r, col, in_thumb and "┃" or "│", in_thumb and active_hex or track_hex, bg_c, in_thumb)
+        end
+    end
+
+    function canvas:switch(row, col, active, theme, on_click, outer_bg_hex)
+        local row_cells = self.cell_bg[row]
+        local outer_bg = outer_bg_hex or (row_cells and row_cells[col]) or self.base_bg
+        local inactive_bg = (outer_bg == theme.bg_alt) and theme.surface or theme.bg_alt
+        local label = active and " ■ ✓ " or " □   "
+        local fg_c = active and theme.accent_fg or theme.fg_muted
+        local bg_c = active and theme.accent or inactive_bg
+        return self:pill(row, col, label, fg_c, bg_c, true, on_click, outer_bg)
+    end
+
+    function canvas:squircle(row, col, width, glyph, caption, active, theme, on_click, active_color, on_right_click)
+        local fill = active and (active_color or theme.accent) or theme.bg_alt
+        local fg1 = active and theme.accent_fg or theme.fg
+        local fg2 = active and theme.accent_fg or theme.fg_muted
+        local function center_pad(s)
+            local len = M.vis_len(s)
+            if len >= width then return M.trunc(s, width) end
+            local left = math.floor((width - len) / 2)
+            local right = width - len - left
+            return string.rep(" ", left) .. s .. string.rep(" ", right)
+        end
+        self:put(row, col, center_pad(glyph), fg1, fill, true)
+        self:put(row + 1, col, center_pad(caption), fg2, fill, false)
+        if on_click or on_right_click then
+            self:hitbox(row, col, row + 1, col + width - 1, {
+                click = on_click,
+                right_click = on_right_click,
+            })
+        end
+    end
+
+    function canvas:meter(row, col, bar_w, pct, fill_hex, track_hex, bg_hex)
+        local w = math.max(0, math.floor(tonumber(bar_w) or 0))
+        if w == 0 then return end
+        local clamped = math.max(0, math.min(100, tonumber(pct) or 0))
+        local eighths = math.floor((clamped / 100) * (w * 8) + 0.5)
+        local full = math.min(w, eighths // 8)
+        local rem = (full < w) and (eighths % 8) or 0
+        local row_cells = self.cell_bg[row]
+        local bg_c = bg_hex or (row_cells and row_cells[col]) or self.base_bg
+        local track_c = track_hex or bg_c
+
+        if full > 0 then
+            self:put(row, col, string.rep("█", full), fill_hex, bg_c, false)
+        end
+        local cursor = col + full
+        if rem > 0 and full < w then
+            self:put(row, cursor, METER_PARTIALS[rem], fill_hex, track_c, false)
+            cursor = cursor + 1
+        end
+        local empty = w - full - ((rem > 0 and full < w) and 1 or 0)
+        if empty > 0 then
+            self:put(row, cursor, string.rep("█", empty), track_c, bg_c, false)
+        end
     end
 
     function canvas:tile(row, col, width, line1, line2, active, theme, on_click)
@@ -139,19 +370,8 @@ local function create_canvas(cols, rows, base_bg, base_fg)
         local txt1 = active and theme.accent_fg or theme.fg
         local txt2 = active and theme.accent_fg or theme.fg_muted
         local function pad_cell(s)
+            s = M.trunc(s, width - 2)
             local len = tonumber(utf8.len(s)) or #s
-            if len > width - 2 then
-                -- Truncate cleanly by UTF-8 characters
-                local out = {}
-                local count = 0
-                for _, code in utf8.codes(s) do
-                    count = count + 1
-                    if count > width - 3 then break end
-                    out[#out + 1] = utf8.char(code)
-                end
-                s = table.concat(out) .. "…"
-                len = width - 2
-            end
             return " " .. s .. string.rep(" ", math.max(0, width - 2 - len)) .. " "
         end
         self:put(row, col, pad_cell(line1), txt1, fill, true)
@@ -161,18 +381,19 @@ local function create_canvas(cols, rows, base_bg, base_fg)
         end
     end
 
-    function canvas:slider(row, col, bar_w, pct, muted, theme, handlers)
+    function canvas:slider(row, col, bar_w, pct, muted, theme, handlers, bg_override)
+        local bg_c = bg_override or self.base_bg
         local clamped = math.max(0, math.min(100, math.floor((tonumber(pct) or 0) + 0.5)))
         local knob_pos = math.floor((clamped / 100) * (bar_w - 1) + 0.5)
         local active_col = muted and theme.fg_muted or theme.accent
-        local track_col = theme.surface
+        local track_col = (bg_c == theme.surface) and theme.bg_alt or theme.surface
         for i = 0, bar_w - 1 do
             if i == knob_pos then
-                self:put(row, col + i, "●", muted and theme.danger or theme.fg, self.base_bg, true)
+                self:put(row, col + i, "┃", muted and theme.danger or theme.fg, bg_c, true)
             elseif i < knob_pos then
-                self:put(row, col + i, "━", active_col, self.base_bg, true)
+                self:put(row, col + i, "━", active_col, bg_c, true)
             else
-                self:put(row, col + i, "━", track_col, self.base_bg, false)
+                self:put(row, col + i, "━", track_col, bg_c, false)
             end
         end
         if handlers then
@@ -197,9 +418,19 @@ local function create_canvas(cols, rows, base_bg, base_fg)
             r2 = r2,
             c2 = c2,
             click = handlers.click,
+            right_click = handlers.right_click,
             drag = handlers.drag,
             scroll = handlers.scroll,
         }
+    end
+
+    function canvas:render_string()
+        local parts = {}
+        for i = 1, #self.buf do
+            parts[i] = self.buf[i]
+        end
+        parts[#parts + 1] = "\27[?2026l"
+        return table.concat(parts)
     end
 
     function canvas:flush()
@@ -211,11 +442,17 @@ local function create_canvas(cols, rows, base_bg, base_fg)
     return canvas
 end
 
+M.create_canvas = create_canvas
+
 local function read_csi(tty)
     local seq = {}
     while true do
-        local ch = tty:read(1)
-        if not ch then return nil end
+        local ch, read_err = tty:read(1)
+        if not ch then
+            if read_err then return nil end
+            tty:seek("cur", 0)
+            return table.concat(seq)
+        end
         seq[#seq + 1] = ch
         local b = ch:byte()
         if b >= 0x40 and b <= 0x7E then
@@ -239,7 +476,12 @@ function M.run_loop(opts)
     if saved_stty then
         saved_stty = saved_stty:gsub("[\r\n]+$", "")
     end
-    os.execute("stty -icanon -echo -isig min 1 time 0 </dev/tty 2>/dev/null")
+    local tick_ds = tonumber(opts.tick_ds)
+    if tick_ds and tick_ds > 0 then
+        os.execute(string.format("stty -icanon -echo -isig min 0 time %d </dev/tty 2>/dev/null", math.floor(tick_ds)))
+    else
+        os.execute("stty -icanon -echo -isig min 1 time 0 </dev/tty 2>/dev/null")
+    end
 
     -- Enter alt screen, hide cursor, enable mouse click + drag + SGR + FocusIn/Out
     io.stdout:write("\27[?1049h\27[?25l\27[?1000h\27[?1002h\27[?1006h\27[?1004h")
@@ -248,7 +490,6 @@ function M.run_loop(opts)
     local post_exit_cmd = nil
     local ok, err = pcall(function()
         local ui = create_canvas(opts.cols, opts.rows, opts.theme.bg_alt, opts.theme.fg)
-        local seen_focus_in = false
         local active_drag_hb = nil
 
         local function redraw()
@@ -259,86 +500,119 @@ function M.run_loop(opts)
         redraw()
 
         while true do
-            local ch = tty:read(1)
-            if not ch then break end
-            local byte = ch:byte()
-            if byte == 4 or byte == 3 or ch == "q" or ch == "Q" then
-                break
-            elseif ch == "\27" then
-                local nxt = tty:read(1)
-                if not nxt then break end
-                if nxt == "[" then
-                    local csi = read_csi(tty)
-                    if not csi then break end
-                    if csi == "I" then
-                        seen_focus_in = true
-                    elseif csi == "O" then
-                        if seen_focus_in then
-                            break
-                        end
-                    elseif csi:sub(1, 1) == "<" then
-                        local btn_s, col_s, row_s, kind = csi:match("^<(%d+);(%d+);(%d+)([Mm])$")
-                        local btn = tonumber(btn_s)
-                        local col = tonumber(col_s)
-                        local row = tonumber(row_s)
-                        if btn and col and row then
-                            if kind == "m" and (btn == 0 or btn == 32) then
-                                active_drag_hb = nil
-                            elseif btn == 0 and kind == "M" then
-                                active_drag_hb = nil
-                                for i = #ui.hitboxes, 1, -1 do
-                                    local hb = ui.hitboxes[i]
-                                    if row >= hb.r1 and row <= hb.r2 and col >= hb.c1 and col <= hb.c2 then
-                                        if hb.drag then
-                                            active_drag_hb = hb
+            local ch, read_err = tty:read(1)
+            if not ch then
+                if read_err or not tick_ds then
+                    break
+                end
+                tty:seek("cur", 0)
+                if opts.on_tick then
+                    opts.on_tick()
+                end
+                redraw()
+            else
+                local byte = ch:byte()
+                if byte == 4 or byte == 3 or ch == "q" or ch == "Q" then
+                    break
+                elseif ch == "\27" then
+                    local nxt, nxt_err = tty:read(1)
+                    if not nxt then
+                        if nxt_err then break end
+                        tty:seek("cur", 0)
+                        break
+                    end
+                    if nxt == "[" then
+                        local csi = read_csi(tty)
+                        if not csi then break end
+                        if csi == "I" then
+                            -- Track focus regain cleanly; ignore nothing.
+                        elseif csi == "O" then
+                            if opts.close_on_blur ~= false then
+                                break
+                            end
+                        elseif csi:sub(1, 1) == "<" then
+                            local btn_s, col_s, row_s, kind = csi:match("^<(%d+);(%d+);(%d+)([Mm])$")
+                            local btn = tonumber(btn_s)
+                            local col = tonumber(col_s)
+                            local row = tonumber(row_s)
+                            if btn and col and row then
+                                if kind == "m" and (btn == 0 or btn == 32) then
+                                    active_drag_hb = nil
+                                elseif btn == 0 and kind == "M" then
+                                    active_drag_hb = nil
+                                    for i = #ui.hitboxes, 1, -1 do
+                                        local hb = ui.hitboxes[i]
+                                        if row >= hb.r1 and row <= hb.r2 and col >= hb.c1 and col <= hb.c2 then
+                                            if hb.drag then
+                                                active_drag_hb = hb
+                                            end
+                                            if hb.click then
+                                                local res = hb.click(col - hb.c1, row - hb.r1)
+                                                if res == "close" then return end
+                                                if type(res) == "table" and res.exec_and_close then
+                                                    post_exit_cmd = res.exec_and_close
+                                                    return
+                                                end
+                                                redraw()
+                                            end
+                                            break
                                         end
-                                        if hb.click then
-                                            local res = hb.click(col - hb.c1, row - hb.r1)
+                                    end
+                                elseif btn == 2 and kind == "M" then
+                                    active_drag_hb = nil
+                                    for i = #ui.hitboxes, 1, -1 do
+                                        local hb = ui.hitboxes[i]
+                                        if row >= hb.r1 and row <= hb.r2 and col >= hb.c1 and col <= hb.c2 and hb.right_click then
+                                            local res = hb.right_click(col - hb.c1, row - hb.r1)
                                             if res == "close" then return end
                                             if type(res) == "table" and res.exec_and_close then
                                                 post_exit_cmd = res.exec_and_close
                                                 return
                                             end
                                             redraw()
+                                            break
                                         end
-                                        break
                                     end
-                                end
-                            elseif btn == 32 and kind == "M" and active_drag_hb and active_drag_hb.drag then
-                                active_drag_hb.drag(col - active_drag_hb.c1)
-                                redraw()
-                            elseif (btn == 64 or btn == 65) and kind == "M" then
-                                local dir = (btn == 64) and 1 or -1
-                                local handled = false
-                                for i = #ui.hitboxes, 1, -1 do
-                                    local hb = ui.hitboxes[i]
-                                    if row >= hb.r1 and row <= hb.r2 and col >= hb.c1 and col <= hb.c2 and hb.scroll then
-                                        hb.scroll(dir)
-                                        handled = true
-                                        redraw()
-                                        break
-                                    end
-                                end
-                                if not handled and opts.on_scroll then
-                                    opts.on_scroll(dir)
+                                elseif btn == 32 and kind == "M" and active_drag_hb and active_drag_hb.drag then
+                                    active_drag_hb.drag(col - active_drag_hb.c1)
                                     redraw()
+                                elseif (btn == 64 or btn == 65) and kind == "M" then
+                                    local dir = (btn == 64) and 1 or -1
+                                    local handled = false
+                                    for i = #ui.hitboxes, 1, -1 do
+                                        local hb = ui.hitboxes[i]
+                                        if row >= hb.r1 and row <= hb.r2 and col >= hb.c1 and col <= hb.c2 and hb.scroll then
+                                            hb.scroll(dir)
+                                            handled = true
+                                            redraw()
+                                            break
+                                        end
+                                    end
+                                    if not handled and opts.on_scroll then
+                                        opts.on_scroll(dir)
+                                        redraw()
+                                    end
                                 end
                             end
+                        elseif opts.on_key then
+                            local res = opts.on_key("CSI:" .. csi)
+                            if res == "close" then break end
+                            if type(res) == "table" and res.exec_and_close then
+                                post_exit_cmd = res.exec_and_close
+                                break
+                            end
+                            if res == "redraw" then redraw() end
                         end
-                    elseif opts.on_key then
-                        local res = opts.on_key("CSI:" .. csi)
-                        if res == "close" then break end
-                        if res == "redraw" then redraw() end
                     end
+                elseif opts.on_key then
+                    local res = opts.on_key(ch)
+                    if res == "close" then break end
+                    if type(res) == "table" and res.exec_and_close then
+                        post_exit_cmd = res.exec_and_close
+                        break
+                    end
+                    if res == "redraw" then redraw() end
                 end
-            elseif opts.on_key then
-                local res = opts.on_key(ch)
-                if res == "close" then break end
-                if type(res) == "table" and res.exec_and_close then
-                    post_exit_cmd = res.exec_and_close
-                    break
-                end
-                if res == "redraw" then redraw() end
             end
         end
     end)

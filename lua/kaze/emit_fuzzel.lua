@@ -3,7 +3,8 @@ local themes = require("kaze.themes")
 local M = {}
 
 function M.emit(cfg, theme, layout)
-    local radius = layout.ui.fuzzel_radius
+    local radius = tonumber(layout.ui.fuzzel_radius) or 0
+    local sel_radius = 0
     local top_y = tonumber(layout.ui.popup_top_y) or 10
     local term = cfg.terminal
     if not term or term == "kaze-footclient" then
@@ -36,8 +37,9 @@ exit-on-keyboard-focus-loss=yes
 exit-immediately-if-empty=yes
 
 [border]
-width=1
+width=2
 radius=%d
+selection-radius=%d
 
 [colors]
 background=%s
@@ -59,6 +61,7 @@ border=%s
         icon_theme,
         top_y,
         radius,
+        sel_radius,
         themes.hex_alpha(theme.bg_alt, "e8"),
         themes.hex_alpha(theme.fg, "ff"),
         themes.hex_alpha(theme.fg, "ff"),
@@ -70,7 +73,7 @@ border=%s
         themes.hex_alpha(theme.fg, "ff"),
         themes.hex_alpha(theme.accent, "ff"),
         themes.hex_alpha(theme.fg_muted, "ff"),
-        themes.hex_alpha(theme.border, "ff")
+        themes.hex_alpha(theme.accent, "cc")
     )
 end
 

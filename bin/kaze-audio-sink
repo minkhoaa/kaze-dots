@@ -43,6 +43,7 @@ end
 setup_path()
 
 local fs = require("kaze.fs")
+local notify = require("kaze.notify")
 local popups = require("kaze.popups")
 
 local list_only = false
@@ -70,9 +71,7 @@ local function sibling_or_path(bin)
 end
 
 if not list_only then
-    local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
-    if running == true or running == 0 then
-        os.execute("pkill -x fuzzel >/dev/null 2>&1")
+    if popups.toggle_existing_fuzzel() then
         os.exit(0)
     end
     if not fs.command_exists("fuzzel") then
@@ -127,6 +126,7 @@ local sinks = parse_sinks(status_out)
 
 local rows = {}
 local sink_by_row = {}
+local active_idx = nil
 for _, s in ipairs(sinks) do
     local vol_tag = ""
     if s.muted then
@@ -139,6 +139,9 @@ for _, s in ipairs(sinks) do
     local row = string.format("%s  %s. %s%s%s", icon, s.id, s.name, vol_tag, act_tag)
     rows[#rows + 1] = row
     sink_by_row[row] = s
+    if s.active and active_idx == nil then
+        active_idx = #rows - 1
+    end
 end
 
 if list_only then
@@ -151,24 +154,20 @@ end
 local mixer_row = "󰕾  Open Audio Mixer"
 rows[#rows + 1] = mixer_row
 
-local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
-local cmd = string.format(
-    "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 56 --lines %d -p %s",
-    utf8_guard,
-    fs.shell_quote(table.concat(rows, "\n")),
-    popups.active_right_flags(),
-    math.min(10, #rows),
-    fs.shell_quote("Audio Output > ")
-)
-local p = io.popen(cmd)
-if not p then
-    io.stderr:write("kaze-audio-sink: failed to launch fuzzel\n")
+local choice, dmenu_err = popups.run_dmenu(rows, {
+    flags = popups.active_right_flags(),
+    width = 56,
+    lines = math.min(10, #rows),
+    minimal_lines = true,
+    hide_prompt = true,
+    line_height = 32,
+    select_index = active_idx,
+    prompt = "Audio Output > ",
+})
+if not choice then
+    io.stderr:write("kaze-audio-sink: " .. tostring(dmenu_err) .. "\n")
     os.exit(1)
 end
-local out = p:read("*a") or ""
-p:close()
-
-local choice = out:gsub("[\r\n]+$", "")
 if choice == "" then
     os.exit(0)
 end
@@ -191,6 +190,13 @@ if not (ok_set == true or ok_set == 0) then
 end
 
 if not quiet and fs.command_exists("notify-send") then
+    notify.record({
+        app = "kaze-audio-sink",
+        icon = "󰓃",
+        urgency = "low",
+        summary = "Audio output",
+        body = target.name,
+    })
     os.execute(string.format(
         "notify-send -a kaze-audio-sink -t 1600 -u low -h string:x-canonical-private-synchronous:kaze-switch %s %s >/dev/null 2>&1 || true",
         fs.shell_quote("Audio output"),

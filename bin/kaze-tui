@@ -199,8 +199,36 @@ if existing_addr then
 end
 
 local footclient_bin = sibling_or_path("kaze-footclient")
+local env_prefix = ""
+if tool_bin == "nmtui" then
+    local newt_palette = table.concat({
+        "root=white,black",
+        "border=blue,black",
+        "window=white,black",
+        "shadow=black,black",
+        "title=blue,black",
+        "button=black,blue",
+        "actbutton=black,cyan",
+        "compactbutton=white,black",
+        "checkbox=white,black",
+        "actcheckbox=black,blue",
+        "entry=white,black",
+        "disentry=gray,black",
+        "label=white,black",
+        "listbox=white,black",
+        "actlistbox=black,blue",
+        "sellistbox=white,black",
+        "actsellistbox=black,blue",
+        "textbox=white,black",
+        "acttextbox=black,blue",
+        "emptyscale=gray,black",
+        "fullscale=black,blue",
+    }, ":")
+    env_prefix = "NEWT_COLORS=" .. fs.shell_quote(newt_palette) .. " "
+end
 local cmd = string.format(
-    "%s -N -o main.locked-title=yes -a kaze-tui -T %s %s",
+    "%s%s -N -o main.locked-title=yes -a kaze-tui -T %s %s",
+    env_prefix,
     fs.shell_quote(footclient_bin),
     fs.shell_quote(title),
     fs.shell_quote(tool_bin)

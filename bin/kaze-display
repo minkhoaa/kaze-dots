@@ -93,9 +93,7 @@ if mode == "--list" then
 end
 
 if mode == "--menu" then
-    local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
-    if running == true or running == 0 then
-        os.execute("pkill -x fuzzel >/dev/null 2>&1")
+    if popups.toggle_existing_fuzzel() then
         os.exit(0)
     end
     if not cmd_exists("fuzzel") then

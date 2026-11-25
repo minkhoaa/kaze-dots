@@ -17,8 +17,8 @@ hl.config({
         gaps_in = layout.hypr.gaps_in,
         gaps_out = layout.hypr.gaps_out,
         border_size = layout.hypr.border_size,
-        ["col.active_border"] = themes.hypr_rgba(theme.accent, "cc"),
-        ["col.inactive_border"] = themes.hypr_rgba(theme.border, "88"),
+        ["col.active_border"] = themes.hypr_rgba(theme.accent, "ee"),
+        ["col.inactive_border"] = themes.hypr_rgba(theme.border, "aa"),
     },
 
     dwindle = {

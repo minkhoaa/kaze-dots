@@ -66,9 +66,7 @@ if #arg > 0 then
     os.exit(2)
 end
 
-local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
-if running == true or running == 0 then
-    os.execute("pkill -x fuzzel >/dev/null 2>&1")
+if popups.toggle_existing_fuzzel() then
     os.exit(0)
 end
 
@@ -83,7 +81,10 @@ local wifi_label = wifi_bin == "impala" and "󰖩  Wi-Fi (impala)" or "󰖩  Wi-
 local items = {
     { label = "󰀻  App Launcher",       cmd = "fuzzel", needs = { "fuzzel" } },
     { label = "󰃭  Calendar & Dashboard", cmd = fs.shell_quote(sibling_or_path("kaze-dashboard")), check = function() return kaze_tool_exists("kaze-dashboard") end },
-    { label = "󰒓  Quick Control Panel", cmd = fs.shell_quote(sibling_or_path("kaze-panel")), check = function() return kaze_tool_exists("kaze-panel") end },
+    { label = "󰂚  Notification Center",  cmd = fs.shell_quote(sibling_or_path("kaze-dashboard")) .. " --notifications", check = function() return kaze_tool_exists("kaze-dashboard") end },
+    { label = "󰓅  Performance Dashboard", cmd = fs.shell_quote(sibling_or_path("kaze-dashboard")) .. " --perf", check = function() return kaze_tool_exists("kaze-dashboard") end },
+    { label = "󰒓  Quick Control Tray", cmd = fs.shell_quote(sibling_or_path("kaze-panel")), check = function() return kaze_tool_exists("kaze-panel") end },
+    { label = "󰤨  Wi-Fi & Network Panel", cmd = fs.shell_quote(sibling_or_path("kaze-panel")) .. " --wifi", check = function() return kaze_tool_exists("kaze-panel") end },
     { label = "󰂬  Switch Window",      cmd = fs.shell_quote(sibling_or_path("kaze-windows")), needs = { "hyprctl" } },
     { label = "󰆍  Terminal",           cmd = fs.shell_quote(sibling_or_path("kaze-footclient")) .. " -N", needs = { "footclient" } },
     { label = "󰙵  Switch Layout",      cmd = fs.shell_quote(sibling_or_path("kaze-layout")) .. " --menu" },
@@ -100,7 +101,8 @@ local items = {
     { label = "󰕾  Audio Mixer",         cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " audio", any_of = { "wiremix", "pulsemixer", "alsamixer" } },
     { label = "󰎈  Now Playing",        cmd = fs.shell_quote(sibling_or_path("kaze-osd")) .. " media-info", needs = { "playerctl", "notify-send" } },
     { label = "󰓅  Power Profile",      cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " power-profile", check = power_profile.available },
-    { label = "󰂯  Bluetooth",           cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " bluetooth", any_of = { "bluetui", "bluetoothctl" } },
+    { label = "󰂯  Quick Bluetooth",    cmd = fs.shell_quote(sibling_or_path("kaze-bluetooth")), needs = { "bluetoothctl" } },
+    { label = "󰂯  Bluetooth",          cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " bluetooth", any_of = { "bluetui", "bluetoothctl" } },
     { label = "󰍛  System Monitor",       cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " sysmon", any_of = { "btop", "htop", "top" } },
     { label = "󰅌  Clipboard History",  cmd = fs.shell_quote(sibling_or_path("kaze-clipboard")) .. " pick", needs = { "cliphist", "wl-copy" } },
     { label = "󰄀  Screenshot Region",  cmd = fs.shell_quote(sibling_or_path("kaze-screenshot")) .. " region", needs = { "slurp", "grim", "wl-copy" } },
@@ -110,6 +112,7 @@ local items = {
     { label = "󰑋  Toggle Screen Recording", cmd = fs.shell_quote(sibling_or_path("kaze-record")), needs = { "wf-recorder", "ffprobe", "flock" } },
     { label = "󰑋  Toggle Region Recording", cmd = fs.shell_quote(sibling_or_path("kaze-record")) .. " --region", needs = { "wf-recorder", "ffprobe", "slurp", "flock" } },
     { label = "󰖔  Toggle Night Light", cmd = fs.shell_quote(sibling_or_path("kaze-night")), needs = { "hyprsunset" } },
+    { label = "󰂛  Toggle Do Not Disturb", cmd = fs.shell_quote(sibling_or_path("kaze-dnd")), check = function() return kaze_tool_exists("kaze-dnd") end },
     { label = "󰅶  Toggle Caffeine",    cmd = fs.shell_quote(sibling_or_path("kaze-inhibit")), needs = { "systemd-inhibit" } },
     {
         label = "󰦥  System Doctor",

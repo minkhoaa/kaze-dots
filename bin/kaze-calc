@@ -45,6 +45,8 @@ end
 setup_path()
 
 local fs = require("kaze.fs")
+local notify = require("kaze.notify")
+local popups = require("kaze.popups")
 
 local FORBIDDEN_KEYWORDS = {
     "function", "while", "repeat", "until", "for", "goto", "do", "end",
@@ -145,9 +147,7 @@ if #arg > 0 then
     end
 end
 
-local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
-if running == true or running == 0 then
-    os.execute("pkill -x fuzzel >/dev/null 2>&1")
+if popups.toggle_existing_fuzzel() then
     os.exit(0)
 end
 
@@ -202,6 +202,13 @@ while true do
             os.execute("printf '%s' " .. fs.shell_quote(copy_target) .. " | wl-copy --type text/plain >/dev/null 2>&1")
         end
         if fs.command_exists("notify-send") then
+            notify.record({
+                app = "kaze-calc",
+                icon = "󰪚",
+                urgency = "low",
+                summary = "Calculator",
+                body = "Copied " .. copy_target,
+            })
             os.execute(string.format(
                 "notify-send -a kaze-calc -t 1500 -u low -h string:x-canonical-private-synchronous:kaze-switch %s %s >/dev/null 2>&1 || true",
                 fs.shell_quote("Calculator"),

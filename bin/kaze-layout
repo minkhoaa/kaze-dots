@@ -37,6 +37,7 @@ setup_path()
 local config = require("kaze.config")
 local fs = require("kaze.fs")
 local layouts = require("kaze.layouts")
+local notify = require("kaze.notify")
 local popups = require("kaze.popups")
 
 local function cmd_exists(bin)
@@ -55,10 +56,8 @@ local function usage()
     io.stdout:write("Usage: kaze-layout [--quiet] [sidebar|islands|slim|--menu|--current|-h|--help]\n")
 end
 
-local function pick_from_menu(current_layout)
-    local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
-    if running == true or running == 0 then
-        os.execute("pkill -x fuzzel >/dev/null 2>&1")
+local function pick_from_menu(current_layout, active_theme)
+    if popups.toggle_existing_fuzzel() then
         return nil
     end
     if not cmd_exists("fuzzel") then
@@ -66,30 +65,34 @@ local function pick_from_menu(current_layout)
         os.exit(1)
     end
 
-    local lines = {}
-    for _, name in ipairs(layouts.list()) do
+    local dmenu_entries = {}
+    local active_idx = nil
+    for idx, name in ipairs(layouts.list()) do
         local spec = layouts.get(name)
         local marker = (name == current_layout) and " (active)" or ""
-        lines[#lines + 1] = string.format("%s  —  %s%s", name, spec.label, marker)
+        dmenu_entries[#dmenu_entries + 1] = {
+            text = string.format("%s  —  %s%s", name, spec.label, marker),
+            icon = popups.ensure_layout_swatch(name, active_theme),
+        }
+        if name == current_layout then
+            active_idx = idx - 1
+        end
     end
 
-    local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
-    local cmd = string.format(
-        "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 46 --lines %d -p %s",
-        utf8_guard,
-        fs.shell_quote(table.concat(lines, "\n")),
-        popups.active_right_flags(),
-        #lines,
-        fs.shell_quote("Layout > ")
-    )
-    local p = io.popen(cmd)
-    if not p then
-        io.stderr:write("kaze-layout: failed to launch fuzzel\n")
+    local trimmed, dmenu_err = popups.run_dmenu(dmenu_entries, {
+        flags = popups.active_right_flags(),
+        width = 56,
+        lines = #dmenu_entries,
+        minimal_lines = true,
+        hide_prompt = true,
+        line_height = 36,
+        select_index = active_idx,
+        prompt = "Layout > ",
+    })
+    if not trimmed then
+        io.stderr:write("kaze-layout: " .. tostring(dmenu_err) .. "\n")
         os.exit(1)
     end
-    local out = p:read("*a") or ""
-    p:close()
-    local trimmed = out:gsub("[\r\n]+$", "")
     if trimmed == "" then
         return nil
     end
@@ -121,7 +124,8 @@ end
 
 local target = mode
 if not target or target == "--menu" then
-    target = pick_from_menu(config.load({ strict = false }).layout)
+    local cur_cfg, cur_theme = config.load({ strict = false })
+    target = pick_from_menu(cur_cfg.layout, cur_theme)
     if not target then
         os.exit(0)
     end
@@ -146,6 +150,13 @@ end
 local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
 local wl_disp = os.getenv("WAYLAND_DISPLAY")
 if not quiet and ((hypr_sig and hypr_sig ~= "") or (wl_disp and wl_disp ~= "")) and cmd_exists("notify-send") then
+    notify.record({
+        app = "kaze-layout",
+        icon = "󰙵",
+        urgency = "low",
+        summary = "Layout switched",
+        body = "Active: " .. spec.label,
+    })
     os.execute(string.format(
         "notify-send -a kaze-layout -t 1800 -u low -h string:x-canonical-private-synchronous:kaze-switch %s %s >/dev/null 2>&1 || true",
         fs.shell_quote("Layout switched"),

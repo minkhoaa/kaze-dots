@@ -11,8 +11,8 @@
 ### Visual Principles
 - **Restraint over decoration**: Never use loud gradients, neon rainbow borders, pulsing animations, or cluttered widget badges.
 - **One accent at a time**: Every theme exposes exactly one primary `accent` (active workspace, active window border, focus ring, OSD progress fill) and semantic colors (`ok`, `warn`, `danger`) reserved strictly for status transitions (charging, low battery, mute, critical alerts).
-- **Consistent geometry**: Corner radii, border thickness (`1px`), font metrics, and gaps are derived from the active layout spec and shared across Hyprland, Waybar, Fuzzel, Fnott, and Hyprlock.
-- **Compositor-owned blur**: Waybar, Fuzzel, and Fnott render semi-transparent alpha surfaces (`0.84–0.92`), while Hyprland's `layer_rule` applies cheap 1-pass `xray` blur.
+- **Consistent geometry**: Sharp rectangular `0px` corners (`border-radius: 0`, `rounding = 0`) paired with crisp `2px` frame borders (`border_size = 2`), consistent font metrics, and unified gaps derived from the active layout spec across Hyprland, Waybar, Fuzzel, Fnott, Hyprlock, and TUI widgets.
+- **Compositor-owned blur**: Waybar, Fuzzel, and Fnott render semi-transparent alpha surfaces (`0.92–0.96`), while Hyprland's `layer_rule` applies cheap 1-pass `xray` blur.
 
 ## 2. Typography & Iconography
 
@@ -30,15 +30,15 @@
 
 | Dimension | `sidebar` *(Default)* | `islands` | `slim` |
 |---|---|---|---|
-| **Bar position** | Left, vertical (`margin: 8 0 8 8`) | Top, floating (`margin: 6 10 0 10`) | Top, docked flush (`margin: 0`) |
-| **Bar thickness** | `42px` vertical rail | `34px` pill islands (transparent outer track) | `28px` flat solid/frosted strip |
-| **Bar corner radius** | `14px` unified rail | `14px` per island pill | `0px` (crisp horizontal edge) |
-| **Workspaces style** | Vertical dots; active expands into `24px` tall accent pill | Horizontal dots; active expands into `24px` accent pill | Minimal numbered tabs with bottom accent indicator |
+| **Bar position** | Left, vertical (`margin: 8 0 8 8`) | Top, floating blocks (`margin: 6 10 0 10`) | Top, docked flush (`margin: 0`) |
+| **Bar thickness** | `42px` vertical rail | `34px` modular top bar | `28px` flat solid/frosted strip |
+| **Bar corner radius** | `0px` sharp rail (`2px` border) | `0px` sharp modules (`2px` border) | `0px` crisp edge (`2px` bottom border) |
+| **Workspaces style** | Square `8px` blocks; active expands to `8×24px` bar | Square `8px` blocks; active expands to `24×8px` bar | Minimal numbered tabs with bottom accent indicator |
 | **Window `gaps_in` / `gaps_out`** | `4px` / `8px` | `5px` / `10px` | `4px` / `6px` |
-| **Window `rounding`** | `12px` | `10px` | `6px` |
-| **Window `border_size`** | `1px` | `1px` | `1px` |
-| **Popup (`fuzzel`) radius** | `14px` | `12px` | `8px` |
-| **Notification (`fnott`) radius** | `12px` | `10px` | `6px` |
+| **Window `rounding`** | `0px` | `0px` | `0px` |
+| **Window `border_size`** | `2px` | `2px` | `2px` |
+| **Popup (`fuzzel`) radius** | `0px` (`2px` border) | `0px` (`2px` border) | `0px` (`2px` border) |
+| **Notification (`fnott`) radius** | `0px` (`2px` border) | `0px` (`2px` border) | `0px` (`2px` border) |
 | **Best suited for** | Coding/reading needing full `1080px` vertical height | Balanced airy desktop with floating pill islands | Ultra-minimalist keyboard purists & compact displays |
 
 Full pixel dimensions, Waybar module layouts, and CSS contracts are defined in [docs/specs/02-layouts.md](docs/specs/02-layouts.md).

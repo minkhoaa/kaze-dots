@@ -8,18 +8,19 @@ function M.emit(cfg, theme, layout)
 [main]
 layer=overlay
 anchor=%s
+stacking-order=top-down
 dpi-aware=no
 icon-theme=hicolor
 edge-margin-vertical=%d
 edge-margin-horizontal=%d
-notification-margin=8
-max-width=320
-min-width=240
+notification-margin=10
+min-width=280
+max-width=360
 max-height=0
-max-icon-size=32
-padding-vertical=12
-padding-horizontal=16
-border-size=1
+max-icon-size=40
+padding-vertical=14
+padding-horizontal=18
+border-size=2
 border-radius=%d
 background=%s
 border-color=%s
@@ -32,7 +33,7 @@ summary-format=%%s
 body-font=%s Propo:size=9.5,%s:size=9.5
 body-color=%s
 body-format=%%b
-progress-bar-height=5
+progress-bar-height=6
 progress-color=%s
 progress-style=bar
 default-timeout=4
@@ -40,6 +41,8 @@ max-timeout=8
 
 [low]
 title-format=
+padding-vertical=12
+padding-horizontal=16
 border-color=%s
 default-timeout=2
 
@@ -48,18 +51,20 @@ border-color=%s
 default-timeout=4
 
 [critical]
+border-size=2
 border-color=%s
+title-color=%s
 default-timeout=0
 ]],
         ui.fnott_anchor,
         ui.fnott_edge_margin_vertical,
         ui.fnott_edge_margin_horizontal,
         ui.fnott_radius,
-        themes.hex_alpha(theme.bg_alt, "f0"),
+        themes.hex_alpha(theme.bg_alt, "f2"),
         themes.hex_alpha(theme.border, "ff"),
         cfg.font,
         cfg.font,
-        themes.hex_alpha(theme.fg_muted, "cc"),
+        themes.hex_alpha(theme.accent, "dd"),
         cfg.font,
         cfg.font,
         themes.hex_alpha(theme.fg, "ff"),
@@ -67,8 +72,9 @@ default-timeout=0
         cfg.font,
         themes.hex_alpha(theme.fg_muted, "ff"),
         themes.hex_alpha(theme.accent, "ff"),
-        themes.hex_alpha(theme.border, "ee"),
-        themes.hex_alpha(theme.border, "ff"),
+        themes.hex_alpha(theme.border, "dd"),
+        themes.hex_alpha(theme.accent, "aa"),
+        themes.hex_alpha(theme.danger, "ff"),
         themes.hex_alpha(theme.danger, "ff")
     )
 end

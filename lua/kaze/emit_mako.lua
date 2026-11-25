@@ -8,21 +8,27 @@ function M.emit(cfg, theme, layout)
 layer=overlay
 anchor=%s
 outer-margin=%d,%d
-margin=8
-width=320
-padding=12,16
-border-size=1
+margin=10
+width=360
+padding=14,18
+border-size=2
 border-radius=%d
 font=%s 10
 background-color=#%sf0
 border-color=#%s
 text-color=#%s
 progress-color=over #%s55
-max-icon-size=32
+max-icon-size=40
 default-timeout=4000
 max-history=5
 
+[urgency=low]
+padding=12,16
+border-color=#%s66
+default-timeout=2000
+
 [urgency=critical]
+border-size=2
 border-color=#%s
 default-timeout=0
 
@@ -36,7 +42,7 @@ invisible=1
 invisible=0
 ]], ui.fnott_anchor, ui.fnott_edge_margin_vertical, ui.fnott_edge_margin_horizontal,
         ui.fnott_radius, (cfg.font or "JetBrainsMono Nerd Font"):gsub("[\r\n]", " "),
-        theme.bg_alt, theme.border, theme.fg, theme.accent, theme.danger)
+        theme.bg_alt, theme.border, theme.fg, theme.accent, theme.accent, theme.danger)
 end
 
 return M

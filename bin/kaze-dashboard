@@ -36,18 +36,32 @@ setup_path()
 
 local config = require("kaze.config")
 local fs = require("kaze.fs")
+local notify = require("kaze.notify")
 local popups = require("kaze.popups")
 local themes = require("kaze.themes")
 local widget = require("kaze.widget")
 
-local mode = arg[1]
-if #arg > 1 or (mode and mode ~= "--print" and mode ~= "--ui" and mode ~= "-h" and mode ~= "--help") then
-    io.stderr:write("Usage: kaze-dashboard [--print]\n")
-    os.exit(2)
-end
-if mode == "-h" or mode == "--help" then
-    io.stdout:write("Usage: kaze-dashboard [--print]\n")
-    os.exit(0)
+local is_ui = false
+local is_print = false
+local start_tab = "calendar"
+
+for i = 1, #arg do
+    local a = arg[i]
+    if a == "-h" or a == "--help" then
+        io.stdout:write("Usage: kaze-dashboard [--print | --perf | --notifications]\n")
+        os.exit(0)
+    elseif a == "--ui" then
+        is_ui = true
+    elseif a == "--print" then
+        is_print = true
+    elseif a == "--perf" then
+        start_tab = "perf"
+    elseif a == "--notifications" or a == "--notifs" then
+        start_tab = "notifications"
+    else
+        io.stderr:write("Usage: kaze-dashboard [--print | --perf | --notifications]\n")
+        os.exit(2)
+    end
 end
 
 local function sibling_or_path(bin)
@@ -61,6 +75,184 @@ local ok_cfg, cfg, theme = pcall(config.load, { strict = false })
 if not ok_cfg or type(cfg) ~= "table" then
     cfg = { layout = "sidebar", theme = "kaze" }
     theme = themes.get("kaze")
+end
+
+-- Pure-Lua /proc & /sys telemetry (zero subprocesses for CPU, RAM, Temp, Uptime, Load)
+local prev_cpu_total, prev_cpu_busy = nil, nil
+local cached_cpu_pct = 0
+local cached_cores = nil
+local disk_cache = { tick = -99, used_gb = 0, total_gb = 0, pct = 0 }
+local proc_cache = { tick = -99, list = {} }
+local tick_num = 0
+
+local function read_first_line(path)
+    local f = io.open(path, "r")
+    if not f then return nil end
+    local line = f:read("*l")
+    f:close()
+    return line
+end
+
+local function sample_cpu_times()
+    local line = read_first_line("/proc/stat")
+    if not line then return nil, nil end
+    local u, n, s, idle, iow, irq, sirq, steal =
+        line:match("^cpu%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s*(%d*)%s*(%d*)%s*(%d*)%s*(%d*)")
+    if not u then return nil, nil end
+    local user_v = tonumber(u) or 0
+    local nice_v = tonumber(n) or 0
+    local sys_v = tonumber(s) or 0
+    local idle_v = (tonumber(idle) or 0) + (tonumber(iow) or 0)
+    local busy_v = user_v + nice_v + sys_v + (tonumber(irq) or 0) + (tonumber(sirq) or 0) + (tonumber(steal) or 0)
+    return busy_v + idle_v, busy_v
+end
+
+local function count_cores()
+    if cached_cores then return cached_cores end
+    local raw = fs.read_file("/proc/stat") or ""
+    local n = 0
+    for _ in raw:gmatch("\ncpu%d+%s") do
+        n = n + 1
+    end
+    cached_cores = math.max(1, n)
+    return cached_cores
+end
+
+local function read_cpu_ghz()
+    local khz = tonumber(read_first_line("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq") or "")
+    if khz and khz > 0 then
+        return string.format("%.2f GHz", khz / 1000000)
+    end
+    local cpuinfo = fs.read_file("/proc/cpuinfo")
+    local mhz = cpuinfo and tonumber(cpuinfo:match("cpu MHz%s*:%s*([%d%.]+)")) or nil
+    if mhz and mhz > 0 then
+        return string.format("%.2f GHz", mhz / 1000)
+    end
+    return nil
+end
+
+local function read_temp_c()
+    for i = 0, 6 do
+        local name = read_first_line(string.format("/sys/class/hwmon/hwmon%d/name", i))
+        if name and (name:find("coretemp") or name:find("k10temp") or name:find("zenpower") or name:find("cpu") or name:find("acpitz")) then
+            local milli = tonumber(read_first_line(string.format("/sys/class/hwmon/hwmon%d/temp1_input", i)) or "")
+            if milli and milli > 0 then
+                return math.floor(milli / 1000 + 0.5)
+            end
+        end
+    end
+    for i = 0, 4 do
+        local milli = tonumber(read_first_line(string.format("/sys/class/thermal/thermal_zone%d/temp", i)) or "")
+        if milli and milli > 1000 then
+            return math.floor(milli / 1000 + 0.5)
+        end
+    end
+    return nil
+end
+
+local function query_perf(full)
+    local cores = count_cores()
+    local load_line = read_first_line("/proc/loadavg") or ""
+    local l1, l5 = load_line:match("^([%d%.]+)%s+([%d%.]+)")
+    local load1 = tonumber(l1) or 0
+
+    local tot, busy = sample_cpu_times()
+    if tot and busy then
+        if prev_cpu_total and tot > prev_cpu_total then
+            local dt = tot - prev_cpu_total
+            local db = math.max(0, busy - prev_cpu_busy)
+            cached_cpu_pct = math.max(0, math.min(100, math.floor((db / dt) * 100 + 0.5)))
+        elseif not prev_cpu_total then
+            cached_cpu_pct = math.max(0, math.min(100, math.floor((load1 / cores) * 100 + 0.5)))
+        end
+        prev_cpu_total, prev_cpu_busy = tot, busy
+    end
+
+    local meminfo = fs.read_file("/proc/meminfo") or ""
+    local mem_total_kb = tonumber(meminfo:match("MemTotal:%s*(%d+)")) or 1
+    local mem_avail_kb = tonumber(meminfo:match("MemAvailable:%s*(%d+)")) or mem_total_kb
+    local swap_total_kb = tonumber(meminfo:match("SwapTotal:%s*(%d+)")) or 0
+    local swap_free_kb = tonumber(meminfo:match("SwapFree:%s*(%d+)")) or 0
+    local mem_used_kb = math.max(0, mem_total_kb - mem_avail_kb)
+    local swap_used_kb = math.max(0, swap_total_kb - swap_free_kb)
+    local mem_pct = math.floor((mem_used_kb / math.max(1, mem_total_kb)) * 100 + 0.5)
+
+    local up_line = read_first_line("/proc/uptime") or "0"
+    local up_sec = math.floor(tonumber(up_line:match("^([%d%.]+)")) or 0)
+    local up_str
+    if up_sec >= 86400 then
+        up_str = string.format("%dd %dh %dm", up_sec // 86400, (up_sec % 86400) // 3600, (up_sec % 3600) // 60)
+    elseif up_sec >= 3600 then
+        up_str = string.format("%dh %02dm", up_sec // 3600, (up_sec % 3600) // 60)
+    else
+        up_str = string.format("%dm %02ds", up_sec // 60, up_sec % 60)
+    end
+
+    if full and (tick_num - disk_cache.tick >= 8 or disk_cache.total_gb == 0) then
+        disk_cache.tick = tick_num
+        local df_out = fs.capture("LC_ALL=C df -Pk / 2>/dev/null")
+        if df_out then
+            for line in df_out:gmatch("[^\r\n]+") do
+                local blocks, used, cap = line:match("(%d+)%s+(%d+)%s+%-?%d+%s+(%d+)%%")
+                if blocks and used and cap then
+                    disk_cache.total_gb = (tonumber(blocks) or 0) / 1048576
+                    disk_cache.used_gb = (tonumber(used) or 0) / 1048576
+                    disk_cache.pct = tonumber(cap) or 0
+                end
+            end
+        end
+    end
+
+    if full and (tick_num - proc_cache.tick >= 2) then
+        proc_cache.tick = tick_num
+        local ps_out = fs.capture("LC_ALL=C ps -eo comm=,pcpu=,rss= --sort=-pcpu 2>/dev/null")
+        local top = {}
+        if ps_out then
+            for line in ps_out:gmatch("[^\r\n]+") do
+                local comm, pcpu, rss = line:match("^%s*(%S+)%s+([%d%.]+)%s+(%d+)%s*$")
+                if comm and comm ~= "ps" and comm ~= "sh" then
+                    top[#top + 1] = {
+                        name = comm,
+                        cpu = tonumber(pcpu) or 0,
+                        mem_mb = math.floor((tonumber(rss) or 0) / 1024 + 0.5),
+                    }
+                    if #top >= 3 then break end
+                end
+            end
+        end
+        proc_cache.list = top
+    end
+
+    local bat_info = nil
+    for i = 0, 2 do
+        local bdir = "/sys/class/power_supply/BAT" .. i
+        local cap = tonumber((read_first_line(bdir .. "/capacity") or ""):match("(%d+)"))
+        if cap then
+            local bst = (read_first_line(bdir .. "/status") or ""):match("(%S+)") or "Battery"
+            local uw = tonumber(read_first_line(bdir .. "/power_now") or "")
+            local w_str = (uw and uw > 0) and string.format(" · %.1fW", uw / 1000000) or ""
+            bat_info = string.format("󰁹 %d%% (%s%s)", cap, bst, w_str)
+            break
+        end
+    end
+
+    return {
+        cpu_pct = cached_cpu_pct,
+        cores = cores,
+        ghz = read_cpu_ghz(),
+        load1 = l1 or "0.00",
+        load5 = l5 or "0.00",
+        mem_used_gb = mem_used_kb / 1048576,
+        mem_total_gb = mem_total_kb / 1048576,
+        mem_pct = mem_pct,
+        swap_used_gb = swap_used_kb / 1048576,
+        swap_total_gb = swap_total_kb / 1048576,
+        temp_c = read_temp_c(),
+        uptime = up_str,
+        disk = disk_cache,
+        procs = proc_cache.list,
+        bat_info = bat_info,
+    }
 end
 
 local function query_media()
@@ -95,35 +287,89 @@ local function query_media()
     }
 end
 
-if mode == "--print" then
+local function is_dnd_active()
+    local rt = fs.runtime_dir()
+    return rt ~= nil and fs.file_exists(rt .. "/dnd.state")
+end
+
+if is_print then
     local cal = popups.render_calendar()
     local m = query_media()
+    local pf = query_perf(true)
+    local notifs = notify.list()
+    local dnd_on = is_dnd_active()
     local media_line = m.active
         and string.format("%s  %s — %s [%s]", m.playing and "󰎈" or "󰏤", m.artist, m.title, m.time_str)
         or "󰎊  No active media"
-    io.stdout:write(cal .. "\n\n" .. media_line .. "\n")
+    local perf_line = string.format(
+        "󰻠 CPU %d%% (Load %s)  ·  󰍛 RAM %.1f/%.1f GiB (%d%%)  ·  󰋊 Disk %.1f/%.1f GiB (%d%%)  ·  󰅐 %s",
+        pf.cpu_pct,
+        pf.load1,
+        pf.mem_used_gb,
+        pf.mem_total_gb,
+        pf.mem_pct,
+        pf.disk.used_gb,
+        pf.disk.total_gb,
+        pf.disk.pct,
+        pf.uptime
+    )
+    local notif_lines = {
+        string.format(
+            "%s  Notifications: %d  (DND: %s)",
+            dnd_on and "󰂛" or "󰂚",
+            #notifs,
+            dnd_on and "on" or "off"
+        ),
+    }
+    for idx = 1, math.min(5, #notifs) do
+        local n = notifs[idx]
+        local detail = (n.body and n.body ~= "") and (" — " .. n.body) or ""
+        notif_lines[#notif_lines + 1] = string.format(
+            "  - [%s] %s: %s%s",
+            notify.rel_time(n.ts, n.time),
+            n.app,
+            n.summary,
+            detail
+        )
+    end
+    io.stdout:write(cal .. "\n\n" .. media_line .. "\n" .. perf_line .. "\n" .. table.concat(notif_lines, "\n") .. "\n")
     os.exit(0)
 end
 
-local COLS, ROWS = 38, 15
+local COLS, ROWS = 50, 21
 
-if mode ~= "--ui" then
+if not is_ui then
+    local title = "Kaze Dashboard"
+    local ui_args = nil
+    if start_tab == "perf" then
+        title = "Kaze Performance"
+        ui_args = { "--perf" }
+    elseif start_tab == "notifications" then
+        title = "Kaze Notifications"
+        ui_args = { "--notifications" }
+    end
     widget.toggle_or_open({
         app_id = "kaze-widget-dash",
-        title = "Kaze Calendar",
+        title = title,
         cols = COLS,
         rows = ROWS,
         theme = theme,
         foot_bin = sibling_or_path("kaze-footclient"),
         script_path = self_path,
+        ui_args = ui_args,
     })
     os.exit(0)
 end
 
+local TAB_ORDER = { "calendar", "notifications", "perf" }
+local active_tab = start_tab
 local today = os.date("*t")
 local view_year = today.year
 local view_month = today.month
-local notif_cleared = false
+local notif_scroll = 0
+
+-- Prime baseline CPU counter so the first tick delta is accurate
+sample_cpu_times()
 
 local function shift_month(delta)
     local d = os.date("*t", os.time({ year = view_year, month = view_month + delta, day = 1, hour = 12 }))
@@ -131,37 +377,116 @@ local function shift_month(delta)
     view_month = d.month
 end
 
-local function trunc(s, max_len)
-    local len = tonumber(utf8.len(s)) or #s
-    if len <= max_len then return s end
-    local out = {}
-    local n = 0
-    for _, code in utf8.codes(s) do
-        n = n + 1
-        if n > max_len - 1 then break end
-        out[#out + 1] = utf8.char(code)
+local function cycle_tab(step)
+    for idx, name in ipairs(TAB_ORDER) do
+        if name == active_tab then
+            local next_idx = ((idx - 1 + step) % #TAB_ORDER) + 1
+            active_tab = TAB_ORDER[next_idx]
+            if active_tab == "perf" then
+                tick_num = tick_num + 10
+            end
+            return
+        end
     end
-    return table.concat(out) .. "…"
+    active_tab = "calendar"
+end
+
+local function severity_color(pct)
+    if pct >= 88 then return theme.danger end
+    if pct >= 70 then return theme.warn end
+    return theme.accent
+end
+
+local function notif_style(item)
+    local app = (item.app or ""):lower()
+    local text = ((item.summary or "") .. " " .. (item.body or "")):lower()
+    local urg = (item.urgency or "normal"):lower()
+
+    if urg == "critical" then
+        return "󰀦", theme.danger
+    elseif app == "kaze-screenshot" then
+        return "󰄀", theme.ok
+    elseif app == "kaze-record" then
+        local bad = text:find("incomplete") or text:find("fail")
+        return "󰑋", bad and theme.danger or theme.ok
+    elseif app == "kaze-wifi" or app:find("network") or app:find("nm%-") then
+        local bad = text:find("fail") or text:find("disconnect") or text:find("error")
+        local good = text:find("connect") and not bad
+        return "󰤨", bad and theme.danger or (good and theme.ok or theme.accent)
+    elseif app == "kaze-bluetooth" or app:find("bluez") then
+        local bad = text:find("fail") or text:find("disconnect") or text:find("off")
+        local good = (text:find("connect") or text:find("powered on")) and not bad
+        return "󰂯", bad and theme.warn or (good and theme.ok or theme.accent)
+    elseif app == "kaze-theme" or app == "kaze-layout" or app == "kaze-wall" then
+        return "󰏘", theme.accent
+    elseif app == "kaze-audio-sink" or app:find("audio") or app:find("pulse") or app:find("pipewire") then
+        return "󰕾", theme.accent
+    elseif text:find("fail") or text:find("error") or text:find("critical") or text:find("low battery") then
+        return "󰀦", theme.danger
+    elseif text:find("warn") then
+        return "󰂚", theme.warn
+    elseif app == "kaze-dnd" or text:find("saved") or text:find("copied") or text:find("resumed") then
+        return "󰂚", theme.ok
+    end
+    return "󰂚", theme.accent
+end
+
+local function toggle_dnd()
+    os.execute(fs.shell_quote(sibling_or_path("kaze-dnd")) .. " --quiet toggle >/dev/null 2>&1 || true")
 end
 
 widget.run_loop({
     cols = COLS,
     rows = ROWS,
     theme = theme,
+    tick_ds = 15,
+    on_tick = function()
+        tick_num = tick_num + 1
+    end,
     on_scroll = function(dir)
-        shift_month(-dir)
+        if active_tab == "calendar" then
+            shift_month(-dir)
+        elseif active_tab == "notifications" then
+            local max_sc = math.max(0, #notify.list() - 3)
+            notif_scroll = math.max(0, math.min(max_sc, notif_scroll - dir))
+        end
     end,
     on_key = function(k)
-        if k == "h" or k == "CSI:D" or k == "," or k == "<" then
+        if k == "\t" then
+            cycle_tab(1)
+            return "redraw"
+        elseif k == "CSI:Z" then
+            cycle_tab(-1)
+            return "redraw"
+        elseif k == "1" then
+            active_tab = "calendar"
+            return "redraw"
+        elseif k == "2" then
+            active_tab = "notifications"
+            return "redraw"
+        elseif k == "3" then
+            tick_num = tick_num + 10
+            active_tab = "perf"
+            return "redraw"
+        elseif active_tab == "notifications" and (k == "j" or k == "CSI:B") then
+            local max_sc = math.max(0, #notify.list() - 3)
+            notif_scroll = math.min(max_sc, notif_scroll + 1)
+            return "redraw"
+        elseif active_tab == "notifications" and (k == "k" or k == "CSI:A") then
+            notif_scroll = math.max(0, notif_scroll - 1)
+            return "redraw"
+        elseif active_tab == "calendar" and (k == "h" or k == "CSI:D" or k == "," or k == "<") then
             shift_month(-1)
             return "redraw"
-        elseif k == "l" or k == "CSI:C" or k == "." or k == ">" then
+        elseif active_tab == "calendar" and (k == "l" or k == "CSI:C" or k == "." or k == ">") then
             shift_month(1)
             return "redraw"
-        elseif k == "t" or k == "T" then
+        elseif active_tab == "calendar" and (k == "t" or k == "T") then
             local now = os.date("*t")
             view_year, view_month = now.year, now.month
             return "redraw"
+        elseif k == "b" or k == "B" then
+            return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-tui")) .. " sysmon" }
         elseif k == " " and fs.command_exists("playerctl") then
             os.execute("playerctl play-pause >/dev/null 2>&1 || true")
             return "redraw"
@@ -175,122 +500,426 @@ widget.run_loop({
     end,
     render = function(ui)
         today = os.date("*t")
+        local dnd_on = is_dnd_active()
+        local notifs = notify.list()
         ui:begin_frame(theme.bg_alt, theme.fg)
 
-        -- Row 1: Live Date & Time + Close pill
-        local date_str = os.date("󰃭  %a, %d %b %Y")
-        local clock_str = os.date("%H:%M")
-        ui:put(1, 2, date_str, theme.fg, theme.bg_alt, true)
-        ui:put(1, COLS - 9, clock_str, theme.accent, theme.bg_alt, true)
-        ui:pill(1, COLS - 2, " ✕ ", theme.fg_muted, theme.surface, true, function()
+        -- Row 1: Segmented Tabs ([ Calendar ] [ Alerts (N) / DND ] [ Perf ]) + Clock + Close
+        local is_cal = (active_tab == "calendar")
+        local is_notif = (active_tab == "notifications")
+        local is_perf = (active_tab == "perf")
+
+        local w_cal = ui:pill(
+            1, 2, " 󰃭 Calendar ",
+            is_cal and theme.accent_fg or theme.fg_muted,
+            is_cal and theme.accent or theme.surface,
+            is_cal,
+            function() active_tab = "calendar" end
+        )
+
+        local notif_lbl
+        if dnd_on then
+            notif_lbl = (#notifs > 0) and string.format(" 󰂛 DND (%d) ", #notifs) or " 󰂛 DND "
+        else
+            notif_lbl = (#notifs > 0) and string.format(" 󰂚 Alerts (%d) ", #notifs) or " 󰂚 Alerts "
+        end
+        local notif_fg = is_notif and theme.accent_fg or (dnd_on and theme.warn or (#notifs > 0 and theme.accent or theme.fg_muted))
+        local notif_bg = is_notif and (dnd_on and theme.warn or theme.accent) or theme.surface
+        local c_notif = 2 + w_cal + 1
+        local w_notif = ui:pill(
+            1, c_notif, notif_lbl,
+            notif_fg,
+            notif_bg,
+            is_notif or dnd_on or #notifs > 0,
+            function() active_tab = "notifications" end
+        )
+
+        local c_perf = c_notif + w_notif + 1
+        ui:pill(
+            1, c_perf, " 󰓅 Perf ",
+            is_perf and theme.accent_fg or theme.fg_muted,
+            is_perf and theme.accent or theme.surface,
+            is_perf,
+            function()
+                tick_num = tick_num + 10
+                active_tab = "perf"
+            end
+        )
+
+        ui:put(1, COLS - 9, os.date("%H:%M"), theme.accent, theme.bg_alt, true)
+        ui:pill(1, COLS - 3, " ✕ ", theme.fg_muted, theme.surface, true, function()
             return "close"
         end)
 
         ui:rule(2, 2, COLS - 2, theme.border)
 
-        -- Row 3: Month switcher (<  Month YYYY  >)
-        local grid = popups.calendar_grid(view_year, view_month)
-        ui:pill(3, 3, " ◀ ", theme.fg, theme.surface, true, function()
-            shift_month(-1)
-        end)
-        local m_hdr = string.format("%s %d", grid.month_name, grid.year)
-        local m_col = math.max(8, math.floor((COLS - #m_hdr) / 2) + 1)
-        ui:put(3, m_col, m_hdr, theme.fg, theme.bg_alt, true)
-        ui:pill(3, COLS - 4, " ▶ ", theme.fg, theme.surface, true, function()
-            shift_month(1)
-        end)
+        if is_cal then
+            local pf = query_perf(false)
 
-        -- Row 4: Weekday headers (5-col cells across cols 3..37 = 35 cols)
-        local wdays = { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" }
-        for i, wd in ipairs(wdays) do
-            local col = 3 + (i - 1) * 5
-            local c_hex = (i >= 6) and theme.accent or theme.fg_muted
-            ui:put(4, col + 1, wd, c_hex, theme.bg_alt, true)
-        end
+            -- Row 3: Month switcher (<  Month YYYY  >)
+            local grid = popups.calendar_grid(view_year, view_month)
+            ui:pill(3, 5, " ◀ ", theme.fg, theme.surface, true, function()
+                shift_month(-1)
+            end)
+            local m_hdr = string.format("%s %d", grid.month_name, grid.year)
+            local m_col = math.max(10, math.floor((COLS - #m_hdr) / 2) + 1)
+            ui:put(3, m_col, m_hdr, theme.fg, theme.bg_alt, true)
+            ui:pill(3, COLS - 6, " ▶ ", theme.fg, theme.surface, true, function()
+                shift_month(1)
+            end)
 
-        -- Rows 5..10: Calendar grid
-        local r = 5
-        local c_idx = grid.offset
-        for day = 1, grid.days do
-            local cell_col = 3 + c_idx * 5
-            local is_today = (day == today.day and grid.month == today.month and grid.year == today.year)
-            local is_wknd = (c_idx >= 5)
-            local label = string.format(" %2d ", day)
-            if is_today then
-                ui:put(r, cell_col, label, theme.accent_fg, theme.accent, true)
-            else
-                ui:put(r, cell_col, label, is_wknd and theme.fg_muted or theme.fg, theme.bg_alt, false)
+            -- Row 4: Weekday headers (7 x 5-col cells centered at col 8..42)
+            local cal_left = 8
+            local wdays = { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" }
+            for i, wd in ipairs(wdays) do
+                local col = cal_left + (i - 1) * 5
+                local c_hex = (i >= 6) and theme.accent or theme.fg_muted
+                ui:put(4, col + 1, wd, c_hex, theme.bg_alt, true)
             end
-            c_idx = c_idx + 1
-            if c_idx >= 7 then
-                c_idx = 0
-                r = r + 1
-            end
-        end
 
-        ui:rule(11, 2, COLS - 2, theme.border)
-
-        -- Rows 12..14: Media card
-        local media = query_media()
-        if media.active then
-            local icon = media.playing and "󰎈 " or "󰏤 "
-            local full_track = (media.artist ~= "") and (media.title .. " · " .. media.artist) or media.title
-            local max_t = COLS - 4 - #media.time_str - 3
-            ui:put(12, 2, icon .. trunc(full_track, math.max(12, max_t)), theme.fg, theme.bg_alt, true)
-            if media.time_str ~= "" then
-                ui:put(12, COLS - #media.time_str, media.time_str, theme.fg_muted, theme.bg_alt, false)
-            end
-            ui:slider(13, 3, COLS - 4, media.pct, not media.playing, theme, nil)
-        else
-            ui:put(12, 2, "󰎊  No active media playback", theme.fg_muted, theme.bg_alt, false)
-            ui:slider(13, 3, COLS - 4, 0, true, theme, nil)
-        end
-
-        -- Row 15: Transport + Today + Clear Notifications pills
-        ui:pill(15, 2, " 󰒮 ", media.active and theme.fg or theme.fg_muted, theme.surface, true, function()
-            if fs.command_exists("playerctl") then
-                os.execute("playerctl previous >/dev/null 2>&1 || true")
-            end
-        end)
-        ui:pill(
-            15,
-            7,
-            media.playing and " 󰏤 " or " 󰐎 ",
-            media.playing and theme.accent_fg or theme.fg,
-            media.playing and theme.accent or theme.surface,
-            true,
-            function()
-                if fs.command_exists("playerctl") then
-                    os.execute("playerctl play-pause >/dev/null 2>&1 || true")
+            -- Rows 5..10: Calendar grid
+            local r = 5
+            local c_idx = grid.offset
+            for day = 1, grid.days do
+                local cell_col = cal_left + c_idx * 5
+                local is_today = (day == today.day and grid.month == today.month and grid.year == today.year)
+                local is_wknd = (c_idx >= 5)
+                local label = string.format(" %2d ", day)
+                if is_today then
+                    ui:pill(r, cell_col, label, theme.accent_fg, theme.accent, true)
+                else
+                    ui:put(r, cell_col, label, is_wknd and theme.fg_muted or theme.fg, theme.bg_alt, false)
+                end
+                c_idx = c_idx + 1
+                if c_idx >= 7 then
+                    c_idx = 0
+                    r = r + 1
                 end
             end
-        )
-        ui:pill(15, 12, " 󰒭 ", media.active and theme.fg or theme.fg_muted, theme.surface, true, function()
-            if fs.command_exists("playerctl") then
-                os.execute("playerctl next >/dev/null 2>&1 || true")
-            end
-        end)
 
-        local is_cur_month = (view_year == today.year and view_month == today.month)
-        ui:pill(
-            15,
-            18,
-            " Today ",
-            is_cur_month and theme.fg_muted or theme.accent_fg,
-            is_cur_month and theme.surface or theme.accent,
-            true,
-            function()
-                view_year, view_month = today.year, today.month
-            end
-        )
+            -- Rows 12..13: Clickable Live Performance Summary Card
+            ui:card(12, 2, COLS - 2, 2, theme.surface)
+            local temp_part = pf.temp_c and string.format("  ·  󰔏 %d°C", pf.temp_c) or ("  ·  󰅐 " .. pf.uptime)
+            local vitals1 = string.format(
+                " 󰻠 CPU %2d%%  ·  󰍛 RAM %.1f/%.0fG%s",
+                pf.cpu_pct,
+                pf.mem_used_gb,
+                pf.mem_total_gb,
+                temp_part
+            )
+            local vitals2 = string.format(" Load %s %s  ·  󰅐 Uptime %s", pf.load1, pf.load5, pf.uptime)
+            ui:put(12, 2, widget.trunc(vitals1, COLS - 6), theme.fg, theme.surface, true)
+            ui:put(12, COLS - 2, "▸ ", theme.accent, theme.surface, true)
+            ui:put(13, 2, widget.trunc(vitals2, COLS - 4), theme.fg_muted, theme.surface, false)
+            ui:hitbox(12, 2, 13, COLS - 1, {
+                click = function()
+                    tick_num = tick_num + 10
+                    active_tab = "perf"
+                end,
+            })
 
-        local clr_lbl = notif_cleared and " ✓ Cleared " or " 󰂚 Clear "
-        local clr_w = tonumber(utf8.len(clr_lbl)) or #clr_lbl
-        ui:pill(15, COLS - clr_w, clr_lbl, notif_cleared and theme.ok or theme.fg, theme.surface, true, function()
-            if fs.command_exists("fnottctl") then
-                os.execute("fnottctl dismiss all >/dev/null 2>&1 || true")
-                notif_cleared = true
+            -- Rows 15..18: MPRIS Media Card
+            ui:card(15, 2, COLS - 2, 4, theme.surface)
+            local media = query_media()
+            if media.active then
+                local icon = media.playing and " 󰎈 " or " 󰏤 "
+                local max_t = COLS - 6 - #media.time_str - 3
+                ui:put(15, 2, icon .. widget.trunc(media.title, math.max(12, max_t)), theme.fg, theme.surface, true)
+                if media.time_str ~= "" then
+                    ui:put(15, COLS - #media.time_str - 1, media.time_str, theme.fg_muted, theme.surface, false)
+                end
+                local artist_txt = (media.artist ~= "") and ("   " .. media.artist) or (media.playing and "   Playing" or "   Paused")
+                ui:put(16, 2, widget.trunc(artist_txt, COLS - 4), theme.fg_muted, theme.surface, false)
+                ui:slider(17, 4, COLS - 6, media.pct, not media.playing, theme, nil, theme.surface)
+            else
+                ui:put(15, 2, " 󰎊  No active media playback", theme.fg_muted, theme.surface, true)
+                ui:put(16, 2, "    Start a player to control playback", theme.fg_muted, theme.surface, false)
+                ui:slider(17, 4, COLS - 6, 0, true, theme, nil, theme.surface)
             end
-        end)
+
+            -- Row 18 inside Media Card: Transport controls + Quick Tray link
+            ui:pill(18, 4, " 󰒮 ", media.active and theme.fg or theme.fg_muted, theme.bg_alt, true, function()
+                if fs.command_exists("playerctl") then
+                    os.execute("playerctl previous >/dev/null 2>&1 || true")
+                end
+            end)
+            ui:pill(
+                18, 9,
+                media.playing and " 󰏤 " or " 󰐎 ",
+                media.playing and theme.accent_fg or theme.fg,
+                media.playing and theme.accent or theme.bg_alt,
+                true,
+                function()
+                    if fs.command_exists("playerctl") then
+                        os.execute("playerctl play-pause >/dev/null 2>&1 || true")
+                    end
+                end
+            )
+            ui:pill(18, 14, " 󰒭 ", media.active and theme.fg or theme.fg_muted, theme.bg_alt, true, function()
+                if fs.command_exists("playerctl") then
+                    os.execute("playerctl next >/dev/null 2>&1 || true")
+                end
+            end)
+            ui:pill(18, COLS - 17, " 󰒓 Quick Tray ▸ ", theme.fg_muted, theme.bg_alt, false, function()
+                return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-panel")) }
+            end)
+
+            -- Row 20..21: Rule + Footer with Notification Center pill
+            ui:rule(20, 2, COLS - 2, theme.border)
+            local is_cur_month = (view_year == today.year and view_month == today.month)
+            ui:pill(
+                21, 2, " Today ",
+                is_cur_month and theme.fg_muted or theme.accent_fg,
+                is_cur_month and theme.surface or theme.accent,
+                true,
+                function() view_year, view_month = today.year, today.month end
+            )
+            ui:pill(21, 11, " 󰃭 " .. os.date("%a %d %b") .. " ", theme.fg_muted, theme.surface, false, nil)
+
+            local alert_lbl, alert_fg, alert_bg, alert_bold
+            if #notifs > 0 then
+                alert_lbl = string.format(" %s %d %s ▸ ", dnd_on and "󰂛" or "󰂚", #notifs, #notifs == 1 and "Alert" or "Alerts")
+                alert_fg = dnd_on and theme.warn or theme.accent
+                alert_bg = theme.surface
+                alert_bold = true
+            elseif dnd_on then
+                alert_lbl = " 󰂛 DND On ▸ "
+                alert_fg = theme.warn
+                alert_bg = theme.surface
+                alert_bold = true
+            else
+                alert_lbl = " 󰂚 Inbox ▸ "
+                alert_fg = theme.fg
+                alert_bg = theme.surface
+                alert_bold = false
+            end
+            local alert_w = widget.vis_len(alert_lbl)
+            ui:pill(21, COLS - alert_w, alert_lbl, alert_fg, alert_bg, alert_bold, function()
+                active_tab = "notifications"
+            end)
+        elseif is_notif then
+            -- NOTIFICATIONS TAB (Caelestia-style Notification Center)
+            -- Rows 3..5: Header Card
+            ui:card(3, 2, COLS - 2, 3, theme.surface)
+            local hdr_icon = dnd_on and "󰂛" or "󰂚"
+            local hdr_col = dnd_on and theme.warn or theme.accent
+            ui:put(3, 3, hdr_icon, hdr_col, theme.surface, true)
+            ui:put(3, 6, "Notifications", theme.fg, theme.surface, true)
+            ui:put(3, COLS - 10, "DND", dnd_on and theme.warn or theme.fg_muted, theme.surface, dnd_on)
+            ui:switch(3, COLS - 6, dnd_on, theme, toggle_dnd)
+
+            local sub_txt, sub_col
+            if dnd_on then
+                sub_txt = "Do Not Disturb active — popups paused"
+                sub_col = theme.warn
+            elseif #notifs == 0 then
+                sub_txt = "No unread or recent notifications"
+                sub_col = theme.fg_muted
+            else
+                sub_txt = string.format("%d recent %s in this session", #notifs, #notifs == 1 and "alert" or "alerts")
+                sub_col = theme.fg_muted
+            end
+            ui:put(4, 3, widget.trunc(sub_txt, COLS - 5), sub_col, theme.surface, false)
+
+            local live_n = 0
+            for _, item in ipairs(notifs) do
+                if item.fnott_id then live_n = live_n + 1 end
+            end
+            local hint_txt = (#notifs == 0)
+                and "Cleared automatically on logout"
+                or (live_n > 0
+                    and string.format("■ %d active popup%s · Scroll or j/k", live_n, live_n == 1 and "" or "s")
+                    or "Scroll or j/k to browse · Click ✕ to dismiss")
+            ui:put(5, 3, widget.trunc(hint_txt, COLS - 18), live_n > 0 and theme.accent or theme.fg_muted, theme.surface, false)
+            if #notifs > 0 then
+                ui:pill(5, COLS - 14, " 󰎟 Clear all ", theme.fg, theme.bg_alt, true, function()
+                    notify.clear_all()
+                    notif_scroll = 0
+                end)
+            end
+
+            -- Rows 7..17: Stacked Cards or Empty State
+            if #notifs == 0 then
+                ui:card(8, 2, COLS - 2, 9, theme.surface)
+                local empty_icon = dnd_on and "󰂛" or "󰂚"
+                local empty_title = "No notifications"
+                local empty_sub = dnd_on and "Do Not Disturb is silencing popups" or "You're all caught up"
+                local empty_hint = "System & app alerts will appear here"
+                ui:put(10, math.floor(COLS / 2), empty_icon, dnd_on and theme.warn or theme.accent, theme.surface, true)
+                ui:put(12, math.max(3, math.floor((COLS - #empty_title) / 2) + 1), empty_title, theme.fg, theme.surface, true)
+                ui:put(13, math.max(3, math.floor((COLS - #empty_sub) / 2) + 1), empty_sub, theme.fg_muted, theme.surface, false)
+                ui:put(15, math.max(3, math.floor((COLS - #empty_hint) / 2) + 1), empty_hint, theme.fg_muted, theme.surface, false)
+            else
+                local max_sc = math.max(0, #notifs - 3)
+                if notif_scroll > max_sc then notif_scroll = max_sc end
+                local has_scroll = (#notifs > 3)
+                local card_w = has_scroll and (COLS - 4) or (COLS - 2)
+                local inner_w = card_w - 3
+
+                for slot = 0, 2 do
+                    local item = notifs[notif_scroll + slot + 1]
+                    if not item then break end
+                    local r = 7 + slot * 4
+                    local icon, stripe_col = notif_style(item)
+
+                    ui:accent_card(r, 2, card_w, 3, theme.surface, stripe_col)
+
+                    -- Line 1: Context icon + Summary + Relative time + Dismiss [ ✕ ]
+                    local rel = notify.rel_time(item.ts, item.time)
+                    local close_col = 2 + card_w - 4
+                    local rel_col = close_col - #rel - 1
+                    local sum_max = math.max(8, rel_col - 8)
+                    local sum_txt = widget.trunc((item.summary ~= "" and item.summary) or "Notification", sum_max)
+
+                    ui:put(r, 4, icon, stripe_col, theme.surface, true)
+                    ui:put(r, 7, sum_txt, theme.fg, theme.surface, true)
+                    if rel ~= "" then
+                        ui:put(r, rel_col, rel, theme.fg_muted, theme.surface, false)
+                    end
+                    local item_id = item.id
+                    local item_fid = item.fnott_id
+                    ui:pill(r, close_col, " ✕ ", theme.fg_muted, theme.bg_alt, true, function()
+                        notify.dismiss(item_id, item_fid)
+                        local next_max = math.max(0, #notify.list() - 3)
+                        if notif_scroll > next_max then
+                            notif_scroll = next_max
+                        end
+                    end)
+
+                    -- Line 2 & Line 3: App tag + wrapped body or subtle metadata
+                    local app_lbl = widget.trunc((item.app ~= "" and item.app) or "Desktop", 16)
+                    local app_len = widget.vis_len(app_lbl)
+                    ui:put(r + 1, 4, app_lbl, theme.accent, theme.surface, false)
+
+                    local body = widget.clean_text(item.body or "")
+                    if body ~= "" then
+                        local b1, b2 = widget.wrap_lines(body, math.max(0, inner_w - app_len - 3), inner_w)
+                        if b1 ~= "" then
+                            ui:put(r + 1, 4 + app_len, " · " .. b1, theme.fg_muted, theme.surface, false)
+                        end
+                        if b2 ~= "" then
+                            ui:put(r + 2, 4, b2, theme.fg_muted, theme.surface, false)
+                        else
+                            local meta_line = item.fnott_id and "■ Active popup on screen"
+                                or ((item.urgency == "critical") and "Urgent notification"
+                                or ("Received at " .. ((item.time and item.time ~= "") and item.time or rel)))
+                            local meta_col = item.fnott_id and theme.accent or ((item.urgency == "critical") and theme.danger or theme.fg_muted)
+                            ui:put(r + 2, 4, widget.trunc(meta_line, inner_w), meta_col, theme.surface, false)
+                        end
+                    else
+                        local meta_line = item.fnott_id and "■ Active popup on screen"
+                            or ("Session alert · " .. ((item.time and item.time ~= "") and item.time or rel))
+                        ui:put(r + 2, 4, widget.trunc(meta_line, inner_w), item.fnott_id and theme.accent or theme.fg_muted, theme.surface, false)
+                    end
+                end
+
+                if has_scroll then
+                    ui:scrollbar(7, 11, COLS - 1, #notifs, 3, notif_scroll, theme.accent, theme.border, theme.bg_alt)
+                    local range_lbl = string.format("Showing %d–%d of %d", notif_scroll + 1, math.min(#notifs, notif_scroll + 3), #notifs)
+                    ui:put(18, 2, range_lbl, theme.fg_muted, theme.bg_alt, false)
+                end
+            end
+
+            -- Row 20..21: Notification Center Footer
+            ui:rule(20, 2, COLS - 2, theme.border)
+            ui:pill(
+                21, 2,
+                dnd_on and " 󰂛 DND: On  " or " 󰂚 DND: Off ",
+                dnd_on and theme.accent_fg or theme.fg,
+                dnd_on and theme.warn or theme.surface,
+                true,
+                toggle_dnd
+            )
+            ui:pill(
+                21, 16,
+                " 󰎟 Clear All ",
+                (#notifs > 0) and theme.fg or theme.fg_muted,
+                theme.surface,
+                (#notifs > 0),
+                function()
+                    if #notifs > 0 then
+                        notify.clear_all()
+                        notif_scroll = 0
+                    end
+                end
+            )
+            ui:pill(21, COLS - 16, " 󰒓 Quick Tray ▸ ", theme.accent_fg, theme.accent, true, function()
+                return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-panel")) }
+            end)
+        else
+            -- PERFORMANCE TAB
+            local pf = query_perf(true)
+            local rt = fs.runtime_dir()
+            local zen_on = rt ~= nil and fs.file_exists(rt .. "/perf.state")
+
+            -- Card 1 (Rows 3..7): CPU & Memory
+            ui:card(3, 2, COLS - 2, 5, theme.surface)
+            local cpu_right = string.format("%3d%% · %s", pf.cpu_pct, pf.ghz or ("Load " .. pf.load1))
+            ui:put(3, 3, "󰻠  CPU", theme.fg, theme.surface, true)
+            ui:put(3, COLS - #cpu_right - 1, cpu_right, severity_color(pf.cpu_pct), theme.surface, true)
+            ui:meter(4, 3, COLS - 4, pf.cpu_pct, severity_color(pf.cpu_pct), theme.bg_alt, theme.surface)
+
+            local mem_right = string.format("%.1f / %.1f GiB (%d%%)", pf.mem_used_gb, pf.mem_total_gb, pf.mem_pct)
+            ui:put(5, 3, "󰍛  Memory", theme.fg, theme.surface, true)
+            ui:put(5, COLS - #mem_right - 1, mem_right, severity_color(pf.mem_pct), theme.surface, true)
+            ui:meter(6, 3, COLS - 4, pf.mem_pct, severity_color(pf.mem_pct), theme.bg_alt, theme.surface)
+
+            local swap_txt = (pf.swap_total_gb > 0.05)
+                and string.format("Swap %.1f/%.1fG", pf.swap_used_gb, pf.swap_total_gb)
+                or "Swap off"
+            local sub1 = string.format("%d cores · Load %s %s · %s", pf.cores, pf.load1, pf.load5, swap_txt)
+            ui:put(7, 3, widget.trunc(sub1, COLS - 4), theme.fg_muted, theme.surface, false)
+
+            -- Card 2 (Rows 9..12): Storage & Thermals / Power
+            ui:card(9, 2, COLS - 2, 4, theme.surface)
+            local d_fmt = (pf.disk.total_gb < 10) and "%.1f / %.1f GiB (%d%%)" or "%.1f / %.0f GiB (%d%%)"
+            local d_right = string.format(d_fmt, pf.disk.used_gb, pf.disk.total_gb, pf.disk.pct)
+            ui:put(9, 3, "󰋊  Storage (/)", theme.fg, theme.surface, true)
+            ui:put(9, COLS - #d_right - 1, d_right, severity_color(pf.disk.pct), theme.surface, true)
+            ui:meter(10, 3, COLS - 4, pf.disk.pct, severity_color(pf.disk.pct), theme.bg_alt, theme.surface)
+
+            local t_str = pf.temp_c and string.format("󰔏 %d°C", pf.temp_c) or "󰔏 --°C"
+            local t_col = (pf.temp_c and pf.temp_c >= 80) and theme.danger or theme.ok
+            ui:put(11, 3, t_str, t_col, theme.surface, true)
+            local up_lbl = "󰅐 Uptime " .. pf.uptime
+            ui:put(11, COLS - widget.vis_len(up_lbl) - 1, up_lbl, theme.fg, theme.surface, false)
+            ui:put(12, 3, widget.trunc(pf.bat_info or "󰚥 AC Power  ·  0 MiB background daemons", COLS - 4), theme.fg_muted, theme.surface, false)
+
+            -- Card 3 (Rows 14..18): Top Processes (Top 3)
+            ui:card(14, 2, COLS - 2, 5, theme.surface)
+            ui:put(14, 3, "󰓅  Top Processes", theme.fg, theme.surface, true)
+            ui:put(14, COLS - 12, "CPU%    MEM", theme.fg_muted, theme.surface, false)
+            ui:rule(15, 3, COLS - 4, theme.border, theme.surface)
+            for idx = 1, 3 do
+                local p = pf.procs[idx]
+                if p then
+                    local pname = widget.pad_right(p.name, COLS - 18)
+                    local pstat = string.format("%5.1f%% %4dM", p.cpu, p.mem_mb)
+                    ui:put(15 + idx, 3, pname, theme.fg, theme.surface, false)
+                    ui:put(15 + idx, COLS - #pstat - 1, pstat, p.cpu >= 50 and theme.warn or theme.fg_muted, theme.surface, false)
+                elseif idx == 1 then
+                    ui:put(16, 3, "Idle", theme.fg_muted, theme.surface, false)
+                end
+            end
+
+            -- Row 20..21: Action Footer
+            ui:rule(20, 2, COLS - 2, theme.border)
+            ui:pill(21, 2, " 󰍛 Open btop ▸ ", theme.accent_fg, theme.accent, true, function()
+                return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-tui")) .. " sysmon" }
+            end)
+            ui:pill(
+                21, 19,
+                zen_on and " 󱐋 Zen: ON " or " 󱐋 Zen Mode ",
+                zen_on and theme.accent_fg or theme.fg,
+                zen_on and theme.ok or theme.surface,
+                true,
+                function()
+                    return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-perf")) }
+                end
+            )
+            ui:pill(21, COLS - 12, " ◀ Calendar ", theme.fg, theme.surface, false, function()
+                active_tab = "calendar"
+            end)
+        end
     end,
 })

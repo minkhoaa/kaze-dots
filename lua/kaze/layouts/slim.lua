@@ -5,12 +5,12 @@ local M = {
     hypr = {
         gaps_in = 4,
         gaps_out = 6,
-        rounding = 6,
-        border_size = 1,
+        rounding = 0,
+        border_size = 2,
     },
     ui = {
-        fuzzel_radius = 8,
-        fnott_radius = 6,
+        fuzzel_radius = 0,
+        fnott_radius = 0,
         fnott_anchor = "top-right",
         fnott_edge_margin_vertical = 36,
         fnott_edge_margin_horizontal = 10,
@@ -81,8 +81,9 @@ function M.build_waybar_config(_cfg, _theme)
   "clock": {
     "interval": 60,
     "format": "{:%a %d %b · %H:%M}",
-    "tooltip-format": "<tt>{calendar}</tt>",
-    "on-click": "kaze-dashboard"
+    "tooltip-format": "Right-click: Performance\n\n<tt>{calendar}</tt>",
+    "on-click": "kaze-dashboard",
+    "on-click-right": "kaze-dashboard --perf"
   },
 
   "tray": {
@@ -95,10 +96,10 @@ function M.build_waybar_config(_cfg, _theme)
     "format-wifi": "󰤨",
     "format-ethernet": "󰈀",
     "format-disconnected": "󰤭",
-    "tooltip-format-wifi": "{essid} ({signalStrength}%) · {ipaddr}",
-    "tooltip-format-ethernet": "{ifname} · {ipaddr}",
-    "tooltip-format-disconnected": "Disconnected",
-    "on-click": "kaze-wifi",
+    "tooltip-format-wifi": "{essid} ({signalStrength}%) · {ipaddr}\nRight-click: nmtui",
+    "tooltip-format-ethernet": "{ifname} · {ipaddr}\nRight-click: nmtui",
+    "tooltip-format-disconnected": "Disconnected (Right-click: nmtui)",
+    "on-click": "kaze-panel --wifi",
     "on-click-right": "kaze-tui wifi"
   },
 
@@ -155,8 +156,8 @@ function M.build_waybar_css(cfg, _theme)
 }
 
 window#waybar {
-    background: alpha(@bg_alt, 0.94);
-    border-bottom: 1px solid alpha(@border, 0.95);
+    background: alpha(@bg_alt, 0.95);
+    border-bottom: 2px solid @border;
     border-radius: 0;
     color: @fg;
 }
@@ -312,9 +313,9 @@ window#waybar.empty #window {
 }
 
 tooltip {
-    background: alpha(@bg_alt, 0.95);
-    border: 1px solid @border;
-    border-radius: 6px;
+    background: alpha(@bg_alt, 0.96);
+    border: 2px solid @border;
+    border-radius: 0;
 }
 
 tooltip label {

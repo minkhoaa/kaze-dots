@@ -1,0 +1,124 @@
+#!/usr/bin/env lua
+
+local function setup_path()
+    local home = os.getenv("HOME") or ""
+    local xdg_data = os.getenv("XDG_DATA_HOME")
+    if not xdg_data or xdg_data == "" then
+        xdg_data = home .. "/.local/share"
+    end
+    local paths = {}
+    local script = arg and arg[0] or ""
+    local direct_base = script:match("^(.*)/[^/]+$")
+    local direct_lua = direct_base and (direct_base .. "/../lua") or nil
+    local f_direct = direct_lua and io.open(direct_lua .. "/kaze/defaults.lua", "r") or nil
+    if f_direct then
+        f_direct:close()
+        paths[#paths + 1] = direct_lua .. "/?.lua"
+        paths[#paths + 1] = direct_lua .. "/?/init.lua"
+    else
+        local q = "'" .. script:gsub("'", "'\\''") .. "'"
+        local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+        local resolved = p and p:read("*l") or nil
+        if p then p:close() end
+        local base = (resolved or script):match("^(.*)/[^/]+$")
+        if base then
+            local repo_lua = base .. "/../lua"
+            local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+            if f then
+                f:close()
+                paths[#paths + 1] = repo_lua .. "/?.lua"
+                paths[#paths + 1] = repo_lua .. "/?/init.lua"
+            end
+        end
+    end
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
+    paths[#paths + 1] = package.path
+    package.path = table.concat(paths, ";")
+end
+
+setup_path()
+
+local fs = require("kaze.fs")
+local notify = require("kaze.notify")
+
+local quiet = false
+local action = nil
+for i = 1, #arg do
+    local a = arg[i]
+    if a == "-h" or a == "--help" then
+        io.stdout:write("Usage: kaze-dnd [--quiet] [on|off|toggle|status]\n")
+        os.exit(0)
+    elseif a == "--quiet" or a == "-q" then
+        quiet = true
+    elseif not action and (a == "on" or a == "off" or a == "toggle" or a == "status") then
+        action = a
+    else
+        io.stderr:write("Usage: kaze-dnd [--quiet] [on|off|toggle|status]\n")
+        os.exit(2)
+    end
+end
+action = action or "toggle"
+
+local rt_ro = fs.runtime_dir()
+if action == "status" then
+    local active = rt_ro ~= nil and fs.file_exists(rt_ro .. "/dnd.state")
+    io.stdout:write(active and "on\n" or "off\n")
+    os.exit(0)
+end
+
+local rt = fs.private_runtime_dir()
+if not rt then
+    io.stderr:write("kaze-dnd: XDG_RUNTIME_DIR is not available\n")
+    os.exit(1)
+end
+
+local state_file = rt .. "/dnd.state"
+local is_on = fs.file_exists(state_file)
+local target = action
+if target == "toggle" then
+    target = is_on and "off" or "on"
+end
+
+local function fnott_running()
+    if not fs.command_exists("systemctl") or not fs.command_exists("fnottctl") then
+        return false
+    end
+    local ok = os.execute("systemctl --user is-active --quiet fnott.service >/dev/null 2>&1")
+    return ok == true or ok == 0
+end
+
+local function signal_waybar()
+    os.execute("pkill -RTMIN+10 -x --require-handler waybar >/dev/null 2>&1 || true")
+end
+
+if target == "on" then
+    fs.write_atomic(state_file, "1\n")
+    if fnott_running() then
+        os.execute("fnottctl dismiss all >/dev/null 2>&1 || true")
+        os.execute("fnottctl pause >/dev/null 2>&1 || true")
+    end
+    signal_waybar()
+else
+    os.remove(state_file)
+    if fnott_running() then
+        os.execute("fnottctl unpause >/dev/null 2>&1 || true")
+    end
+    signal_waybar()
+    if not quiet and fs.command_exists("notify-send") then
+        local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
+        if hypr_sig and hypr_sig ~= "" then
+            notify.record({
+                app = "kaze-dnd",
+                icon = "󰂚",
+                urgency = "low",
+                summary = "Do Not Disturb",
+                body = "Notifications resumed",
+            })
+            os.execute(
+                "notify-send -a kaze-dnd -t 1600 -u low -h string:x-canonical-private-synchronous:kaze-switch "
+                    .. "'󰂚  Do Not Disturb' 'Notifications resumed' >/dev/null 2>&1 || true"
+            )
+        end
+    end
+end

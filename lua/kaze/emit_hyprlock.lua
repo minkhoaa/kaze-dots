@@ -45,8 +45,8 @@ label {
 
 input-field {
     monitor =
-    size = 280, 44
-    outline_thickness = 1
+    size = 300, 46
+    outline_thickness = 2
     dots_size = 0.24
     dots_spacing = 0.25
     outer_color = %s
@@ -62,6 +62,17 @@ input-field {
     halign = center
     valign = center
 }
+
+label {
+    monitor =
+    text = cmd[update:15000] sh -c 'out=""; for b in /sys/class/power_supply/BAT*/capacity; do if [ -r "$b" ]; then c=$(cat "$b"); d=$(dirname "$b"); s=$(cat "$d/status" 2>/dev/null); p=""; [ "$s" = Charging ] && p="+"; out="󰁹 $c%%$p"; break; fi; done; if command -v playerctl >/dev/null 2>&1 && [ "$(playerctl status 2>/dev/null)" = Playing ]; then t=$(playerctl metadata xesam:title 2>/dev/null | tr -d "\r\n\\<>&" | cut -c1-40); a=$(playerctl metadata xesam:artist 2>/dev/null | tr -d "\r\n\\<>&" | cut -c1-24); if [ -n "$t" ]; then m="󰎈 $t"; [ -n "$a" ] && m="󰎈 $a — $t"; if [ -n "$out" ]; then out="$out  ·  $m"; else out="$m"; fi; fi; fi; echo "$out"'
+    color = %s
+    font_size = 12
+    font_family = %s
+    position = 0, 36
+    halign = center
+    valign = bottom
+}
 ]],
         wallpaper,
         themes.hypr_rgb(theme.bg),
@@ -75,7 +86,9 @@ input-field {
         rounding,
         themes.hypr_rgb(theme.ok),
         themes.hypr_rgb(theme.danger),
-        themes.hypr_rgb(theme.warn)
+        themes.hypr_rgb(theme.warn),
+        themes.hypr_rgb(theme.fg_muted),
+        cfg.font
     )
 end
 

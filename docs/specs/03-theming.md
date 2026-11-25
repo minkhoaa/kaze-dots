@@ -71,7 +71,7 @@ Produces 3 files under `~/.config/waybar/`:
 ### 3.3 `emit_fuzzel.lua` → `~/.config/fuzzel/fuzzel.ini`
 - `[main]`: `font=<cfg.font> Propo:size=11,<cfg.font>:size=11`, `dpi-aware=no`, `use-bold=yes`, `terminal=kaze-footclient -N` (or custom `cfg.terminal`), `icon-theme=<cfg.icon_theme>` (`hicolor` default), `width=40`, `lines=8`, `horizontal-pad=20`, `vertical-pad=16`, `inner-pad=12`, `line-height=26`, `image-size-ratio=0.45`, `layer=overlay`, `exit-on-keyboard-focus-loss=yes`.
 - `[dmenu]`: `exit-immediately-if-empty=yes`.
-- `[border]`: `width=1`, `radius=<layout.ui.fuzzel_radius>`.
+- `[border]`: `width=2`, `radius=<layout.ui.fuzzel_radius>`, `selection-radius=0`.
 - `[colors]` (`RRGGBBAA` format):
   - `background=<bg_alt>e8`
   - `text=<fg>ff`
@@ -83,33 +83,33 @@ Produces 3 files under `~/.config/waybar/`:
   - `selection-text=<fg>ff`
   - `selection-match=<accent>ff`
   - `counter=<fg_muted>ff`
-  - `border=<border>ff`
+  - `border=<accent>cc`
 
 ### 3.4 `emit_fnott.lua` → `~/.config/fnott/fnott.ini`
 - `[main]`:
   - `layer=overlay`
-  - `anchor=<layout.ui.fnott_anchor>`
+  - `anchor=<layout.ui.fnott_anchor>`, `stacking-order=top-down`
   - `edge-margin-vertical=<layout.ui.fnott_edge_margin_vertical>`
   - `edge-margin-horizontal=<layout.ui.fnott_edge_margin_horizontal>`
-  - `notification-margin=8`
-  - `max-width=320`, `min-width=240`, `padding-vertical=12`, `padding-horizontal=16`
-  - `border-size=1`, `border-radius=<layout.ui.fnott_radius>`
-  - `background=<bg_alt>f0`, `border-color=<border>ff`
-  - `title-font=<cfg.font> Propo:size=8.5:weight=bold,<cfg.font>:size=8.5:weight=bold`, `title-color=<fg_muted>cc`, `title-format=%a`
+  - `notification-margin=10`, `max-icon-size=40`
+  - `min-width=280`, `max-width=360`, `padding-vertical=14`, `padding-horizontal=18`
+  - `border-size=2`, `border-radius=<layout.ui.fnott_radius>`
+  - `background=<bg_alt>f2`, `border-color=<border>ff`
+  - `title-font=<cfg.font> Propo:size=8.5:weight=bold,<cfg.font>:size=8.5:weight=bold`, `title-color=<accent>dd`, `title-format=%a`
   - `summary-font=<cfg.font> Propo:size=10.5:weight=bold,<cfg.font>:size=10.5:weight=bold`, `summary-color=<fg>ff`, `summary-format=%s`
   - `body-font=<cfg.font> Propo:size=9.5,<cfg.font>:size=9.5`, `body-color=<fg_muted>ff`, `body-format=%b`
-  - `progress-bar-height=5`, `progress-color=<accent>ff`, `progress-style=bar`
-- `[low]`, `[normal]`, `[critical]` urgency overrides (`low` clears `title-format=` for clean OSD/switch toasts; `critical` border uses `<danger>ff`, timeout `0`).
+  - `progress-bar-height=6`, `progress-color=<accent>ff`, `progress-style=bar`
+- `[low]`, `[normal]`, `[critical]` urgency overrides (`low` clears `title-format=`, uses `12×16` padding, `<border>dd` border, `2s` timeout for clean OSD/switch toasts; `normal` uses `<accent>aa` border and `4s` timeout; `critical` uses `2px` `<danger>ff` border and `<danger>ff` title, timeout `0`).
 
 ### Mako A/B candidate (`emit_mako.lua`)
-The verification harness also generates a themed Mako config on its disposable image. It shares the layout's notification anchor, outer margins and radius, enables bounded history, and orders criteria as OSD no-history → DND invisible → OSD-visible DND exception. The emitter performs no I/O. It is not installed by `kaze-sync` while Fnott is the default.
+The verification harness also generates a themed Mako config on its disposable image. It shares the layout's notification anchor, outer margins, radius, width (`360`), margin (`10`), padding (`14,18`), and `max-icon-size=40`, enables bounded history, and orders criteria as OSD no-history → DND invisible → OSD-visible DND exception. The emitter performs no I/O. It is not installed by `kaze-sync` while Fnott is the default.
 
 ### 3.5 `emit_hyprlock.lua` → `~/.config/hypr/hyprlock.conf`
-- Clean minimal lockscreen matching `bg`, `bg_alt`, `fg`, `fg_muted`, `accent`, `warn`, `danger` with `immediate_render = true`, blurred wallpaper background, large centered time (`68px`), date subtitle (`15px`), and minimalist rounded password pill (`fade_on_empty = true`, `capslock_color = rgb(<warn>)`).
+- Clean minimal lockscreen matching `bg`, `bg_alt`, `fg`, `fg_muted`, `accent`, `warn`, `danger` with `immediate_render = true`, blurred wallpaper background, large centered time (`68px`), date subtitle (`15px`), minimalist rounded password pill (`fade_on_empty = true`, `capslock_color = rgb(<warn>)`), and subtle bottom status line (`cmd[update:15000]`) showing laptop battery and active MPRIS track when playing.
 
 ### 3.6 Hyprland Live Colors (`hypr/core.lua`)
 - `hypr/core.lua` does **not** need a generated file — it calls `require("kaze.config").load()` directly inside Hyprland's Lua engine!
-- Active border: `rgba(<accent>cc)`, inactive border: `rgba(<border>88)`, background color: `rgb(<bg>)`.
+- Active border: `rgba(<accent>ee)`, inactive border: `rgba(<border>aa)`, background color: `rgb(<bg>)`.
 
 ## 4. Theme Hot-Reload Behavior
 

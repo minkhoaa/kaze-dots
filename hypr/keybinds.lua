@@ -172,4 +172,185 @@ if hl.on then
     hl.on("keybinds.submap", function()
         hl.exec_cmd("pkill -RTMIN+12 -x --require-handler waybar || true")
     end)
+
+    -- Click-outside and focus-loss auto-dismiss for open Kaze floating popovers
+    -- (kaze-widget-* and fuzzel layers). Click binds are armed dynamically only
+    -- while at least one popover is open (0 overhead during normal work).
+    if hl.get_windows and hl.get_cursor_pos and hl.unbind and hl.dsp and hl.dsp.window and hl.dsp.window.close then
+        local ok_popups, popups = pcall(require, "kaze.popups")
+        local outside_armed = false
+        local armed_binds = {}
+
+        local function vec_xy(v)
+            if type(v) ~= "table" then
+                return nil, nil
+            end
+            return tonumber(v.x or v[1]), tonumber(v.y or v[2])
+        end
+
+        local function is_popover_win(w)
+            return type(w) == "table" and type(w.class) == "string" and w.class:match("^kaze%-widget%-") ~= nil
+        end
+
+        local function is_popover_layer(l)
+            if type(l) ~= "table" or l.mapped == false or type(l.namespace) ~= "string" then
+                return false
+            end
+            return l.namespace == "launcher" or l.namespace:match("^kaze%-popup%-") ~= nil
+        end
+
+        local function open_popovers()
+            local wins = {}
+            for _, w in ipairs(hl.get_windows({ mapped = true }) or {}) do
+                if is_popover_win(w) and type(w.address) == "string" then
+                    wins[#wins + 1] = w
+                end
+            end
+            local layers = {}
+            if hl.get_layers then
+                for _, l in ipairs(hl.get_layers() or {}) do
+                    if is_popover_layer(l) then
+                        layers[#layers + 1] = l
+                    end
+                end
+            end
+            return wins, layers
+        end
+
+        local function point_in_win(cx, cy, w, pad)
+            local wx, wy = vec_xy(w.at)
+            local ww, wh = vec_xy(w.size)
+            if not (wx and wy and ww and wh) then
+                return false
+            end
+            local p = pad or 4
+            return cx >= (wx - p) and cx <= (wx + ww + p) and cy >= (wy - p) and cy <= (wy + wh + p)
+        end
+
+        local function point_in_layer(cx, cy, l, pad)
+            if type(l) ~= "table" then
+                return false
+            end
+            local lx, ly, lw, lh = tonumber(l.x), tonumber(l.y), tonumber(l.w), tonumber(l.h)
+            if not (lx and ly and lw and lh and lw > 0 and lh > 0) then
+                return false
+            end
+            local p = pad or 0
+            return cx >= (lx - p) and cx <= (lx + lw + p) and cy >= (ly - p) and cy <= (ly + lh + p)
+        end
+
+        local function cursor_on_waybar(cx, cy)
+            if not hl.get_layers then
+                return false
+            end
+            for _, l in ipairs(hl.get_layers({ namespace = "waybar" }) or {}) do
+                if l.mapped ~= false and point_in_layer(cx, cy, l, 2) then
+                    return true
+                end
+            end
+            return false
+        end
+
+        local function disarm_outside()
+            if not outside_armed then
+                return
+            end
+            outside_armed = false
+            for _, kb in ipairs(armed_binds) do
+                if type(kb) == "table" and kb.unbind then
+                    pcall(kb.unbind, kb)
+                elseif type(kb) == "userdata" and kb.unbind then
+                    pcall(kb.unbind, kb)
+                end
+            end
+            armed_binds = {}
+            pcall(hl.unbind, "mouse:272")
+            pcall(hl.unbind, "mouse:273")
+        end
+
+        local function on_outside_click()
+            local wins, layers = open_popovers()
+            if #wins == 0 and #layers == 0 then
+                disarm_outside()
+                return
+            end
+            local cx, cy = vec_xy(hl.get_cursor_pos())
+            if not (cx and cy) then
+                return
+            end
+            for _, w in ipairs(wins) do
+                if point_in_win(cx, cy, w, 6) then
+                    return
+                end
+            end
+            for _, l in ipairs(layers) do
+                if point_in_layer(cx, cy, l, 4) then
+                    return
+                end
+            end
+
+            local on_bar = cursor_on_waybar(cx, cy)
+            if on_bar and ok_popups then
+                if #wins > 0 and type(wins[1].class) == "string" then
+                    pcall(popups.record_dismiss_guard, wins[1].class)
+                elseif #layers > 0 then
+                    pcall(popups.record_dismiss_guard, "fuzzel")
+                end
+            end
+
+            for _, w in ipairs(wins) do
+                local addr = w.address:match("^0x") and w.address or ("0x" .. w.address)
+                hl.dispatch(hl.dsp.window.close({ window = "address:" .. addr }))
+            end
+            if #layers > 0 then
+                hl.exec_cmd("pkill -x fuzzel || true")
+            end
+            disarm_outside()
+        end
+
+        local function sync_outside()
+            local wins, layers = open_popovers()
+            if #wins > 0 or #layers > 0 then
+                if not outside_armed then
+                    outside_armed = true
+                    local bind_opts = {
+                        non_consuming = true,
+                        description = "Dismiss open Kaze popover on outside click",
+                    }
+                    armed_binds = {
+                        hl.bind("mouse:272", on_outside_click, bind_opts),
+                        hl.bind("mouse:273", on_outside_click, bind_opts),
+                    }
+                end
+            else
+                disarm_outside()
+            end
+        end
+
+        local function close_on_focus_shift(active_win)
+            if type(active_win) == "table" and is_popover_win(active_win) then
+                sync_outside()
+                return
+            end
+            if type(active_win) == "table" and type(active_win.class) == "string" and active_win.class ~= "" then
+                local wins = {}
+                for _, w in ipairs(hl.get_windows({ mapped = true }) or {}) do
+                    if is_popover_win(w) and type(w.address) == "string" then
+                        wins[#wins + 1] = w
+                    end
+                end
+                for _, w in ipairs(wins) do
+                    local addr = w.address:match("^0x") and w.address or ("0x" .. w.address)
+                    hl.dispatch(hl.dsp.window.close({ window = "address:" .. addr }))
+                end
+            end
+            sync_outside()
+        end
+
+        hl.on("window.open", sync_outside)
+        hl.on("window.close", sync_outside)
+        hl.on("layer.opened", sync_outside)
+        hl.on("layer.closed", sync_outside)
+        hl.on("window.active", close_on_focus_shift)
+    end
 end

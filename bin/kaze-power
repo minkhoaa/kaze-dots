@@ -64,9 +64,7 @@ if #arg > 0 then
     os.exit(2)
 end
 
-local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
-if running == true or running == 0 then
-    os.execute("pkill -x fuzzel >/dev/null 2>&1")
+if popups.toggle_existing_fuzzel() then
     os.exit(0)
 end
 
@@ -96,24 +94,19 @@ for i, item in ipairs(items) do
     actions[item.label] = item.cmd
 end
 
-local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
-local cmd = string.format(
-    "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 34 --lines %d -p %s",
-    utf8_guard,
-    fs.shell_quote(table.concat(labels, "\n")),
-    popups.active_right_flags(),
-    #labels,
-    fs.shell_quote("Power > ")
-)
-local p = io.popen(cmd)
-if not p then
-    io.stderr:write("kaze-power: failed to launch fuzzel\n")
+local choice, dmenu_err = popups.run_dmenu(labels, {
+    flags = popups.active_right_flags(),
+    width = 28,
+    lines = #labels,
+    minimal_lines = true,
+    hide_prompt = true,
+    line_height = 34,
+    prompt = "Power > ",
+})
+if not choice then
+    io.stderr:write("kaze-power: " .. tostring(dmenu_err) .. "\n")
     os.exit(1)
 end
-local out = p:read("*a") or ""
-p:close()
-
-local choice = out:gsub("[\r\n]+$", "")
 if choice == "" then
     os.exit(0)
 end

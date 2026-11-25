@@ -30,6 +30,7 @@ package.path = table.concat({
 local config = require("kaze.config")
 local fs = require("kaze.fs")
 local keybinds_data = require("kaze.keybinds_data")
+local popups = require("kaze.popups")
 
 local env_home = os.getenv("HOME")
 local cfg = config.load({
@@ -43,9 +44,7 @@ if arg[1] == "--list" then
     os.exit(0)
 end
 
-local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
-if running == true or running == 0 then
-    os.execute("pkill -x fuzzel >/dev/null 2>&1")
+if popups.toggle_existing_fuzzel() then
     os.exit(0)
 end
 

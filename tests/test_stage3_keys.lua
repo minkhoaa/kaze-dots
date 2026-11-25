@@ -439,6 +439,136 @@ printf '[Launchers]  Super + /  —  Search keyboard shortcuts\n'
             assert_eq(#exec_calls, prev_exec_len, "populated scratchpad does not spawn another terminal")
         end)
     end)
+
+    test("stage3 hypr/keybinds.lua: outside-click & focus-shift auto-dismiss controller", function()
+        local theme = themes.get("kaze")
+        local layout = layouts.get("sidebar")
+        with_stubs(function(tmp)
+            with_mock_hl({ cfg = defaults, theme = theme, layout = layout }, function()
+                local events = {}
+                local dyn_binds = {}
+                local unbinds = {}
+                local dispatches = {}
+                local execs = {}
+                local cursor = { x = 100, y = 100 }
+                local windows = {}
+                local layers = {}
+
+                rawset(_G, "hl", {
+                    bind = function(keys, dispatcher, opts)
+                        dyn_binds[keys] = { dispatcher = dispatcher, opts = opts }
+                    end,
+                    unbind = function(keys)
+                        unbinds[#unbinds + 1] = keys
+                        dyn_binds[keys] = nil
+                    end,
+                    define_submap = function() end,
+                    on = function(ev, cb)
+                        events[ev] = cb
+                    end,
+                    timer = function() end,
+                    exec_cmd = function(cmd)
+                        execs[#execs + 1] = cmd
+                    end,
+                    dispatch = function(action)
+                        dispatches[#dispatches + 1] = action
+                    end,
+                    get_windows = function()
+                        return windows
+                    end,
+                    get_layers = function(filter)
+                        if filter and filter.namespace == "waybar" then
+                            local wb = {}
+                            for _, l in ipairs(layers) do
+                                if l.namespace == "waybar" then wb[#wb + 1] = l end
+                            end
+                            return wb
+                        end
+                        return layers
+                    end,
+                    get_cursor_pos = function()
+                        return cursor
+                    end,
+                    get_workspace_windows = function() return {} end,
+                    get_active_window = function() return nil end,
+                    get_active_monitor = function() return { x = 0, y = 0, width = 1920, height = 1080, scale = 1 } end,
+                    dsp = {
+                        exec_cmd = function(cmd) return { dsp = "exec_cmd", cmd = cmd } end,
+                        focus = function(args) return { dsp = "focus", args = args } end,
+                        submap = function(name) return { dsp = "submap", name = name } end,
+                        group = {
+                            toggle = function() return {} end,
+                            lock = function() return {} end,
+                            next = function() return {} end,
+                            prev = function() return {} end,
+                        },
+                        window = {
+                            close = function(args) return { dsp = "window.close", args = args } end,
+                            fullscreen = function() return {} end,
+                            float = function() return {} end,
+                            pin = function() return {} end,
+                            center = function() return {} end,
+                            set_prop = function() return {} end,
+                            cycle_next = function() return {} end,
+                            move = function() return {} end,
+                            drag = function() return {} end,
+                            resize = function() return {} end,
+                        },
+                        workspace = {
+                            toggle_special = function() return {} end,
+                        },
+                    },
+                })
+                dofile(repo_dir .. "/hypr/keybinds.lua")
+
+                assert_eq(dyn_binds["mouse:272"], nil, "mouse:272 unbound while no popover open")
+                windows = {
+                    { class = "kaze-widget-panel", address = "0xabc", mapped = true, at = { x = 58, y = 500 }, size = { x = 400, y = 500 } },
+                }
+                layers = {
+                    { namespace = "waybar", mapped = true, x = 8, y = 8, w = 42, h = 1064 },
+                }
+                events["window.open"]()
+                assert_true(dyn_binds["mouse:272"] ~= nil, "opening popover arms mouse:272")
+                assert_eq(dyn_binds["mouse:272"].opts.non_consuming, true, "click bind passes through cleanly")
+
+                -- Click inside popover keeps it open
+                cursor = { x = 150, y = 600 }
+                dyn_binds["mouse:272"].dispatcher()
+                assert_eq(#dispatches, 0, "click inside popover must not close it")
+
+                -- Click on empty desktop outside closes popover and disarms binds
+                cursor = { x = 900, y = 400 }
+                dyn_binds["mouse:272"].dispatcher()
+                assert_eq(#dispatches, 1, "outside click closes open popover")
+                assert_eq(dispatches[1].args.window, "address:0xabc")
+                assert_eq(dyn_binds["mouse:272"], nil, "mouse:272 disarmed after close")
+
+                -- Clicking Waybar outside open fuzzel layer closes fuzzel + records dismiss guard
+                layers = {
+                    { namespace = "waybar", mapped = true, x = 8, y = 8, w = 42, h = 1064 },
+                    { namespace = "kaze-popup-left", mapped = true, x = 58, y = 8, w = 320, h = 420 },
+                }
+                windows = {}
+                events["layer.opened"]()
+                assert_true(dyn_binds["mouse:272"] ~= nil, "opening fuzzel layer arms mouse:272")
+                cursor = { x = 20, y = 20 }
+                -- Run with HOME/XDG_RUNTIME_DIR pointing to tmp/runtime via popups guard check
+                dyn_binds["mouse:272"].dispatcher()
+                assert_true(#execs >= 1 and execs[#execs]:find("pkill %-x fuzzel") ~= nil, "outside click dismisses open fuzzel")
+
+                -- Focusing another non-widget window closes open popover
+                windows = {
+                    { class = "kaze-widget-dash", address = "0xdef", mapped = true, at = { x = 58, y = 400 }, size = { x = 420, y = 420 } },
+                }
+                local before_disp = #dispatches
+                events["window.active"]({ class = "foot", address = "0x111" })
+                assert_eq(#dispatches, before_disp + 1, "window focus shift closes open popover")
+                assert_eq(dispatches[#dispatches].args.window, "address:0xdef")
+            end)
+            local _ = tmp
+        end)
+    end)
 end
 
 if arg and type(arg[0]) == "string" and arg[0]:match("test_stage3_keys%.lua$") and not debug.getinfo(3, "f") then

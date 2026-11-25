@@ -36,6 +36,7 @@ setup_path()
 
 local config = require("kaze.config")
 local fs = require("kaze.fs")
+local notify = require("kaze.notify")
 local popups = require("kaze.popups")
 local state = require("kaze.state")
 local themes = require("kaze.themes")
@@ -59,10 +60,8 @@ local function usage(output)
     )
 end
 
-local function pick_from_menu(current_theme)
-    local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
-    if running == true or running == 0 then
-        os.execute("pkill -x fuzzel >/dev/null 2>&1")
+local function pick_from_menu(cur_cfg)
+    if popups.toggle_existing_fuzzel() then
         return nil
     end
     if not cmd_exists("fuzzel") then
@@ -70,31 +69,65 @@ local function pick_from_menu(current_theme)
         os.exit(1)
     end
 
+    local current_theme = cur_cfg.theme
+    local st = state.load()
     local include_dynamic = cmd_exists("matugen") or current_theme == "dynamic"
-    local lines = {}
-    for _, name in ipairs(themes.list_selectable(include_dynamic)) do
-        local label = (name == "dynamic") and "Dynamic (Wallpaper)" or themes.get(name).label
+    local dmenu_entries = {}
+    local active_idx = nil
+    for idx, name in ipairs(themes.list_selectable(include_dynamic)) do
+        local label, icon
+        if name == "dynamic" then
+            label = "Dynamic (Wallpaper)"
+            local dyn_pal = themes.get("kaze")
+            if type(st.dynamic_palette) == "table" then
+                local ok_dyn, parsed_dyn = pcall(themes.get, "dynamic", cur_cfg.theme_overrides, st.dynamic_palette)
+                if ok_dyn then
+                    dyn_pal = parsed_dyn
+                end
+            else
+                local fallback_ok, cur_pal = pcall(themes.get, current_theme, cur_cfg.theme_overrides)
+                if fallback_ok then
+                    dyn_pal = {
+                        bg_alt = cur_pal.bg_alt,
+                        border = cur_pal.accent,
+                        accent = "b4befe",
+                        ok = cur_pal.ok,
+                        warn = cur_pal.warn,
+                        danger = cur_pal.danger,
+                    }
+                end
+            end
+            icon = popups.ensure_theme_swatch("dynamic", dyn_pal)
+        else
+            local pal = themes.get(name)
+            label = pal.label
+            icon = popups.ensure_theme_swatch(name, pal)
+        end
         local marker = (name == current_theme) and " (active)" or ""
-        lines[#lines + 1] = string.format("%s  —  %s%s", name, label, marker)
+        dmenu_entries[#dmenu_entries + 1] = {
+            text = string.format("%s  —  %s%s", name, label, marker),
+            icon = icon,
+        }
+        if name == current_theme then
+            active_idx = idx - 1
+        end
     end
 
-    local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
-    local cmd = string.format(
-        "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 44 --lines %d -p %s",
-        utf8_guard,
-        fs.shell_quote(table.concat(lines, "\n")),
-        popups.active_right_flags(),
-        #lines,
-        fs.shell_quote("Theme > ")
-    )
-    local p = io.popen(cmd)
-    if not p then
-        io.stderr:write("kaze-theme: failed to launch fuzzel\n")
+    local trimmed, dmenu_err = popups.run_dmenu(dmenu_entries, {
+        flags = popups.active_right_flags(),
+        width = 50,
+        lines = #dmenu_entries,
+        minimal_lines = true,
+        hide_prompt = true,
+        line_height = 36,
+        image_size_ratio = 0.72,
+        select_index = active_idx,
+        prompt = "Theme > ",
+    })
+    if not trimmed then
+        io.stderr:write("kaze-theme: " .. tostring(dmenu_err) .. "\n")
         os.exit(1)
     end
-    local out = p:read("*a") or ""
-    p:close()
-    local trimmed = out:gsub("[\r\n]+$", "")
     if trimmed == "" then
         return nil
     end
@@ -126,7 +159,7 @@ end
 
 local target = mode
 if not target or target == "--menu" then
-    target = pick_from_menu(config.load({ strict = false }).theme)
+    target = pick_from_menu(config.load({ strict = false }))
     if not target then
         os.exit(0)
     end
@@ -201,6 +234,13 @@ end
 local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
 local wl_disp = os.getenv("WAYLAND_DISPLAY")
 if not quiet and ((hypr_sig and hypr_sig ~= "") or (wl_disp and wl_disp ~= "")) and cmd_exists("notify-send") then
+    notify.record({
+        app = "kaze-theme",
+        icon = "󰏘",
+        urgency = "low",
+        summary = "Theme switched",
+        body = "Active: " .. label,
+    })
     os.execute(string.format(
         "notify-send -a kaze-theme -t 1800 -u low -h string:x-canonical-private-synchronous:kaze-switch %s %s >/dev/null 2>&1 || true",
         fs.shell_quote("Theme switched"),

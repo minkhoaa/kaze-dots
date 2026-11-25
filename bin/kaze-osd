@@ -145,6 +145,9 @@ if action == "media-info" then
     elseif pos_us and pos_us > 0 then
         body = string.format("%s · %s", body, fmt_time(pos_us))
     end
+    if artist and artist ~= "" and status ~= "Playing" then
+        body = string.format("%s · %s", status, body)
+    end
     local icon = (status == "Playing") and "󰎈" or ((status == "Paused") and "󰏤" or "󰎊")
     send_osd(icon .. "  " .. title, body, pct, 2200)
     os.exit(0)
@@ -163,7 +166,7 @@ if action:match("^bright-") then
     local out = fs.capture(string.format("exec brightnessctl -c backlight -d %s -n %d -m set %s 2>/dev/null",
         fs.shell_quote(device), floor, fs.shell_quote(delta)))
     local pct = out and tonumber(out:match(",(%d+)%%,"))
-    if pct then send_osd("󰃠  Brightness", string.format("%d%%", pct), pct) end
+    if pct then send_osd("󰃠  Brightness", string.format("%d%% · Backlight", pct), pct) end
     os.exit(0)
 end
 
@@ -185,7 +188,19 @@ local pct = math.floor(raw * 100 + 0.5)
 local muted = out:find("[MUTED]", 1, true) ~= nil
 local volume_icon = pct >= 60 and "󰕾" or (pct >= 25 and "󰖀" or "󰕿")
 if mic then
-    send_osd(muted and "󰍭  Microphone" or "󰍬  Microphone", muted and "Muted" or string.format("%d%%", pct), muted and 0 or pct)
+    send_osd(
+        muted and "󰍭  Microphone Muted" or "󰍬  Microphone",
+        muted and "Input silenced" or string.format("%d%% · Input", pct),
+        muted and 0 or pct
+    )
 else
-    send_osd(muted and "󰖁  Volume" or volume_icon .. "  Volume", string.format(muted and "Muted (%d%%)" or "%d%%", pct), muted and 0 or pct)
+    local vol_body
+    if muted then
+        vol_body = string.format("Output silenced (%d%%)", pct)
+    elseif pct > 100 then
+        vol_body = string.format("%d%% · Over-amplified", pct)
+    else
+        vol_body = string.format("%d%% · Output", pct)
+    end
+    send_osd(muted and "󰖁  Volume Muted" or volume_icon .. "  Volume", vol_body, muted and 0 or pct)
 end

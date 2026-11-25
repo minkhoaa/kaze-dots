@@ -20,6 +20,7 @@ package.path = table.concat({ repo .. "/?.lua", repo .. "/?/init.lua", data .. "
 
 local fs = require("kaze.fs")
 local capture = require("kaze.capture")
+local notify = require("kaze.notify")
 local utility = require("kaze.utility")
 local unit = "kaze-record.service"
 local q = fs.shell_quote
@@ -62,7 +63,14 @@ if utility.active(state) or state == "deactivating" then
         fail("recording may be incomplete" .. (path and (": " .. path) or " (see journalctl --user -u " .. unit .. ")"))
     end
     print(path)
-    os.execute("notify-send -t 2500 -- 'Recording saved' " .. q(path) .. " 2>/dev/null")
+    notify.record({
+        app = "kaze-record",
+        icon = "󰑋",
+        urgency = "normal",
+        summary = "Recording saved",
+        body = path,
+    })
+    os.execute("notify-send -a kaze-record -t 2500 -- 'Recording saved' " .. q(path) .. " 2>/dev/null")
     return
 elseif action == "stop" then
     if state == "failed" then fail("previous recording may be incomplete; see journalctl --user -u " .. unit) end

@@ -5,12 +5,12 @@ local M = {
     hypr = {
         gaps_in = 4,
         gaps_out = 8,
-        rounding = 12,
-        border_size = 1,
+        rounding = 0,
+        border_size = 2,
     },
     ui = {
-        fuzzel_radius = 14,
-        fnott_radius = 12,
+        fuzzel_radius = 0,
+        fnott_radius = 0,
         fnott_anchor = "top-right",
         fnott_edge_margin_vertical = 12,
         fnott_edge_margin_horizontal = 12,
@@ -85,10 +85,10 @@ function M.build_waybar_config(_cfg, _theme)
     "format-wifi": "󰤨",
     "format-ethernet": "󰈀",
     "format-disconnected": "󰤭",
-    "tooltip-format-wifi": "{essid} ({signalStrength}%) · {ipaddr}",
-    "tooltip-format-ethernet": "{ifname} · {ipaddr}",
-    "tooltip-format-disconnected": "Disconnected",
-    "on-click": "kaze-wifi",
+    "tooltip-format-wifi": "{essid} ({signalStrength}%) · {ipaddr}\nRight-click: nmtui",
+    "tooltip-format-ethernet": "{ifname} · {ipaddr}\nRight-click: nmtui",
+    "tooltip-format-disconnected": "Disconnected (Right-click: nmtui)",
+    "on-click": "kaze-panel --wifi",
     "on-click-right": "kaze-tui wifi"
   },
 
@@ -129,8 +129,9 @@ function M.build_waybar_config(_cfg, _theme)
     "format": "{:%H\n%M}",
     "justify": "center",
     "align": 0.5,
-    "tooltip-format": "{:%A, %d %B %Y}\n\n<tt>{calendar}</tt>",
-    "on-click": "kaze-dashboard"
+    "tooltip-format": "{:%A, %d %B %Y}\nRight-click: Performance\n\n<tt>{calendar}</tt>",
+    "on-click": "kaze-dashboard",
+    "on-click-right": "kaze-dashboard --perf"
   },
 
 ]] .. indicators.config .. [[
@@ -160,9 +161,9 @@ function M.build_waybar_css(cfg, _theme)
 }
 
 window#waybar {
-    background: alpha(@bg_alt, 0.92);
-    border: 1px solid alpha(@border, 0.95);
-    border-radius: 14px;
+    background: alpha(@bg_alt, 0.94);
+    border: 2px solid @border;
+    border-radius: 0;
     color: @fg;
 }
 
@@ -182,26 +183,28 @@ window#waybar {
 }
 
 #custom-menu {
-    min-width: 32px;
-    min-height: 32px;
+    min-width: 28px;
+    min-height: 28px;
     padding: 0;
     margin: 0 4px;
-    border-radius: 10px;
+    border: 1px solid alpha(@accent, 0.55);
+    border-radius: 0;
     background: alpha(@accent, 0.14);
     color: @accent;
     font-size: 15.5px;
-    transition: background 140ms ease, color 140ms ease;
+    transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
 #custom-menu:hover {
     background: alpha(@accent, 0.24);
+    border-color: @accent;
     color: @fg;
 }
 
 #workspaces {
-    background: alpha(@surface, 0.55);
-    border: 1px solid alpha(@border, 0.55);
-    border-radius: 10px;
+    background: alpha(@surface, 0.60);
+    border: 1px solid @border;
+    border-radius: 0;
     margin: 0 4px;
     padding: 6px 0;
 }
@@ -211,7 +214,7 @@ window#waybar {
     min-width: 8px;
     min-height: 8px;
     margin: 4px 11px;
-    border-radius: 99px;
+    border-radius: 0;
     background: @fg_muted;
     transition: all 150ms cubic-bezier(0.2, 0.0, 0.0, 1.0);
 }
@@ -261,20 +264,22 @@ window#waybar {
 #network,
 #wireplumber,
 #battery {
-    min-width: 32px;
-    min-height: 30px;
+    min-width: 28px;
+    min-height: 28px;
     padding: 0;
     margin: 2px 4px;
-    border-radius: 9px;
+    border: 1px solid transparent;
+    border-radius: 0;
     font-size: 15px;
     color: @fg;
-    transition: background 140ms ease, color 140ms ease;
+    transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
 #network:hover,
 #wireplumber:hover,
 #battery:hover {
     background: alpha(@surface, 0.90);
+    border-color: @border;
     color: @accent;
 }
 
@@ -305,13 +310,14 @@ window#waybar {
     margin: 0;
     min-width: 0;
     min-height: 0;
+    border: none;
 }
 
 #clock {
-    min-width: 30px;
-    background: alpha(@surface, 0.55);
-    border: 1px solid alpha(@border, 0.55);
-    border-radius: 10px;
+    min-width: 28px;
+    background: alpha(@surface, 0.65);
+    border: 1px solid @border;
+    border-radius: 0;
     margin: 4px 4px 3px 4px;
     padding: 6px 0;
     font-weight: 700;
@@ -321,25 +327,27 @@ window#waybar {
 }
 
 #custom-power {
-    min-width: 32px;
-    min-height: 32px;
+    min-width: 28px;
+    min-height: 28px;
     padding: 0;
     margin: 1px 4px 0 4px;
-    border-radius: 10px;
+    border: 1px solid transparent;
+    border-radius: 0;
     font-size: 15px;
     color: @fg_muted;
-    transition: background 140ms ease, color 140ms ease;
+    transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
 #custom-power:hover {
     color: @danger;
+    border-color: alpha(@danger, 0.75);
     background: alpha(@danger, 0.16);
 }
 
 tooltip {
-    background: alpha(@bg_alt, 0.95);
-    border: 1px solid @border;
-    border-radius: 10px;
+    background: alpha(@bg_alt, 0.96);
+    border: 2px solid @border;
+    border-radius: 0;
 }
 
 tooltip label {

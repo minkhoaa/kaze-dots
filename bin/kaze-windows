@@ -46,6 +46,7 @@ setup_path()
 
 local fs = require("kaze.fs")
 local json = require("kaze.json")
+local popups = require("kaze.popups")
 
 local list_only = false
 if #arg > 0 then
@@ -61,9 +62,7 @@ if #arg > 0 then
 end
 
 if not list_only then
-    local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
-    if running == true or running == 0 then
-        os.execute("pkill -x fuzzel >/dev/null 2>&1")
+    if popups.toggle_existing_fuzzel() then
         os.exit(0)
     end
     if not fs.command_exists("fuzzel") then
@@ -165,23 +164,50 @@ if #rows == 0 then
     os.exit(0)
 end
 
-local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
-local cmd = string.format(
-    "%sprintf '%%s\\n' %s | fuzzel --dmenu -w 64 --lines %d -p %s",
-    utf8_guard,
-    fs.shell_quote(table.concat(rows, "\n")),
-    math.min(12, #rows),
-    fs.shell_quote("Window > ")
-)
-local p = io.popen(cmd)
-if not p then
-    io.stderr:write("kaze-windows: failed to launch fuzzel\n")
+local ICON_ALIASES = {
+    foot = "foot",
+    footclient = "foot",
+    ["kaze-dropdown"] = "foot",
+    ["kaze-tui"] = "foot",
+    ["kaze-widget-panel"] = "foot",
+    ["kaze-widget-dash"] = "foot",
+    ["org.pwmt.zathura"] = "org.pwmt.zathura",
+}
+
+local function resolve_app_icon(cls)
+    local low = clean_str(cls):lower()
+    if low == "" then
+        return nil
+    end
+    if ICON_ALIASES[low] then
+        return ICON_ALIASES[low]
+    end
+    if low:match("^kaze%-") then
+        return "foot"
+    end
+    return low
+end
+
+local dmenu_entries = {}
+for idx, e in ipairs(entries) do
+    dmenu_entries[idx] = {
+        text = rows[idx],
+        icon = resolve_app_icon(e.class),
+    }
+end
+
+local choice, dmenu_err = popups.run_dmenu(dmenu_entries, {
+    width = 64,
+    lines = math.min(12, #dmenu_entries),
+    minimal_lines = true,
+    line_height = 30,
+    image_size_ratio = 0.65,
+    prompt = "Window > ",
+})
+if not choice then
+    io.stderr:write("kaze-windows: " .. tostring(dmenu_err) .. "\n")
     os.exit(1)
 end
-local out = p:read("*a") or ""
-p:close()
-
-local choice = out:gsub("[\r\n]+$", "")
 if choice == "" then
     os.exit(0)
 end

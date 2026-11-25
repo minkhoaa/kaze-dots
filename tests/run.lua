@@ -402,8 +402,8 @@ test("emitters: all 3 layouts x 5 themes (15 combinations) produce valid configs
             margin_bottom = 8,
             margin_left = 8,
             margin_right = 0,
-            fuzzel_radius = 14,
-            fnott_radius = 12,
+            fuzzel_radius = 0,
+            fnott_radius = 0,
             fnott_vmargin = 12,
         },
         islands = {
@@ -412,8 +412,8 @@ test("emitters: all 3 layouts x 5 themes (15 combinations) produce valid configs
             margin_top = 6,
             margin_left = 10,
             margin_right = 10,
-            fuzzel_radius = 12,
-            fnott_radius = 10,
+            fuzzel_radius = 0,
+            fnott_radius = 0,
             fnott_vmargin = 48,
         },
         slim = {
@@ -422,8 +422,8 @@ test("emitters: all 3 layouts x 5 themes (15 combinations) produce valid configs
             margin_top = 0,
             margin_left = 0,
             margin_right = 0,
-            fuzzel_radius = 8,
-            fnott_radius = 6,
+            fuzzel_radius = 0,
+            fnott_radius = 0,
             fnott_vmargin = 36,
         },
     }
@@ -480,9 +480,17 @@ test("emitters: all 3 layouts x 5 themes (15 combinations) produce valid configs
             assert_eq(parsed["custom/power"].exec, nil, tag .. ": custom/power must have zero polling exec")
             assert_eq(parsed["custom/power"].interval, nil, tag .. ": custom/power must have zero polling interval")
             assert_eq(parsed.clock["on-click"], "kaze-dashboard", tag .. ": clock opens top dashboard")
+            assert_eq(parsed.clock["on-click-right"], "kaze-dashboard --perf", tag .. ": clock right-click opens perf tab")
             assert_eq(parsed.battery["on-click"], "kaze-panel", tag .. ": battery opens right control panel")
-            assert_eq(parsed.network["on-click"], "kaze-wifi", tag .. ": network opens right wifi switcher")
+            assert_eq(parsed.network["on-click"], "kaze-panel --wifi", tag .. ": network opens inline wifi panel")
+            assert_eq(parsed.network["on-click-right"], "kaze-tui wifi", tag .. ": network right-click opens nmtui")
             assert_eq(parsed.wireplumber["on-click"], "kaze-audio-sink", tag .. ": wireplumber opens right sink switcher")
+            assert_contains(table.concat(parsed["modules-right"], " "), "custom/dnd", tag .. ": missing dnd indicator")
+            local dnd_ind = assert(parsed["custom/dnd"])
+            assert_eq(dnd_ind.interval, "once", "custom/dnd must not poll")
+            assert_eq(dnd_ind.signal, 10, "custom/dnd signal 10")
+            assert_eq(dnd_ind["on-click"], "kaze-dnd off")
+            assert_eq(dnd_ind["on-click-right"], "kaze-dashboard --notifications")
             for _, feature in ipairs({ { "recording", "record", 8, "stop" }, { "night", "night", 9, "off" },
                 { "inhibit", "inhibit", 11, "off" } }) do
                 local name, unit, signal, action = table.unpack(feature)
@@ -533,7 +541,12 @@ test("emitters: all 3 layouts x 5 themes (15 combinations) produce valid configs
             assert_contains(fuzzel_ini, "anchor=top\n", tag .. ": fuzzel anchored top")
             assert_contains(fuzzel_ini, "y-margin=" .. tostring(layout.ui.popup_top_y) .. "\n", tag .. ": fuzzel y-margin")
             assert_contains(fuzzel_ini, "message=" .. theme.fg .. "ff\n", tag .. ": fuzzel message color")
-            assert_contains(fuzzel_ini, "radius=" .. exp.fuzzel_radius, tag .. ": fuzzel radius")
+            assert_contains(fuzzel_ini, "width=2\nradius=" .. exp.fuzzel_radius, tag .. ": fuzzel sharp border")
+            assert_contains(
+                fuzzel_ini,
+                "selection-radius=0\n",
+                tag .. ": fuzzel selection-radius"
+            )
             assert_contains(fuzzel_ini, "background=" .. theme.bg_alt .. "e8", tag .. ": fuzzel bg")
             assert_no_unresolved_tokens(fuzzel_ini, tag .. ": fuzzel.ini")
             if has_fuzzel then
@@ -546,13 +559,24 @@ test("emitters: all 3 layouts x 5 themes (15 combinations) produce valid configs
             local fnott_ini = emit_fnott.emit(cfg, theme, layout)
             assert_contains(fnott_ini, "dpi-aware=no", tag .. ": fnott dpi-aware")
             assert_contains(fnott_ini, "icon-theme=hicolor", tag .. ": fnott icon-theme")
+            assert_contains(fnott_ini, "stacking-order=top-down", tag .. ": fnott stacking-order")
+            assert_contains(fnott_ini, "min-width=280", tag .. ": fnott min-width")
+            assert_contains(fnott_ini, "max-width=360", tag .. ": fnott max-width")
+            assert_contains(fnott_ini, "notification-margin=10", tag .. ": fnott notification-margin")
+            assert_contains(fnott_ini, "max-icon-size=40", tag .. ": fnott max-icon-size")
+            assert_contains(fnott_ini, "background=" .. theme.bg_alt .. "f2", tag .. ": fnott background")
+            assert_contains(fnott_ini, "title-color=" .. theme.accent .. "dd", tag .. ": fnott title-color")
             assert_contains(fnott_ini, "summary-format=%s", tag .. ": fnott summary-format")
+            assert_contains(fnott_ini, "progress-bar-height=6", tag .. ": fnott progress-bar-height")
             assert_contains(fnott_ini, "progress-color=" .. theme.accent .. "ff", tag .. ": fnott progress-color")
             assert_contains(fnott_ini, "border-radius=" .. exp.fnott_radius, tag .. ": fnott radius")
             assert_contains(fnott_ini, "edge-margin-vertical=" .. exp.fnott_vmargin, tag .. ": fnott vertical margin")
             assert_no_unresolved_tokens(fnott_ini:gsub("summary%-format=%%s", "summary-format=SUMMARY"), tag .. ": fnott.ini")
 
             local mako = require("kaze.emit_mako").emit(cfg, theme, layout)
+            assert_contains(mako, "width=360", tag .. ": mako width")
+            assert_contains(mako, "padding=14,18", tag .. ": mako padding")
+            assert_contains(mako, "max-icon-size=40", tag .. ": mako max-icon-size")
             assert_contains(mako, "background-color=#" .. theme.bg_alt .. "f0")
             assert_contains(mako, "outer-margin=" .. exp.fnott_vmargin .. ",")
             assert_contains(mako, "[app-name=kaze-osd]\nhistory=0\n\n[mode=do-not-disturb]\ninvisible=1\n\n"
@@ -561,6 +585,9 @@ test("emitters: all 3 layouts x 5 themes (15 combinations) produce valid configs
 
             local hl_conf = emit_hyprlock.emit(cfg, theme, layout)
             assert_contains(hl_conf, "rgb(" .. theme.accent .. ")", tag .. ": hyprlock accent")
+            assert_contains(hl_conf, "rgb(" .. theme.fg_muted .. ")", tag .. ": hyprlock fg_muted")
+            assert_contains(hl_conf, "cmd[update:15000]", tag .. ": hyprlock bottom status updater")
+            assert_contains(hl_conf, "valign = bottom", tag .. ": hyprlock bottom status valign")
             assert_balanced(hl_conf, "{", "}", tag .. ": hyprlock.conf")
             assert_no_unresolved_tokens(hl_conf, tag .. ": hyprlock.conf")
         end
@@ -1547,12 +1574,24 @@ fi
             local dash_print = assert(fs.capture(run("kaze-dashboard", "--print")))
             assert_contains(dash_print, "Mo  Tu  We  Th  Fr  Sa  Su")
             assert_contains(dash_print, "Nujabes — Feather [1:00/3:00]")
+            assert_contains(dash_print, "󰻠 CPU ")
+            assert_contains(dash_print, "󰍛 RAM ")
+            assert_contains(dash_print, "Notifications: ")
+            assert_contains(dash_print, "DND: off")
+
+            assert_eq(fs.capture(run("kaze-dnd", "status")), "off\n")
+            assert(os.execute(run("kaze-dnd", "--quiet toggle")))
+            assert_eq(fs.capture(run("kaze-dnd", "status")), "on\n")
+            local dash_print_dnd = assert(fs.capture(run("kaze-dashboard", "--print")))
+            assert_contains(dash_print_dnd, "DND: on")
+            assert(os.execute(run("kaze-dnd", "--quiet off")))
+            assert_eq(fs.capture(run("kaze-dnd", "status")), "off\n")
 
             stub("footclient", [[printf '%s\n' "$@" > "$HOME/widget-foot-args"]])
             stub("hyprctl", [[
 if [ "$1" = "-j" ] && [ "$2" = "clients" ]; then
     if [ "${WIDGET_OPEN:-0}" = "1" ]; then
-        printf '[{"address":"0xfeed","class":"kaze-widget-dash"}]\n'
+        printf '[{"address":"0xfeed","class":"kaze-widget-dash","title":"Kaze Dashboard"}]\n'
     else
         printf '[]\n'
     fi
@@ -1562,17 +1601,466 @@ fi
 ]])
             assert(os.execute(run("kaze-dashboard", "", "HYPRLAND_INSTANCE_SIGNATURE=live WIDGET_OPEN=0")))
             local wf_args = assert(fs.read_file(tmp .. "/widget-foot-args"))
-            assert_contains(wf_args, "-W\n38x15\n-a\nkaze-widget-dash\n")
+            assert_contains(wf_args, "-W\n50x21\n-a\nkaze-widget-dash\n")
             assert(os.execute(run("kaze-dashboard", "", "HYPRLAND_INSTANCE_SIGNATURE=live WIDGET_OPEN=1")))
             assert_contains(assert(fs.read_file(tmp .. "/widget-close")), "window.close")
+            assert(os.execute(run("kaze-dashboard", "--perf", "HYPRLAND_INSTANCE_SIGNATURE=live WIDGET_OPEN=1")))
+            assert_contains(assert(fs.read_file(tmp .. "/widget-foot-args")), "--ui\n--perf\n")
+            assert(os.execute(run("kaze-dashboard", "--notifications", "HYPRLAND_INSTANCE_SIGNATURE=live WIDGET_OPEN=1")))
+            assert_contains(assert(fs.read_file(tmp .. "/widget-foot-args")), "--ui\n--notifications\n")
+            assert(os.execute(run("kaze-dashboard", "--notifs", "HYPRLAND_INSTANCE_SIGNATURE=live WIDGET_OPEN=0")))
+            assert_contains(assert(fs.read_file(tmp .. "/widget-foot-args")), "--ui\n--notifications\n")
 
             stub("wpctl", [[printf 'Volume: 0.65\n']])
             local panel_st = assert(fs.capture(run("kaze-panel", "--status")))
             assert_contains(panel_st, "󰕾 65%")
+            assert_contains(panel_st, "Keep awake")
             assert_contains(panel_st, "󰓃  Audio Output  —  65%")
             assert_contains(panel_st, "󰔎 Appearance")
             assert(os.execute(run("kaze-panel", "", "HYPRLAND_INSTANCE_SIGNATURE=live WIDGET_OPEN=0")))
-            assert_contains(assert(fs.read_file(tmp .. "/widget-foot-args")), "-W\n42x16\n-a\nkaze-widget-panel\n")
+            assert_contains(assert(fs.read_file(tmp .. "/widget-foot-args")), "-W\n45x23\n-a\nkaze-widget-panel\n")
+            assert(os.execute(run("kaze-panel", "--wifi", "HYPRLAND_INSTANCE_SIGNATURE=live WIDGET_OPEN=0")))
+            assert_contains(assert(fs.read_file(tmp .. "/widget-foot-args")), "--ui\n--wifi\n")
+        end)
+    end)
+
+    test("kaze.notify: 0-daemon store, 25-item cap, kaze-osd skip, fnottctl merge/dismiss/clear, missing XDG_RUNTIME_DIR", function()
+        with_stubs(function(tmp, stub, run)
+            local q = fs.shell_quote
+            local lua_bin = assert(fs.capture("command -v lua")):gsub("\n$", "")
+            assert(os.execute("ln -s -- " .. q(lua_bin) .. " " .. q(tmp .. "/bin/lua")))
+
+            stub("systemctl", [[
+case "$*" in
+  '--user is-active --quiet fnott.service') [ "${FNOTT_ACTIVE:-0}" = 1 ] ;;
+  *) exit 1 ;;
+esac
+]])
+            local fstate = tmp .. "/fnott-live"
+            fs.write_atomic(fstate, "77: 󰕾  Volume\n78: 󰃠  Brightness\n42: Alert 30\n99: Firefox Download\n")
+            stub("fnottctl", [[
+printf '%s\n' "$*" >> "$HOME/fnottctl-calls"
+case "$1" in
+  list) [ -f "$HOME/fnott-live" ] && /usr/bin/cat "$HOME/fnott-live" ;;
+  dismiss)
+    if [ "${2:-}" = "all" ]; then
+        : > "$HOME/fnott-live"
+    elif [ -n "${2:-}" ] && [ -f "$HOME/fnott-live" ]; then
+        /usr/bin/grep -v "^$2:" "$HOME/fnott-live" > "$HOME/fnott-live.tmp" || true
+        mv "$HOME/fnott-live.tmp" "$HOME/fnott-live"
+    fi ;;
+esac
+]])
+
+            local function eval_notify(vars, code)
+                local env = string.format(
+                    "env HOME=%s XDG_RUNTIME_DIR=%s PATH=%s:$PATH %s",
+                    q(tmp), q(tmp .. "/runtime"), q(tmp .. "/bin"), vars or ""
+                )
+                local full = string.format(
+                    "package.path=%q..package.path; %s",
+                    repo_dir .. "/lua/?.lua;" .. repo_dir .. "/lua/?/init.lua;",
+                    code
+                )
+                return assert(fs.capture(env .. " lua -e " .. q(full)))
+            end
+
+            -- 1. Recording 30 items caps at 25; kaze-osd is skipped; rel_time formats cleanly
+            local out1 = eval_notify("FNOTT_ACTIVE=0", [[
+                local notify = require("kaze.notify")
+                assert(notify.record({ app = "kaze-osd", summary = "Volume", body = "50%" }) == false)
+                for i = 1, 30 do
+                    assert(notify.record({ app = "kaze-theme", summary = "Alert " .. i, body = "Body " .. i }))
+                end
+                local items = notify.list()
+                assert(#items == 25, "expected 25 items, got " .. #items)
+                assert(items[1].summary == "Alert 30", "newest at index 1")
+                assert(items[25].summary == "Alert 6", "oldest retained is Alert 6")
+                local now = os.time()
+                assert(notify.rel_time(now - 5, "00:00") == "now")
+                assert(notify.rel_time(now - 120, "00:00") == "2m ago")
+                assert(notify.rel_time(now - 3700, "00:00") == "1h ago")
+                assert(notify.rel_time(now - 90000, "09:15") == "09:15")
+                io.write("ok1\n")
+            ]])
+            assert_eq(out1, "ok1\n")
+            assert_true(not fs.file_exists(tmp .. "/fnottctl-calls"), "fnottctl must not be called when fnott.service is inactive")
+
+            -- 2. Active fnott.service merges fnott_id onto Alert 30 and prepends 3rd-party popup
+            local out2 = eval_notify("FNOTT_ACTIVE=1", [[
+                local notify = require("kaze.notify")
+                local items = notify.list()
+                assert(items[1].id == "fnott:99" and items[1].fnott_id == 99 and items[1].summary == "Firefox Download")
+                assert(items[2].summary == "Alert 30" and items[2].fnott_id == 42)
+                for _, item in ipairs(items) do
+                    assert(item.summary ~= "󰕾  Volume" and item.summary ~= "󰃠  Brightness", "OSD must be filtered out")
+                end
+                notify.dismiss(items[2].id, items[2].fnott_id)
+                local after = notify.list()
+                assert(after[2].summary == "Alert 29", "Alert 30 dismissed from store")
+                notify.clear_all()
+                io.write("ok2\n")
+            ]])
+            assert_eq(out2, "ok2\n")
+            local fcalls = assert(fs.read_file(tmp .. "/fnottctl-calls"))
+            assert_contains(fcalls, "list\n")
+            assert_contains(fcalls, "dismiss 42\n")
+            assert_contains(fcalls, "dismiss all\n")
+
+            -- 3. Empty XDG_RUNTIME_DIR must safely no-op without throwing
+            local out3 = eval_notify("XDG_RUNTIME_DIR='' FNOTT_ACTIVE=0", [[
+                local notify = require("kaze.notify")
+                assert(notify.record({ app = "kaze-theme", summary = "Noop", body = "Safe" }) == false)
+                local items = notify.list()
+                assert(type(items) == "table" and #items == 0)
+                notify.dismiss("1", 1)
+                notify.clear_all()
+                io.write("ok3\n")
+            ]])
+            assert_eq(out3, "ok3\n")
+
+            -- 4. CLI integration: kaze-screenshot and kaze-dashboard --print reflect stored notifications
+            stub("notify-send", [[exit 0]])
+            stub("grim", [[
+for dest do :; done
+printf image > "$dest"
+]])
+            stub("wl-copy", [[cat >/dev/null]])
+            assert(os.execute(run("kaze-screenshot", "screen")))
+            local dp = assert(fs.capture(run("kaze-dashboard", "--print")))
+            assert_contains(dp, "Notifications: 1")
+            assert_contains(dp, "kaze-screenshot: Screenshot — Full screen copied")
+
+            -- 5. kaze-menu includes Notification Center
+            stub("pgrep", "exit 1")
+            stub("fuzzel", [[/usr/bin/cat > "$HOME/menu-out"]])
+            assert(os.execute(run("kaze-menu", "")))
+            assert_contains(assert(fs.read_file(tmp .. "/menu-out")), "󰂚  Notification Center")
+        end)
+    end)
+
+    test("fuzzel UI polish: popups.run_dmenu NUL icons, SVG swatches, pickers, and widget stadium pills + 1/8 meters", function()
+        with_stubs(function(tmp, stub, run)
+            local q = fs.shell_quote
+            local lua_bin = assert(fs.capture("command -v lua")):gsub("\n$", "")
+            assert(os.execute("ln -s -- " .. q(lua_bin) .. " " .. q(tmp .. "/bin/lua")))
+
+            stub("pgrep", "exit 1")
+            stub("fuzzel", [[
+printf '%s\n' "$@" > "$HOME/dmenu-args"
+/usr/bin/cat > "$HOME/dmenu-stdin"
+printf '%s\n' "${DMENU_OUT:-}"
+]])
+
+            local function eval_popups(vars, code)
+                local env = string.format(
+                    "env HOME=%s XDG_RUNTIME_DIR=%s XDG_CONFIG_HOME=%s PATH=%s:$PATH %s",
+                    q(tmp), q(tmp .. "/runtime"), q(tmp .. "/cfg"), q(tmp .. "/bin"), vars or ""
+                )
+                local full = string.format(
+                    "package.path=%q..package.path; %s",
+                    repo_dir .. "/lua/?.lua;" .. repo_dir .. "/lua/?/init.lua;",
+                    code
+                )
+                return assert(fs.capture(env .. " lua -e " .. q(full)))
+            end
+
+            -- 1. popups.run_dmenu keeps plain text when WAYLAND_DISPLAY="" and attaches real NUL+0x1f icon bytes on Wayland
+            local out_plain = eval_popups("WAYLAND_DISPLAY='' DMENU_OUT='Alpha'", [[
+                local popups = require("kaze.popups")
+                local pick = popups.run_dmenu({
+                    { text = "Alpha", icon = "/tmp/a.png" },
+                    { text = "Beta", icon = "firefox" },
+                }, {
+                    width = 44,
+                    lines = 2,
+                    minimal_lines = true,
+                    hide_prompt = true,
+                    line_height = 36,
+                    image_size_ratio = 0.72,
+                    select_index = 0,
+                    prompt = "Pick > ",
+                })
+                assert(pick == "Alpha", "unexpected pick: " .. tostring(pick))
+                io.write("plain_ok\n")
+            ]])
+            assert_eq(out_plain, "plain_ok\n")
+            assert_eq(fs.read_file(tmp .. "/dmenu-stdin"), "Alpha\nBeta\n", "plain dmenu stdin without WAYLAND_DISPLAY")
+            local dargs = assert(fs.read_file(tmp .. "/dmenu-args"))
+            assert_contains(dargs, "--hide-prompt\n")
+            assert_contains(dargs, "--minimal-lines\n")
+            assert_contains(dargs, "--line-height=36\n")
+            assert_contains(dargs, "--override=main.image-size-ratio=0.72\n")
+            assert_contains(dargs, "--select-index=0\n")
+
+            local out_wl = eval_popups("WAYLAND_DISPLAY=wayland-1 DMENU_OUT='Beta'", [[
+                local popups = require("kaze.popups")
+                local pick = popups.run_dmenu({
+                    { text = "Alpha", icon = "/tmp/a.png" },
+                    { text = "Beta", icon = "firefox" },
+                }, { line_height = 30 })
+                assert(pick == "Beta", "unexpected pick: " .. tostring(pick))
+                io.write("wl_ok\n")
+            ]])
+            assert_eq(out_wl, "wl_ok\n")
+            assert_eq(
+                fs.read_file(tmp .. "/dmenu-stdin"),
+                "Alpha\0icon\x1f/tmp/a.png\nBeta\0icon\x1ffirefox\n",
+                "Wayland dmenu stdin preserves real NUL and 0x1f icon bytes"
+            )
+            local leftover = fs.capture("find " .. q(tmp .. "/runtime/kaze") .. " -maxdepth 1 -name 'dmenu-*.in' 2>/dev/null || true")
+            assert_eq(leftover, "", "dmenu temp file cleaned up immediately")
+
+            -- 2. popups.ensure_theme_swatch and popups.ensure_layout_swatch write valid SVGs with theme hexes
+            local swatch_out = eval_popups("WAYLAND_DISPLAY=''", [[
+                local popups = require("kaze.popups")
+                local themes = require("kaze.themes")
+                local pal = themes.get("tokyonight")
+                local sp = assert(popups.ensure_theme_swatch("tokyonight", pal))
+                local lp = assert(popups.ensure_layout_swatch("sidebar", pal))
+                local lp2 = assert(popups.ensure_layout_swatch("islands", pal))
+                local lp3 = assert(popups.ensure_layout_swatch("slim", pal))
+                io.write(sp .. "|" .. lp .. "|" .. lp2 .. "|" .. lp3 .. "\n")
+            ]]):gsub("\n$", "")
+            local t_svg_path, l1_path, l2_path, l3_path = swatch_out:match("^([^|]+)|([^|]+)|([^|]+)|([^|]+)$")
+            local tn = themes.get("tokyonight")
+            local t_svg = assert(fs.read_file(t_svg_path))
+            assert_contains(t_svg, "<svg ")
+            assert_contains(t_svg, 'rx="0"')
+            for _, k in ipairs({ "bg_alt", "border", "accent", "ok", "warn", "danger" }) do
+                assert_contains(t_svg, "#" .. tn[k], "theme swatch includes #" .. k)
+            end
+            for _, lp in ipairs({ l1_path, l2_path, l3_path }) do
+                local lsvg = assert(fs.read_file(lp))
+                assert_contains(lsvg, "<svg ")
+                assert_contains(lsvg, "#" .. tn.accent)
+            end
+
+            -- 3. kaze-windows attaches resolved app icons under WAYLAND_DISPLAY=wayland-1, never on --list
+            stub("hyprctl", [[
+if [ "$1" = "-j" ] && [ "$2" = "clients" ]; then
+    printf '[{"address":"0x111","class":"org.pwmt.zathura","title":"Spec.pdf","workspace":{"id":1,"name":"1"},"focusHistoryID":1},{"address":"0x222","class":"kaze-dropdown","title":"Drop","workspace":{"id":1,"name":"1"},"focusHistoryID":2}]\n'
+fi
+]])
+            local win_list = assert(fs.capture(run("kaze-windows", "--list", "WAYLAND_DISPLAY=wayland-1")))
+            assert_true(not win_list:find("\0icon\x1f", 1, true), "--list must not emit icon protocol bytes")
+            assert(os.execute(run("kaze-windows", "", "WAYLAND_DISPLAY=wayland-1 DMENU_OUT=''")))
+            local win_stdin = assert(fs.read_file(tmp .. "/dmenu-stdin"))
+            assert_contains(win_stdin, "\0icon\x1forg.pwmt.zathura\n")
+            assert_contains(win_stdin, "\0icon\x1ffoot\n")
+            local win_args = assert(fs.read_file(tmp .. "/dmenu-args"))
+            assert_contains(win_args, "--line-height=30\n")
+            assert_contains(win_args, "--override=main.image-size-ratio=0.65\n")
+
+            -- 4. kaze-layout --menu and kaze-theme --menu pass SVG icons + --hide-prompt + --select-index
+            assert(os.execute(run("kaze-layout", "--quiet islands", "HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY=''") .. " >/dev/null 2>&1"))
+            assert(os.execute(run("kaze-layout", "--menu", "HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY=wayland-1 DMENU_OUT=''")))
+            local lay_stdin = assert(fs.read_file(tmp .. "/dmenu-stdin"))
+            assert_contains(lay_stdin, "islands  —  Islands (Floating Top Pills) (active)\0icon\x1f")
+            assert_contains(lay_stdin, "layout-sidebar.svg")
+            local lay_args = assert(fs.read_file(tmp .. "/dmenu-args"))
+            assert_contains(lay_args, "--hide-prompt\n")
+            assert_contains(lay_args, "--select-index=1\n")
+
+            assert(os.execute(run("kaze-theme", "--quiet lavender", "HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY=''") .. " >/dev/null 2>&1"))
+            assert(os.execute(run("kaze-theme", "--menu", "HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY=wayland-1 DMENU_OUT=''")))
+            local thm_stdin = assert(fs.read_file(tmp .. "/dmenu-stdin"))
+            assert_contains(thm_stdin, "lavender  —  Lavender (Soft Indigo) (active)\0icon\x1f")
+            assert_contains(thm_stdin, "lavender.svg")
+            local thm_args = assert(fs.read_file(tmp .. "/dmenu-args"))
+            assert_contains(thm_args, "--hide-prompt\n")
+            assert_contains(thm_args, "--select-index=1\n")
+            assert_contains(thm_args, "--override=main.image-size-ratio=0.72\n")
+
+            -- 5. kaze-audio-sink selects active sink index cleanly with --hide-prompt
+            stub("wpctl", [[
+if [ "$1" = "status" ]; then
+cat <<'EOF'
+Audio
+ ├─ Sinks:
+ │      48. Analog Stereo [vol: 0.45]
+ │  *   54. USB DAC [vol: 0.80]
+EOF
+fi
+]])
+            assert(os.execute(run("kaze-audio-sink", "--quiet", "WAYLAND_DISPLAY=wayland-1 DMENU_OUT=''")))
+            local sink_args = assert(fs.read_file(tmp .. "/dmenu-args"))
+            assert_contains(sink_args, "--hide-prompt\n")
+            assert_contains(sink_args, "--minimal-lines\n")
+            assert_contains(sink_args, "--line-height=32\n")
+            assert_contains(sink_args, "--select-index=1\n")
+
+            -- 6. widget.lua cell_bg tracking, stadium pills (bg_alt & surface), switch, and 1/8th meter
+            local widget = require("kaze.widget")
+            local t = themes.get("kaze")
+            local ui = widget.create_canvas(45, 23, t.bg_alt, t.fg)
+            ui:begin_frame(t.bg_alt, t.fg)
+            assert_eq(ui.cell_bg[1][3], t.bg_alt, "begin_frame sets base cell_bg")
+            ui:card(3, 3, 41, 6, t.surface)
+            assert_eq(ui.cell_bg[3][2], t.bg_alt, "outside card keeps bg_alt")
+            assert_eq(ui.cell_bg[3][4], t.surface, "inside card updates cell_bg to surface")
+
+            local w_pill_out = ui:pill(1, 3, " Back ", t.fg, t.surface, true)
+            assert_eq(w_pill_out, 6, "pill width preserved on bg_alt")
+            local w_pill_in = ui:pill(4, 4, " Rescan ", t.accent_fg, t.accent, true)
+            assert_eq(w_pill_in, 8, "pill width preserved inside card")
+            local w_sw_out = ui:switch(1, 35, false, t)
+            local w_sw_in_off = ui:switch(3, 38, false, t)
+            local w_sw_in_on = ui:switch(5, 38, true, t)
+            assert_eq(w_sw_out, 5, "switch width outside card")
+            assert_eq(w_sw_in_off, 5, "switch width off inside card")
+            assert_eq(w_sw_in_on, 5, "switch width on inside card")
+            ui:meter(6, 4, 20, 33, t.accent, t.bg_alt, t.surface)
+
+            local frame = ui:render_string()
+            assert_contains(frame, widget.style(t.fg, t.surface, true) .. " Back ", "sharp rectangular chip outside card blends on surface")
+            assert_contains(frame, widget.style(t.accent_fg, t.accent, true) .. " Rescan ", "sharp rectangular chip inside card blends on accent")
+            assert_contains(frame, widget.style(t.fg_muted, t.bg_alt, true) .. " □   ", "off switch uses square □ indicator inside card")
+            assert_contains(frame, widget.style(t.accent_fg, t.accent, true) .. " ■ ✓ ", "on switch uses square ■ indicator inside card")
+            assert_contains(frame, "█", "meter uses full block glyph")
+            assert_true(
+                frame:find("▏") or frame:find("▎") or frame:find("▍") or frame:find("▌")
+                    or frame:find("▋") or frame:find("▊") or frame:find("▉"),
+                "meter uses 1/8th partial block for smooth transition"
+            )
+        end)
+    end)
+
+    test("kaze-bluetooth, kaze-wall thumbnails, and dismiss guard", function()
+        with_stubs(function(tmp, stub, run)
+            local q = fs.shell_quote
+            local lua_bin = assert(fs.capture("command -v lua")):gsub("\n$", "")
+            assert(os.execute("ln -s -- " .. q(lua_bin) .. " " .. q(tmp .. "/bin/lua")))
+            for _, util in ipairs({ "stat", "install" }) do
+                local util_bin = assert(fs.capture("command -v " .. util)):gsub("\n$", "")
+                assert(os.execute("ln -s -- " .. q(util_bin) .. " " .. q(tmp .. "/bin/" .. util)))
+            end
+
+            stub("pgrep", "exit 1")
+            stub("notify-send", [[printf '%s\n' "$*" >> "$HOME/bt-toast"]])
+            stub("bluetoothctl", [[
+case "$1" in
+  show)
+    if [ "${BT_NO_CTRL:-0}" = "1" ]; then
+      printf 'No default controller available\n'
+      exit 1
+    elif [ "${BT_POWERED:-1}" = "1" ]; then
+      printf 'Controller AA:BB:CC:DD:EE:FF\n\tPowered: yes\n'
+    else
+      printf 'Controller AA:BB:CC:DD:EE:FF\n\tPowered: no\n'
+    fi
+    ;;
+  devices)
+    if [ "${2:-}" = "Connected" ]; then
+      printf 'Device 11:22:33:44:55:66 Sony WH-1000XM5\n'
+    elif [ "${2:-}" = "Paired" ]; then
+      printf 'Device 11:22:33:44:55:66 Sony WH-1000XM5\nDevice AA:11:BB:22:CC:33 Keychron K2\n'
+    else
+      printf 'Device 11:22:33:44:55:66 Sony WH-1000XM5\nDevice AA:11:BB:22:CC:33 Keychron K2\n'
+    fi
+    ;;
+  info)
+    if [ "$2" = "11:22:33:44:55:66" ]; then
+      printf 'Device 11:22:33:44:55:66\n\tPaired: yes\n\tTrusted: yes\n\tConnected: yes\n\tBattery Percentage: 0x55 (85)\n'
+    else
+      printf 'Device %s\n\tPaired: yes\n\tTrusted: yes\n\tConnected: no\n' "$2"
+    fi
+    ;;
+  power)
+    printf 'power:%s\n' "$2" > "$HOME/bt-action"
+    ;;
+  connect|disconnect|trust|pair)
+    printf '%s:%s\n' "$1" "$2" >> "$HOME/bt-action"
+    ;;
+esac
+]])
+            assert(os.execute(run("kaze-bluetooth", "--help >/dev/null")))
+            local bad_opt = os.execute(run("kaze-bluetooth", "--bogus >/dev/null 2>&1"))
+            assert_true(bad_opt ~= true and bad_opt ~= 0, "kaze-bluetooth rejects unknown flag")
+            local bad_mac = os.execute(run("kaze-bluetooth", "--connect 'not-a-mac;id' >/dev/null 2>&1"))
+            assert_true(bad_mac ~= true and bad_mac ~= 0, "kaze-bluetooth rejects invalid MAC")
+
+            local bt_list = assert(fs.capture(run("kaze-bluetooth", "--list")))
+            local idx_sony = assert(bt_list:find("Sony WH%-1000XM5 %(connected, 85%%%)"))
+            local idx_keychron = assert(bt_list:find("Keychron K2"))
+            assert_true(idx_sony < idx_keychron, "connected device with battery sorts first")
+
+            stub("fuzzel", [[/usr/bin/cat > "$HOME/bt-menu-in"; printf '󰂯  Keychron K2\n']])
+            os.remove(tmp .. "/bt-action")
+            assert(os.execute(run("kaze-bluetooth", "")))
+            assert_contains(assert(fs.read_file(tmp .. "/bt-action")), "connect:AA:11:BB:22:CC:33")
+
+            stub("fuzzel", [[/usr/bin/cat > "$HOME/bt-off-in"; printf '󰂯  Turn Bluetooth On\n']])
+            os.remove(tmp .. "/bt-action")
+            assert(os.execute(run("kaze-bluetooth", "", "BT_POWERED=0")))
+            assert_contains(assert(fs.read_file(tmp .. "/bt-off-in")), "Turn Bluetooth On")
+            assert_contains(assert(fs.read_file(tmp .. "/bt-action")), "power:on")
+
+            stub("fuzzel", [[/usr/bin/cat > "$HOME/bt-none-in"; printf '󰂲  No Bluetooth adapter found\n']])
+            assert(os.execute(run("kaze-bluetooth", "", "BT_NO_CTRL=1")))
+            assert_contains(assert(fs.read_file(tmp .. "/bt-none-in")), "No Bluetooth adapter found")
+
+            -- kaze-menu exposes Quick Bluetooth when bluetoothctl is present
+            stub("fuzzel", [[/usr/bin/cat > "$HOME/menu-bt-in"]])
+            assert(os.execute(run("kaze-menu", "")))
+            assert_contains(assert(fs.read_file(tmp .. "/menu-bt-in")), "Quick Bluetooth")
+
+            -- kaze-wall cached 96x96 PNG thumbnails + minimal SVG fallback
+            local wall_dir = tmp .. "/Pictures/Wallpapers"
+            fs.mkdir_p(wall_dir)
+            local png_bytes = "\137PNG\r\n\26\n\0\0\0\rIHDR\0\0\0\1\0\0\0\1\8\6\0\0\0\31\21\196\137\0\0\0\nIDATx\156c`\0\0\0\2\0\1\226!\188\51\0\0\0\0IEND\174B`\130"
+            fs.write_atomic(wall_dir .. "/alpha.png", png_bytes)
+            fs.write_atomic(wall_dir .. "/beta.jpg", "\255\216\255\224\0\16JFIF\0\1\1\0\0\1\0\1\0\0\255\217")
+
+            stub("ffmpeg", [[
+out=""
+for a in "$@"; do out="$a"; done
+printf 'ffmpeg:%s\n' "$*" >> "$HOME/ffmpeg-calls"
+printf '\211PNG\r\n\032\n' > "$out"
+]])
+            local wall_vars = "HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY='' KAZE_WALL_FORCE_THUMBS=1"
+            stub("fuzzel", [[/usr/bin/cat > "$HOME/wall-dmenu-in"; printf 'beta.jpg\n']])
+            assert(os.execute(run("kaze-wall", "--quiet --menu", wall_vars)))
+
+            local ff1 = assert(fs.read_file(tmp .. "/ffmpeg-calls"))
+            assert_contains(ff1, "crop=96:96")
+            local wall_in = assert(fs.read_file(tmp .. "/wall-dmenu-in"))
+            assert_contains(wall_in, "beta.jpg\0icon\x1f" .. tmp .. "/cache/kaze/wall-thumbs/")
+            assert_eq(state.load(tmp .. "/cfg/kaze/state.lua").wallpaper, wall_dir .. "/beta.jpg")
+
+            -- Second call hits existing cache without re-running ffmpeg
+            os.remove(tmp .. "/ffmpeg-calls")
+            stub("fuzzel", [[cat >/dev/null; printf 'alpha.png\n']])
+            assert(os.execute(run("kaze-wall", "--quiet --menu", wall_vars)))
+            assert_eq(fs.file_exists(tmp .. "/ffmpeg-calls"), false, "cached thumbnails avoid re-running ffmpeg")
+            assert_eq(state.load(tmp .. "/cfg/kaze/state.lua").wallpaper, wall_dir .. "/alpha.png")
+
+            -- On minimal (no ffmpeg/magick), cached thumbs stay cached, uncached PNG stays raw, JPG uses square SVG fallback
+            os.remove(tmp .. "/bin/ffmpeg")
+            fs.write_atomic(wall_dir .. "/gamma.jpg", "\255\216\255\224\0\16JFIF\0\1\1\0\0\1\0\1\0\0\255\217")
+            fs.write_atomic(wall_dir .. "/delta.png", png_bytes)
+            stub("fuzzel", [[/usr/bin/cat > "$HOME/wall-min-in"; printf 'gamma.jpg\n']])
+            assert(os.execute(run("kaze-wall", "--quiet --menu", wall_vars)))
+            local min_in = assert(fs.read_file(tmp .. "/wall-min-in"))
+            assert_contains(min_in, "alpha.png\0icon\x1f" .. tmp .. "/cache/kaze/wall-thumbs/")
+            assert_contains(min_in, "delta.png\0icon\x1f" .. wall_dir .. "/delta.png")
+            assert_contains(min_in, "gamma.jpg\0icon\x1f" .. tmp .. "/runtime/kaze/swatches/wall-fallback.svg")
+
+            -- Dismiss guard skips duplicate toggle on same widget within window, allows others
+            stub("footclient", [[printf '%s\n' "$@" > "$HOME/guard-foot"]])
+            stub("hyprctl", [[printf '[]\n']])
+            os.execute(string.format(
+                "env HOME=%s XDG_RUNTIME_DIR=%s lua -e %s",
+                q(tmp),
+                q(tmp .. "/runtime"),
+                q(string.format("package.path=%q; require('kaze.popups').record_dismiss_guard('kaze-widget-dash')", repo_dir .. "/lua/?.lua;" .. package.path))
+            ))
+            -- Attempting to reopen kaze-dashboard right after Waybar outside-dismiss is a no-op
+            assert(os.execute(run("kaze-dashboard", "", "HYPRLAND_INSTANCE_SIGNATURE=live")))
+            assert_eq(fs.file_exists(tmp .. "/guard-foot"), false, "dismiss guard blocks same-widget flicker reopen")
+            -- Different component opens cleanly even immediately after
+            assert(os.execute(run("kaze-panel", "", "HYPRLAND_INSTANCE_SIGNATURE=live")))
+            assert_eq(fs.file_exists(tmp .. "/guard-foot"), true, "different component opens normally")
         end)
     end)
 end

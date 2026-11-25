@@ -52,6 +52,7 @@ paths[#paths + 1] = package.path
 package.path = table.concat(paths, ";")
 
 local fs = require("kaze.fs")
+local notify_store = require("kaze.notify")
 
 local function fail(msg)
     io.stderr:write("kaze-perf: " .. msg .. "\n")
@@ -101,6 +102,13 @@ local function notify(body)
     if quiet or not fs.command_exists("notify-send") then
         return
     end
+    notify_store.record({
+        app = "kaze-perf",
+        icon = "󱐋",
+        urgency = "low",
+        summary = "Zen Performance Mode",
+        body = body,
+    })
     os.execute(string.format(
         "notify-send -a kaze-perf -t 1400 -u low -h string:x-canonical-private-synchronous:kaze-switch %s %s >/dev/null 2>&1 || true",
         fs.shell_quote("Zen Performance Mode"),

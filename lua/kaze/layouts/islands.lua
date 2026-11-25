@@ -5,12 +5,12 @@ local M = {
     hypr = {
         gaps_in = 5,
         gaps_out = 10,
-        rounding = 10,
-        border_size = 1,
+        rounding = 0,
+        border_size = 2,
     },
     ui = {
-        fuzzel_radius = 12,
-        fnott_radius = 10,
+        fuzzel_radius = 0,
+        fnott_radius = 0,
         fnott_anchor = "top-right",
         fnott_edge_margin_vertical = 48,
         fnott_edge_margin_horizontal = 12,
@@ -91,8 +91,9 @@ function M.build_waybar_config(_cfg, _theme)
   "clock": {
     "interval": 60,
     "format": "{:%a %d %b · %H:%M}",
-    "tooltip-format": "<tt>{calendar}</tt>",
-    "on-click": "kaze-dashboard"
+    "tooltip-format": "Right-click: Performance\n\n<tt>{calendar}</tt>",
+    "on-click": "kaze-dashboard",
+    "on-click-right": "kaze-dashboard --perf"
   },
 
   "tray": {
@@ -105,10 +106,10 @@ function M.build_waybar_config(_cfg, _theme)
     "format-wifi": "󰤨",
     "format-ethernet": "󰈀",
     "format-disconnected": "󰤭",
-    "tooltip-format-wifi": "{essid} ({signalStrength}%) · {ipaddr}",
-    "tooltip-format-ethernet": "{ifname} · {ipaddr}",
-    "tooltip-format-disconnected": "Disconnected",
-    "on-click": "kaze-wifi",
+    "tooltip-format-wifi": "{essid} ({signalStrength}%) · {ipaddr}\nRight-click: nmtui",
+    "tooltip-format-ethernet": "{ifname} · {ipaddr}\nRight-click: nmtui",
+    "tooltip-format-disconnected": "Disconnected (Right-click: nmtui)",
+    "on-click": "kaze-panel --wifi",
     "on-click-right": "kaze-tui wifi"
   },
 
@@ -173,26 +174,28 @@ window#waybar {
 .modules-left,
 .modules-center,
 .modules-right {
-    background: alpha(@bg_alt, 0.90);
-    border: 1px solid alpha(@border, 0.95);
-    border-radius: 14px;
+    background: alpha(@bg_alt, 0.94);
+    border: 2px solid @border;
+    border-radius: 0;
     padding: 0 3px;
     margin: 0;
 }
 
 #custom-menu {
-    min-height: 26px;
+    min-height: 22px;
     padding: 0 10px;
     margin: 3px 5px 3px 0;
-    border-radius: 10px;
+    border: 1px solid alpha(@accent, 0.50);
+    border-radius: 0;
     background: alpha(@accent, 0.14);
     color: @accent;
     font-size: 14.5px;
-    transition: background 140ms ease, color 140ms ease;
+    transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
 #custom-menu:hover {
     background: alpha(@accent, 0.24);
+    border-color: @accent;
     color: @fg;
 }
 
@@ -205,8 +208,8 @@ window#waybar {
     padding: 0;
     min-width: 8px;
     min-height: 8px;
-    margin: 12px 4px;
-    border-radius: 99px;
+    margin: 11px 4px;
+    border-radius: 0;
     background: @fg_muted;
     transition: all 150ms cubic-bezier(0.2, 0.0, 0.0, 1.0);
 }
@@ -243,11 +246,12 @@ window#waybar {
 #mpris {
     color: @accent;
     background: alpha(@accent, 0.10);
+    border: 1px solid alpha(@accent, 0.35);
     font-weight: 500;
     font-size: 12px;
     padding: 0 10px;
     margin: 3px 2px 3px 0;
-    border-radius: 10px;
+    border-radius: 0;
 }
 
 #clock {
@@ -256,7 +260,7 @@ window#waybar {
     font-size: 12.5px;
     padding: 0 12px;
     margin: 3px 0;
-    border-radius: 10px;
+    border-radius: 0;
 }
 
 #tray {
@@ -280,13 +284,14 @@ window#waybar {
 #network,
 #wireplumber,
 #battery {
-    min-height: 26px;
+    min-height: 22px;
     padding: 0 8px;
     margin: 3px 1px;
-    border-radius: 10px;
+    border: 1px solid transparent;
+    border-radius: 0;
     font-size: 12.5px;
     color: @fg;
-    transition: background 140ms ease, color 140ms ease;
+    transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
 #network {
@@ -297,6 +302,7 @@ window#waybar {
 #wireplumber:hover,
 #battery:hover {
     background: alpha(@surface, 0.90);
+    border-color: @border;
     color: @accent;
 }
 
@@ -314,6 +320,7 @@ window#waybar {
     margin: 0;
     min-width: 0;
     min-height: 0;
+    border: none;
 }
 
 #battery.charging,
@@ -330,24 +337,26 @@ window#waybar {
 }
 
 #custom-power {
-    min-height: 26px;
+    min-height: 22px;
     color: @fg_muted;
     font-size: 14px;
     padding: 0 9px;
     margin: 3px 0 3px 2px;
-    border-radius: 10px;
-    transition: background 140ms ease, color 140ms ease;
+    border: 1px solid transparent;
+    border-radius: 0;
+    transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
 #custom-power:hover {
     color: @danger;
+    border-color: alpha(@danger, 0.75);
     background: alpha(@danger, 0.16);
 }
 
 tooltip {
-    background: alpha(@bg_alt, 0.95);
-    border: 1px solid @border;
-    border-radius: 10px;
+    background: alpha(@bg_alt, 0.96);
+    border: 2px solid @border;
+    border-radius: 0;
 }
 
 tooltip label {

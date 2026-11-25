@@ -24,22 +24,24 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 ### `kaze-perf [--quiet] [on|off|toggle|status]`
 - Instant 0-MiB Zen / Gamemode toggle (`Super + Shift + Z`): uses `hyprctl eval` to disable animations, blur, shadow, rounding, gaps and translucency (`1.0` opacity) and hides Waybar (`SIGUSR1`); restores layout via `hyprctl reload` on exit.
 
-### `kaze-dashboard [--print]` · `kaze-panel [--status]`
-- Zero-daemon (`0 MiB` background RAM) Top Drop-down & Right Drawer popups synced to active layout margins:
-  - `kaze-dashboard` (`Super + N` / click `clock` on Waybar): Top drop-down popup (`--namespace=kaze-popup-top --anchor=top`, `animation = "slide top"`) rendering a pure-Lua monthly calendar, date/time, active MPRIS track & playback actions, notification clear, and polarity switch.
-  - `kaze-panel` (`Super + A` / click `battery` or right-click `menu`/`power` on Waybar): Right-side Quick Control Center drawer (`--namespace=kaze-popup-right --anchor=top-right`, `animation = "slide right"`) aggregating live Volume/Mute, Brightness, Battery, Wi-Fi SSID, Audio Sink, Bluetooth, Power Profile, Night Light, Caffeine, Polarity, Zen Mode, Layout/Theme, and Power Menu.
-  - Floating TUIs (`kaze-tui`) dock flush along the right edge (`animation = "slide right"`), and the default `Super + S` scratchpad (`kaze-dropdown`) drops down from the top (`animation = "slide top"`).
+### `kaze-dashboard [--print | --perf | --notifications]` · `kaze-panel [--status | --wifi | --settings]` · `kaze-dnd [--quiet] [on|off|toggle|status]`
+- Zero-daemon (`0 MiB` background RAM) stateful `footclient` TrueColor popovers synced to active layout margins (auto-dismissing cleanly on outside click, focus shift, or `Esc`):
+  - `kaze-dashboard` (`Super + N` / left-click `clock`, right-click `clock` for `--perf`, right-click `custom/dnd` for `--notifications`): Interactive **Calendar** + MPRIS Media, Caelestia-style **Notification Center** (`--notifications` / `--notifs` with stacked accent-bar cards, smooth scroll, per-item dismiss, `Clear All`, live `Do Not Disturb` switch sync, and `kaze.notify` session store capped at 25 items in `$XDG_RUNTIME_DIR/kaze/notifications.json` ignoring `kaze-osd`), and live **Performance** tab (CPU %, GHz/Load, Memory/Swap, Storage `/`, Temp `°C`, Uptime, Top Processes, and 1-click `btop` / Zen Mode).
+  - `kaze-panel` (`Super + A` / click `battery`, right-click `menu`/`power`, or click `network` for `--wifi`): Caelestia-inspired Quick Control Tray featuring **Keep awake** (with `Active since HH:MM` badge), **Screen recorder** (`Fullscreen`/`Region` split selector + live saved `Recordings` list), 6-tile **Quick toggles** (`Wi-Fi`, `Bluetooth`, `Mic`, `Tune/Settings`, `Game/Zen`, `DND` with right-click opening Notification Center) plus inline `Alerts / Inbox` pill, inline **Wi-Fi & Network** view (with 1-click `nmtui` button), Volume/Brightness sliders, and Session footer.
+  - `kaze-dnd`: Session-scoped Do Not Disturb (`$XDG_RUNTIME_DIR/kaze/dnd.state` + `fnottctl pause/unpause` + Waybar `RTMIN+10` indicator whose right-click opens `kaze-dashboard --notifications`).
+  - Floating TUIs (`kaze-tui`) dock flush along the bar/drawer edge, and the default `Super + S` scratchpad (`kaze-dropdown`) drops down from the top (`animation = "slide top"`).
 
-### `kaze-windows [--list]` · `kaze-audio-sink [--quiet] [--list]` · `kaze-wifi [--list] [--rescan]` · `kaze-calc [--eval EXPR]`
+### `kaze-windows [--list]` · `kaze-audio-sink [--quiet] [--list]` · `kaze-wifi [--list] [--rescan]` · `kaze-bluetooth [--list] [--scan]` · `kaze-calc [--eval EXPR]`
 - On-demand Fuzzel workflow helpers (`0 MiB` background footprint):
   - `kaze-windows` (`Super + Tab`): Fuzzy window switcher across all normal and `special:*` workspaces via `hyprctl -j clients`.
   - `kaze-audio-sink` (`Super + Shift + A`): 1-step PipeWire default sink switcher via `wpctl status` + `wpctl set-default`.
   - `kaze-wifi`: Fast `<20 ms` `nmcli --rescan no` Wi-Fi switcher with password prompt, rescan, and `nmtui`/`impala` fallback.
+  - `kaze-bluetooth`: Quick `bluetoothctl` switcher in Fuzzel (paired/connected devices with battery `%`, power on/off toggle, 5s scan, and `bluetui` fallback).
   - `kaze-calc` (`Super + Alt + C` / `XF86Calculator`): Pure-Lua 5.5 sandboxed expression calculator (`--eval` for CLI, interactive `fuzzel` + `wl-copy`).
 
 ### `kaze-wall [--quiet] [<path> | --random | --menu | --preview | --current]`
 - Validates image magic bytes (PNG/JPEG/WebP/GIF/BMP/SVG), rejects pinned `user.lua` `wallpaper` overrides with exit `1`, serializes switches under `wall.lock` + `sync.lock`, updates `dynamic_palette` automatically when `theme == "dynamic"`, and transitions `swaybg` without flashing black.
-- `--random` picks a different image from `cfg.wallpaper_dir` when ≥ 2 images exist; `--menu` lists relative paths in `fuzzel --dmenu`; `--preview` opens `yazi` in `kaze-footclient`.
+- `--random` picks a different image from `cfg.wallpaper_dir` when ≥ 2 images exist; `--menu` lists relative paths with cached square `96×96` PNG thumbnails (PNG/SVG direct fallback on `minimal`) in `fuzzel --dmenu`; `--preview` opens `yazi` in `kaze-footclient`.
 
 ### `kaze-display [--menu | --list | extend-right | extend-left | extend-up | mirror | external | internal | auto]`
 - Pure-Lua external monitor manager powered by `lua/kaze/display.lua` and `hyprctl -j monitors all` + `hyprctl keyword monitor` (zero resident daemon, zero extra packages).
@@ -55,10 +57,16 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 ### `kaze-menu`
 - Opens a flat command palette in `fuzzel` (toggles closed if `fuzzel` is already running). When launched from `kaze-waybar.service`, actions detach via `systemd-run --user --scope --quiet` so bar restarts never terminate switch transactions. Entries without their backend binary are hidden:
   - `󰀻  App Launcher` → calls `fuzzel`
+  - `󰃭  Calendar & Dashboard` → calls `kaze-dashboard`
+  - `󰂚  Notification Center` → calls `kaze-dashboard --notifications`
+  - `󰓅  Performance Dashboard` → calls `kaze-dashboard --perf`
+  - `󰒓  Quick Control Tray` → calls `kaze-panel`
+  - `󰤨  Wi-Fi & Network Panel` → calls `kaze-panel --wifi`
   - `󰆍  Terminal` → calls `kaze-footclient -N`
   - `󰙵  Switch Layout` → calls `kaze-layout --menu`
   - `󰏘  Switch Theme` → calls `kaze-theme --menu`
   - `󰖩  Wi-Fi (nmtui)` → calls `kaze-tui wifi`
+  - `󰂯  Quick Bluetooth` → calls `kaze-bluetooth`
   - `󰂯  Bluetooth (bluetui)` → calls `kaze-tui bluetooth`
   - `󰕾  Audio Mixer (wiremix)` → calls `kaze-tui audio`
   - `󰍛  System Monitor (btop)` → calls `kaze-tui sysmon`

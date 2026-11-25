@@ -11,12 +11,12 @@ return {
     hypr = {
         gaps_in = 4,
         gaps_out = 8,
-        rounding = 12,
-        border_size = 1,
+        rounding = 0,
+        border_size = 2,
     },
     ui = {
-        fuzzel_radius = 14,
-        fnott_radius = 12,
+        fuzzel_radius = 0,
+        fnott_radius = 0,
         fnott_anchor = "top-right",
         fnott_edge_margin_vertical = 12,
         fnott_edge_margin_horizontal = 12,
@@ -68,11 +68,11 @@ return {
 ### Geometry & Hyprland Sync
 - Waybar: `position: "left"`, `width: 42`, `margin-top: 8`, `margin-bottom: 8`, `margin-left: 8`, `margin-right: 0`, `exclusive: true`.
 - Unified vertical rail on `window#waybar`:
-  - Background: `alpha(@bg_alt, 0.90)`
-  - Border: `1px solid alpha(@border, 0.85)`
-  - Border radius: `14px`
-- Hyprland: `gaps_in = 4`, `gaps_out = 8`, `rounding = 12`, `border_size = 1` (flush `8px` framing grid aligned with the `8px` sidebar margin while preserving full `1080px` vertical screen height).
-- Fnott: `anchor = top-right`, `edge-margin-vertical = 12`, `edge-margin-horizontal = 12`, `border-radius = 12`.
+  - Background: `alpha(@bg_alt, 0.94)`
+  - Border: `2px solid @border`
+  - Border radius: `0px`
+- Hyprland: `gaps_in = 4`, `gaps_out = 8`, `rounding = 0`, `border_size = 2` (flush `8px` sharp framing grid aligned with the `8px` sidebar margin while preserving full `1080px` vertical screen height).
+- Fnott: `anchor = top-right`, `edge-margin-vertical = 12`, `edge-margin-horizontal = 12`, `border-radius = 0`.
 
 ### Waybar Module Slots
 - **Top (`modules-left`)**: `["custom/menu"]`
@@ -98,13 +98,13 @@ return {
 ### Geometry & Hyprland Sync
 - Waybar: `position: "top"`, `height: 34`, `margin-top: 6`, `margin-left: 10`, `margin-right: 10`, `margin-bottom: 0`, `exclusive: true`, `reload_style_on_change: false`.
 - Outer `window#waybar`: `background: transparent; border: none;`.
-- Three distinct floating island containers (`.modules-left`, `.modules-center`, `.modules-right`):
-  - Background: `alpha(@bg_alt, 0.88)`
-  - Border: `1px solid alpha(@border, 0.85)`
-  - Border radius: `14px`
-  - Padding: `0 6px`
-- Hyprland: `gaps_in = 5`, `gaps_out = 10`, `rounding = 10`, `border_size = 1`.
-- Fnott: `anchor = top-right`, `edge-margin-vertical = 48`, `border-radius = 10`.
+- Three distinct sharp floating island containers (`.modules-left`, `.modules-center`, `.modules-right`):
+  - Background: `alpha(@bg_alt, 0.94)`
+  - Border: `2px solid @border`
+  - Border radius: `0px`
+  - Padding: `0 3px`
+- Hyprland: `gaps_in = 5`, `gaps_out = 10`, `rounding = 0`, `border_size = 2`.
+- Fnott: `anchor = top-right`, `edge-margin-vertical = 48`, `border-radius = 0`.
 
 ### Waybar Module Slots
 - **Left**: `["custom/menu", "hyprland/workspaces"]`
@@ -129,11 +129,11 @@ return {
 ### Geometry & Hyprland Sync
 - Waybar: `position: "top"`, `height: 28`, `margin: 0`, `exclusive: true`.
 - Full-width flush strip:
-  - Background: `alpha(@bg_alt, 0.92)`
-  - Border: `border-bottom: 1px solid alpha(@border, 0.85)`
+  - Background: `alpha(@bg_alt, 0.95)`
+  - Border: `border-bottom: 2px solid @border`
   - Border radius: `0px`
-- Hyprland: `gaps_in = 4`, `gaps_out = 6`, `rounding = 6`, `border_size = 1`.
-- Fnott: `anchor = top-right`, `edge-margin-vertical = 36`, `edge-margin-horizontal = 10`, `border-radius = 6`.
+- Hyprland: `gaps_in = 4`, `gaps_out = 6`, `rounding = 0`, `border_size = 2`.
+- Fnott: `anchor = top-right`, `edge-margin-vertical = 36`, `edge-margin-horizontal = 10`, `border-radius = 0`.
 
 ### Waybar Module Slots
 - **Left**: `["custom/menu", "hyprland/workspaces", "hyprland/window"]`

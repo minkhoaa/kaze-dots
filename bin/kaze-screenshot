@@ -24,6 +24,7 @@ package.path = table.concat({ repo .. "/?.lua", repo .. "/?/init.lua",
 
 local fs = require("kaze.fs")
 local capture = require("kaze.capture")
+local notify = require("kaze.notify")
 local quote = fs.shell_quote
 local tmp
 local function fail(msg)
@@ -45,7 +46,14 @@ if mode == "color" then
     local color = result and result:match("^%s*(#%x%x%x%x%x%x)%s*$")
     if not color then return end
     if not os.execute("printf %s " .. quote(color) .. " | wl-copy --type text/plain >/dev/null 2>&1") then fail("wl-copy failed") end
-    os.execute("notify-send -t 2000 -- Color " .. quote(color) .. " 2>/dev/null")
+    notify.record({
+        app = "kaze-screenshot",
+        icon = "󰈋",
+        urgency = "normal",
+        summary = "Color",
+        body = color,
+    })
+    os.execute("notify-send -a kaze-screenshot -t 2000 -- Color " .. quote(color) .. " 2>/dev/null")
     return
 end
 
@@ -92,4 +100,11 @@ else
     message = mode == "region" and "Region copied" or "Full screen copied"
 end
 os.remove(tmp)
-os.execute("notify-send -t 2000 Screenshot " .. quote(message) .. " 2>/dev/null")
+notify.record({
+    app = "kaze-screenshot",
+    icon = "󰄀",
+    urgency = "normal",
+    summary = "Screenshot",
+    body = message,
+})
+os.execute("notify-send -a kaze-screenshot -t 2000 Screenshot " .. quote(message) .. " 2>/dev/null")

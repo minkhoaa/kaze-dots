@@ -36,6 +36,7 @@ setup_path()
 
 local config = require("kaze.config")
 local fs = require("kaze.fs")
+local notify = require("kaze.notify")
 local popups = require("kaze.popups")
 local transaction = require("kaze.transaction")
 
@@ -133,10 +134,8 @@ local function scan_wallpapers(wall_dir)
     return entries
 end
 
-local function pick_from_menu(wall_dir)
-    local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
-    if running == true or running == 0 then
-        os.execute("pkill -x fuzzel >/dev/null 2>&1")
+local function pick_from_menu(wall_dir, current_wall, theme)
+    if popups.toggle_existing_fuzzel() then
         return nil
     end
     if not cmd_exists("fuzzel") then
@@ -148,33 +147,83 @@ local function pick_from_menu(wall_dir)
         fail("no wallpapers found in " .. wall_dir)
     end
 
-    local lines = {}
-    local by_rel = {}
-    for _, e in ipairs(entries) do
-        lines[#lines + 1] = e.rel
-        by_rel[e.rel] = e.full
+    local cur_canon = (current_wall and current_wall ~= "") and canonicalize(current_wall) or nil
+    local active_pos = nil
+    for i, e in ipairs(entries) do
+        if cur_canon and active_pos == nil and canonicalize(e.full) == cur_canon then
+            active_pos = i
+        end
     end
 
-    local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
-    local cmd = string.format(
-        "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 44 --lines %d -p %s",
-        utf8_guard,
-        fs.shell_quote(table.concat(lines, "\n")),
-        popups.active_right_flags(),
-        math.min(#lines, 12),
-        fs.shell_quote("Wallpaper > ")
-    )
-    local p = io.popen(cmd)
-    if not p then
-        fail("failed to launch fuzzel")
+    local want_thumbs = ((os.getenv("WAYLAND_DISPLAY") or "") ~= "")
+        or (os.getenv("KAZE_WALL_FORCE_THUMBS") == "1")
+    local has_ffmpeg = want_thumbs and fs.command_exists("ffmpeg") or false
+    local magick_bin = false
+    if want_thumbs and not has_ffmpeg then
+        if fs.command_exists("magick") then
+            magick_bin = "magick"
+        elseif fs.command_exists("convert") then
+            magick_bin = "convert"
+        end
     end
-    local out = p:read("*a") or ""
-    p:close()
-    local selected = out:gsub("[\r\n]+$", "")
+
+    local thumbs = {}
+    if want_thumbs then
+        local created = 0
+        local max_new = 24
+        local function resolve_thumb(idx)
+            local e = entries[idx]
+            if not e or thumbs[idx] ~= nil then
+                return
+            end
+            local thumb_path, was_created = popups.ensure_wallpaper_thumb(e.full, {
+                palette = theme,
+                allow_generate = (created < max_new),
+                has_ffmpeg = has_ffmpeg,
+                magick_bin = magick_bin,
+            })
+            thumbs[idx] = thumb_path
+            if was_created then
+                created = created + 1
+            end
+        end
+        if active_pos then
+            resolve_thumb(active_pos)
+        end
+        for i = 1, #entries do
+            resolve_thumb(i)
+        end
+    end
+
+    local dmenu_entries = {}
+    local by_label = {}
+    for i, e in ipairs(entries) do
+        dmenu_entries[#dmenu_entries + 1] = {
+            text = e.rel,
+            icon = want_thumbs and thumbs[i] or e.full,
+        }
+        by_label[e.rel] = e.full
+    end
+
+    local selected, dmenu_err = popups.run_dmenu(dmenu_entries, {
+        flags = popups.active_right_flags(),
+        width = 56,
+        lines = math.min(#dmenu_entries, 12),
+        minimal_lines = true,
+        hide_prompt = true,
+        line_height = 52,
+        image_size_ratio = 0.84,
+        select_index = active_pos and (active_pos - 1) or nil,
+        force_icons = (os.getenv("KAZE_WALL_FORCE_THUMBS") == "1"),
+        prompt = "Wallpaper > ",
+    })
+    if not selected then
+        fail(dmenu_err or "failed to launch fuzzel")
+    end
     if selected == "" then
         return nil
     end
-    local chosen = by_rel[selected]
+    local chosen = by_label[selected]
     if not chosen then
         fail("unknown wallpaper selection: " .. selected)
     end
@@ -199,7 +248,7 @@ for i = 1, #arg do
     end
 end
 
-local cfg = config.load({ strict = false })
+local cfg, theme = config.load({ strict = false })
 local wall_dir = fs.expand_home(cfg.wallpaper_dir or "~/Pictures/Wallpapers")
 
 if mode == "--current" then
@@ -236,7 +285,7 @@ end
 
 local target_path
 if not mode or mode == "--menu" then
-    target_path = pick_from_menu(wall_dir)
+    target_path = pick_from_menu(wall_dir, cfg.wallpaper_expanded, theme)
     if not target_path then
         os.exit(0)
     end
@@ -285,6 +334,13 @@ local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
 local wl_disp = os.getenv("WAYLAND_DISPLAY")
 if not quiet and ((hypr_sig and hypr_sig ~= "") or (wl_disp and wl_disp ~= "")) and cmd_exists("notify-send") then
     local basename = target_path:match("([^/]+)$") or target_path
+    notify.record({
+        app = "kaze-wall",
+        icon = "󰸉",
+        urgency = "low",
+        summary = "Wallpaper switched",
+        body = "Active: " .. basename,
+    })
     os.execute(string.format(
         "notify-send -a kaze-wall -t 1800 -u low -h string:x-canonical-private-synchronous:kaze-switch %s %s >/dev/null 2>&1 || true",
         fs.shell_quote("Wallpaper switched"),
