@@ -109,6 +109,22 @@ function M.build(cfg)
         },
         {
             group = "System",
+            chord = "SUPER + SHIFT + P",
+            display = "Super + Shift + P / XF86Display",
+            desc = "Display layout menu",
+            kind = "exec",
+            cmd = "kaze-display --menu",
+        },
+        {
+            group = "System",
+            chord = "XF86Display",
+            display = false,
+            desc = "Display layout menu",
+            kind = "exec",
+            cmd = "kaze-display --menu",
+        },
+        {
+            group = "System",
             chord = "CTRL + SUPER + ALT + R",
             display = "Ctrl + Super + Alt + R",
             desc = "Sync and reload shell",

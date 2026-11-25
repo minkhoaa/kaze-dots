@@ -1,0 +1,167 @@
+#!/usr/bin/env lua
+
+local function setup_path()
+    local home = os.getenv("HOME") or ""
+    local xdg_data = os.getenv("XDG_DATA_HOME")
+    if not xdg_data or xdg_data == "" then
+        xdg_data = home .. "/.local/share"
+    end
+    local paths = {}
+    local script = arg and arg[0] or ""
+    local q = "'" .. script:gsub("'", "'\\''") .. "'"
+    local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+    local resolved = p and p:read("*l") or nil
+    if p then
+        p:close()
+    end
+    local base = (resolved or script):match("^(.*)/[^/]+$")
+    if base then
+        local repo_lua = base .. "/../lua"
+        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+        if f then
+            f:close()
+            paths[#paths + 1] = repo_lua .. "/?.lua"
+            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+        end
+    end
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
+    paths[#paths + 1] = package.path
+    package.path = table.concat(paths, ";")
+end
+
+setup_path()
+
+local display = require("kaze.display")
+local fs = require("kaze.fs")
+
+local function usage(out)
+    out:write("Usage: kaze-display [--menu | --list | extend-right | extend-left | extend-up | mirror | external | internal | auto | -h | --help]\n")
+end
+
+local function cmd_exists(bin)
+    local ok = os.execute("command -v " .. fs.shell_quote(bin) .. " >/dev/null 2>&1")
+    return ok == true or ok == 0
+end
+
+local function notify(title, body, urgency)
+    if not cmd_exists("notify-send") then
+        return
+    end
+    os.execute(string.format(
+        "notify-send -a kaze-display -t 2200 -u %s -h string:x-canonical-private-synchronous:kaze-display %s %s >/dev/null 2>&1 || true",
+        fs.shell_quote(urgency or "low"),
+        fs.shell_quote(title),
+        fs.shell_quote(body)
+    ))
+end
+
+local mode = nil
+if #arg > 1 then
+    io.stderr:write("kaze-display: too many arguments\n")
+    usage(io.stderr)
+    os.exit(2)
+elseif #arg == 1 then
+    local a = arg[1]
+    if a == "-h" or a == "--help" then
+        usage(io.stdout)
+        os.exit(0)
+    end
+    mode = a
+else
+    mode = "--menu"
+end
+
+if not cmd_exists("hyprctl") then
+    io.stderr:write("kaze-display: hyprctl not found in PATH\n")
+    os.exit(1)
+end
+
+local raw = fs.capture("hyprctl -j monitors all 2>/dev/null")
+local monitors = display.parse_monitors(raw or "")
+if #monitors == 0 then
+    io.stderr:write("kaze-display: no monitors reported by hyprctl\n")
+    os.exit(1)
+end
+
+if mode == "--list" then
+    for _, m in ipairs(monitors) do
+        io.stdout:write(display.format_monitor(m) .. "\n")
+    end
+    os.exit(0)
+end
+
+if mode == "--menu" then
+    local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
+    if running == true or running == 0 then
+        os.execute("pkill -x fuzzel >/dev/null 2>&1")
+        os.exit(0)
+    end
+    if not cmd_exists("fuzzel") then
+        io.stderr:write("kaze-display: fuzzel not found in PATH\n")
+        os.exit(1)
+    end
+
+    local internal, externals = display.pick_roles(monitors)
+    local ext = externals[1]
+    local entries = {}
+    if ext then
+        entries[#entries + 1] = { label = string.format("󰍺  Extend Right  (%s → %s)", internal.name, ext.name), mode = "extend-right" }
+        entries[#entries + 1] = { label = string.format("󰍺  Extend Left   (%s ← %s)", ext.name, internal.name), mode = "extend-left" }
+        entries[#entries + 1] = { label = string.format("󰍺  Extend Above  (%s ↑ %s)", ext.name, internal.name), mode = "extend-up" }
+        entries[#entries + 1] = { label = string.format("󰍹  Mirror        (%s = %s)", ext.name, internal.name), mode = "mirror" }
+        entries[#entries + 1] = { label = string.format("󰶐  External Only (%s)", ext.name), mode = "external" }
+        entries[#entries + 1] = { label = string.format("󰌢  Internal Only (%s)", internal.name), mode = "internal" }
+    end
+    entries[#entries + 1] = { label = "󰑓  Auto Reset All Monitors", mode = "auto" }
+
+    local labels = {}
+    local by_label = {}
+    for _, e in ipairs(entries) do
+        labels[#labels + 1] = e.label
+        by_label[e.label] = e.mode
+    end
+
+    local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
+    local cmd = string.format(
+        "%sprintf '%%s\\n' %s | fuzzel --dmenu -w 46 --lines %d -p %s",
+        utf8_guard,
+        fs.shell_quote(table.concat(labels, "\n")),
+        #labels,
+        fs.shell_quote("Display > ")
+    )
+    local p = io.popen(cmd)
+    if not p then
+        io.stderr:write("kaze-display: failed to launch fuzzel\n")
+        os.exit(1)
+    end
+    local out = p:read("*a") or ""
+    p:close()
+    local choice = out:gsub("[\r\n]+$", "")
+    if choice == "" then
+        os.exit(0)
+    end
+    mode = by_label[choice]
+    if not mode then
+        io.stderr:write(string.format("kaze-display: unrecognized selection '%s'\n", choice))
+        os.exit(1)
+    end
+end
+
+local plan, err = display.plan(mode, monitors)
+if not plan then
+    io.stderr:write("kaze-display: " .. tostring(err) .. "\n")
+    notify("Display switch skipped", tostring(err), "normal")
+    os.exit(1)
+end
+
+for _, rule in ipairs(plan.rules) do
+    local ok = os.execute("hyprctl keyword monitor " .. fs.shell_quote(rule) .. " >/dev/null 2>&1")
+    if not (ok == true or ok == 0) then
+        io.stderr:write("kaze-display: failed applying monitor rule: " .. rule .. "\n")
+        notify("Display switch failed", rule, "critical")
+        os.exit(1)
+    end
+end
+
+notify("Display updated", plan.summary, "low")

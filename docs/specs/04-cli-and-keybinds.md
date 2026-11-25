@@ -24,6 +24,10 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 - Validates image magic bytes (PNG/JPEG/WebP/GIF/BMP/SVG), rejects pinned `user.lua` `wallpaper` overrides with exit `1`, serializes switches under `wall.lock` + `sync.lock`, updates `dynamic_palette` automatically when `theme == "dynamic"`, and transitions `swaybg` without flashing black.
 - `--random` picks a different image from `cfg.wallpaper_dir` when ≥ 2 images exist; `--menu` lists relative paths in `fuzzel --dmenu`; `--preview` opens `yazi` in `kaze-footclient`.
 
+### `kaze-display [--menu | --list | extend-right | extend-left | extend-up | mirror | external | internal | auto]`
+- Pure-Lua external monitor manager powered by `lua/kaze/display.lua` and `hyprctl -j monitors all` + `hyprctl keyword monitor` (zero resident daemon, zero extra packages).
+- Prefers `eDP-*` / `LVDS-*` / `DSI-*` as the internal laptop display; refuses `external` when no external monitor is connected so a single display is never blacked out. Bound to `Super + Shift + P` and `XF86Display`, and exposed in `kaze-menu`.
+
 ### `kaze-keys [--list]`
 - Shares `lua/kaze/keybinds_data.lua` with `hypr/keybinds.lua` (single pure-Lua source of truth with zero compositor IPC needed to list shortcuts).
 - `--list` prints `[Group]  Chord  —  Description` rows; no args opens `fuzzel --dmenu -p "Keys > "` (bound to `Super + /`, Esc-safe).

@@ -82,7 +82,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             assert_contains(full_out, "--noconfirm", "--yes adds --noconfirm")
             for _, pkg in ipairs({
                 "swappy", "otf-font-awesome", "wf-recorder", "ffmpeg", "hyprpicker",
-                "hyprsunset", "matugen", "yazi", "mate-polkit", "fcitx5",
+                "hyprsunset", "matugen", "yazi", "imv", "zathura", "zathura-pdf-mupdf",
+                "mate-polkit", "gnome-keyring", "fcitx5",
                 "fcitx5-bamboo", "fcitx5-gtk", "noto-fonts", "noto-fonts-emoji",
             }) do
                 assert_contains(full_out, "  " .. pkg .. "\n", "full includes " .. pkg)
@@ -278,7 +279,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             assert_contains(fail_out, "swappy", "names missing swappy")
 
             -- 3. Stub full binaries + polkit agent -> full offline passes
-            for _, b in ipairs({ "swappy", "wf-recorder", "ffprobe", "hyprpicker", "hyprsunset", "matugen", "yazi", "fcitx5" }) do
+            for _, b in ipairs({ "swappy", "wf-recorder", "ffprobe", "hyprpicker", "hyprsunset", "matugen", "yazi", "imv", "zathura", "gnome-keyring-daemon", "fcitx5" }) do
                 write_stub(stub_bin, b, "exit 0")
             end
             write_stub(tmp, "polkit-agent", "exit 0")
@@ -324,6 +325,7 @@ if [ "$*" = '--user --activatable' ]; then
     printf 'org.freedesktop.portal.Desktop               - - - (activatable) - -\n'
     printf 'org.freedesktop.impl.portal.desktop.hyprland - - - (activatable) - -\n'
     printf 'org.freedesktop.impl.portal.desktop.gtk      - - - (activatable) - -\n'
+    printf 'org.freedesktop.secrets                      - - - (activatable) - -\n'
     exit 0
 fi
 exit 2
@@ -349,6 +351,7 @@ fi
             assert_true(live_ok, "live full kaze-doctor should pass:\n" .. live_out)
             assert_eq(fs.read_file(home .. "/busctl-calls"), "--user --activatable\n", "portal check must strictly be passive")
             assert_contains(live_out, "[OK]   daemons (full):", "singleton daemons verified including truncated polkit comm")
+            assert_contains(live_out, "[OK]   keyring: org.freedesktop.secrets activatable", "full doctor verifies keyring passively")
 
             local dup_out, dup_ok = read_all(live_env .. " DUP_WAYBAR=1 " .. doctor .. " 2>&1")
             assert_true(not dup_ok, "duplicate waybar PID must fail kaze-doctor")
@@ -456,6 +459,7 @@ esac
             assert_true(os.execute(menu_ppd_cmd))
             local items_ppd = assert(fs.read_file(home .. "/fuzzel-items"))
             assert_contains(items_ppd, "Wi-Fi (nmtui)", "menu shows Wi-Fi (nmtui)")
+            assert_contains(items_ppd, "Displays", "menu shows Displays switcher")
             assert_contains(items_ppd, "Power Profile", "menu shows Power Profile when active")
 
             -- Picking performance via kaze-tui power-profile calls busctl set-property
@@ -467,6 +471,73 @@ esac
             local ppd_menu = assert(fs.read_file(home .. "/fuzzel-items"))
             assert_contains(ppd_menu, "balanced (active)", "marks active profile")
             assert_eq(fs.read_file(home .. "/ppd-set"), "performance\n", "sets ActiveProfile via busctl")
+        end)
+        rm_rf(tmp)
+        if not ok_test then error(err_test, 0) end
+    end)
+
+    test("kaze-display: monitor parser, role selection, layout plans, and CLI execution", function()
+        local display = require("kaze.display")
+        local sample_json = [[
+[
+  {"name":"eDP-1","description":"Built-in Panel","width":1920,"height":1080,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":true},
+  {"name":"HDMI-A-1","description":"External 4K","width":2560,"height":1440,"refreshRate":144.0,"scale":1.0,"disabled":false,"focused":false}
+]
+]]
+        local mons = display.parse_monitors(sample_json)
+        assert_eq(#mons, 2, "parsed 2 monitors")
+        local internal, exts = display.pick_roles(mons)
+        assert_eq(internal.name, "eDP-1", "eDP preferred as internal")
+        assert_eq(#exts, 1, "1 external monitor")
+        assert_eq(exts[1].name, "HDMI-A-1", "external monitor name")
+
+        local p_ext = assert(display.plan("extend-right", mons))
+        assert_eq(p_ext.rules[1], "eDP-1,preferred,0x0,1")
+        assert_eq(p_ext.rules[2], "HDMI-A-1,preferred,auto-right,1")
+
+        local p_mir = assert(display.plan("mirror", mons))
+        assert_eq(p_mir.rules[2], "HDMI-A-1,preferred,auto,1,mirror,eDP-1")
+
+        local p_only = assert(display.plan("external", mons))
+        assert_eq(p_only.rules[1], "HDMI-A-1,preferred,auto,1")
+        assert_eq(p_only.rules[2], "eDP-1,disable")
+
+        -- Single monitor refuses 'external' so user cannot black out only display
+        local single = display.parse_monitors('[{"name":"eDP-1","width":1920,"height":1080,"refreshRate":60,"disabled":false,"focused":true}]')
+        local bad_plan, bad_err = display.plan("external", single)
+        assert_eq(bad_plan, nil, "single monitor must refuse external-only")
+        assert_contains(bad_err, "no external monitor", "clear single-monitor error")
+
+        -- CLI smoke with stubbed hyprctl
+        local tmp = make_tmp_dir()
+        local ok_test, err_test = pcall(function()
+            local home = tmp .. "/home"
+            local stub_bin = tmp .. "/bin"
+            fs.mkdir_p(home)
+            fs.mkdir_p(stub_bin)
+            for _, b in ipairs({ "lua", "readlink" }) do
+                link_host_bin(stub_bin, b)
+            end
+            write_stub(stub_bin, "hyprctl", [[
+if [ "$1" = "-j" ] && [ "$2" = "monitors" ]; then
+    printf '[{"name":"eDP-1","width":1920,"height":1080,"refreshRate":60,"disabled":false,"focused":true},{"name":"DP-1","width":2560,"height":1440,"refreshRate":144,"disabled":false,"focused":false}]\n'
+    exit 0
+fi
+printf '%s\n' "$*" >> "$HOME/hyprctl-calls"
+exit 0
+]])
+            local env = string.format("HOME=%s PATH=%s", q(home), q(stub_bin))
+            local bin = q(repo_dir .. "/bin/kaze-display")
+            local list_out, list_ok = read_all(env .. " " .. bin .. " --list 2>&1")
+            assert_true(list_ok, "kaze-display --list ok: " .. list_out)
+            assert_contains(list_out, "eDP-1", "lists eDP-1")
+            assert_contains(list_out, "DP-1", "lists DP-1")
+
+            local _, ext_ok = read_all(env .. " " .. bin .. " extend-left 2>&1")
+            assert_true(ext_ok, "kaze-display extend-left ok")
+            local calls = fs.read_file(home .. "/hyprctl-calls") or ""
+            assert_contains(calls, "keyword monitor eDP-1,preferred,0x0,1", "applied internal monitor")
+            assert_contains(calls, "keyword monitor DP-1,preferred,auto-left,1", "applied external monitor left")
         end)
         rm_rf(tmp)
         if not ok_test then error(err_test, 0) end

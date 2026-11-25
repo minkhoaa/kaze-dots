@@ -135,7 +135,8 @@ local MINIMAL_BINS = {
 
 local FULL_EXTRA_BINS = {
     "swappy", "wf-recorder", "ffprobe", "hyprpicker",
-    "hyprsunset", "matugen", "yazi", "fcitx5",
+    "hyprsunset", "matugen", "yazi", "imv", "zathura",
+    "gnome-keyring-daemon", "fcitx5",
 }
 
 local missing_minimal = {}
@@ -345,6 +346,13 @@ else
             report_ok("portals: Desktop, hyprland, and gtk activatable on user bus (passive check)")
         else
             report_fail("portals: missing activatable service(s): " .. table.concat(missing_portals, ", "))
+        end
+        if profile == "full" then
+            if names["org.freedesktop.secrets"] then
+                report_ok("keyring: org.freedesktop.secrets activatable on user bus (passive check)")
+            else
+                report_warn("keyring: org.freedesktop.secrets not activatable (install gnome-keyring or keepassxc)")
+            end
         end
     end
 

@@ -85,6 +85,7 @@ local items = {
     { label = "󰙵  Switch Layout",      cmd = fs.shell_quote(sibling_or_path("kaze-layout")) .. " --menu" },
     { label = "󰏘  Switch Theme",       cmd = fs.shell_quote(sibling_or_path("kaze-theme")) .. " --menu" },
     { label = "󰸉  Switch Wallpaper",   cmd = fs.shell_quote(sibling_or_path("kaze-wall")) .. " --menu", check = function() return kaze_tool_exists("kaze-wall") end },
+    { label = "󰍹  Displays",           cmd = fs.shell_quote(sibling_or_path("kaze-display")) .. " --menu", check = function() return kaze_tool_exists("kaze-display") end },
     { label = "󰌌  Keyboard Shortcuts", cmd = fs.shell_quote(sibling_or_path("kaze-keys")), check = function() return kaze_tool_exists("kaze-keys") end },
     { label = wifi_label,              cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " wifi", check = function() return wifi_bin ~= nil end },
     { label = "󰓅  Power Profile",      cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " power-profile", check = power_profile.available },

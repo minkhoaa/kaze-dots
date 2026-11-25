@@ -123,7 +123,11 @@ FULL_EXTRA_PACKAGES=(
     hyprsunset
     matugen
     yazi
+    imv
+    zathura
+    zathura-pdf-mupdf
     mate-polkit
+    gnome-keyring
     fcitx5
     fcitx5-bamboo
     fcitx5-gtk
