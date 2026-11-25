@@ -9,9 +9,9 @@ return {
     -- theme = "kaze",     -- "kaze" | "lavender" | "tokyonight" | "carbon"
 
     -- font = "JetBrainsMono Nerd Font",
-    -- terminal = "footclient",
+    -- terminal = "kaze-footclient",
     -- browser = "firefox",
-    -- files = "footclient -e yazi",
+    -- files = "kaze-footclient -e yazi",
     -- wallpaper = "~/Pictures/Wallpapers/wallpaper.png",
 
     -- kb_layout = "us",
@@ -21,6 +21,12 @@ return {
     -- vol_step = 5,
     -- vol_max = 1.5,
     -- bright_step = 5,
+
+    -- clipboard = {
+    --     ephemeral = true,       -- false keeps history in $XDG_CACHE_HOME/cliphist/db
+    --     max_items = 100,        -- 1..750
+    --     max_bytes = 2 * 1024 * 1024, -- bytes per stored item (max 64 MiB)
+    -- },
 
     -- blur = {
     --     enabled = true,

@@ -125,7 +125,7 @@ function M.build_waybar_config(_cfg, _theme)
   },
 
   "custom/power": {
-    "format": "⏻",
+    "format": "󰐥",
     "tooltip-format": "Power Menu",
     "on-click": "kaze-power"
   }
@@ -139,10 +139,11 @@ function M.build_waybar_css(cfg, _theme)
 * {
     border: none;
     border-radius: 0;
-    font-family: "%s", monospace;
+    font-family: "%s Propo", "%s", monospace;
     font-size: 12.5px;
     font-weight: 500;
     min-height: 0;
+    min-width: 0;
 }
 
 window#waybar {
@@ -154,30 +155,32 @@ window#waybar {
 .modules-left,
 .modules-center,
 .modules-right {
-    background: alpha(@bg_alt, 0.88);
-    border: 1px solid alpha(@border, 0.85);
+    background: alpha(@bg_alt, 0.90);
+    border: 1px solid alpha(@border, 0.95);
     border-radius: 14px;
-    padding: 0 6px;
+    padding: 0 3px;
     margin: 0;
 }
 
 #custom-menu {
-    color: @accent;
-    font-size: 14px;
-    padding: 0 9px;
-    margin: 3px 2px 3px 0;
+    min-height: 26px;
+    padding: 0 10px;
+    margin: 3px 5px 3px 0;
     border-radius: 10px;
+    background: alpha(@accent, 0.14);
+    color: @accent;
+    font-size: 14.5px;
     transition: background 140ms ease, color 140ms ease;
 }
 
 #custom-menu:hover {
-    background: alpha(@surface, 0.90);
+    background: alpha(@accent, 0.24);
     color: @fg;
 }
 
 #workspaces {
-    margin: 0;
-    padding: 0 4px;
+    margin: 0 4px 0 0;
+    padding: 0;
 }
 
 #workspaces button {
@@ -221,10 +224,11 @@ window#waybar {
 
 #mpris {
     color: @accent;
+    background: alpha(@accent, 0.10);
     font-weight: 500;
-    font-size: 12.5px;
-    padding: 0 8px 0 10px;
-    margin: 3px 0;
+    font-size: 12px;
+    padding: 0 10px;
+    margin: 3px 2px 3px 0;
     border-radius: 10px;
 }
 
@@ -232,15 +236,28 @@ window#waybar {
     color: @fg;
     font-weight: 600;
     font-size: 12.5px;
-    padding: 0 10px;
+    padding: 0 12px;
     margin: 3px 0;
-    letter-spacing: 0.2px;
+    border-radius: 10px;
 }
 
-#tray,
+#tray {
+    padding: 0;
+    margin: 0;
+}
+
+#tray > * {
+    padding: 0 4px;
+}
+
+#tray > .passive {
+    -gtk-icon-effect: dim;
+}
+
 #network,
 #wireplumber,
 #battery {
+    min-height: 26px;
     padding: 0 8px;
     margin: 3px 1px;
     border-radius: 10px;
@@ -282,8 +299,9 @@ window#waybar {
 }
 
 #custom-power {
+    min-height: 26px;
     color: @fg_muted;
-    font-size: 13.5px;
+    font-size: 14px;
     padding: 0 9px;
     margin: 3px 0 3px 2px;
     border-radius: 10px;
@@ -303,9 +321,9 @@ tooltip {
 
 tooltip label {
     color: @fg;
-    padding: 4px 6px;
+    padding: 6px 10px;
 }
-]], font)
+]], font, font)
 end
 
 return M

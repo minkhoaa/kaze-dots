@@ -71,7 +71,7 @@ function M.build_waybar_config(_cfg, _theme)
 
   "clock": {
     "interval": 60,
-    "format": "{:%a %d %b  %H:%M}",
+    "format": "{:%a %d %b · %H:%M}",
     "tooltip-format": "<tt>{calendar}</tt>"
   },
 
@@ -117,7 +117,7 @@ function M.build_waybar_config(_cfg, _theme)
   },
 
   "custom/power": {
-    "format": "⏻",
+    "format": "󰐥",
     "tooltip-format": "Power Menu",
     "on-click": "kaze-power"
   }
@@ -131,7 +131,7 @@ function M.build_waybar_css(cfg, _theme)
 * {
     border: none;
     border-radius: 0;
-    font-family: "%s", monospace;
+    font-family: "%s Propo", "%s", monospace;
     font-size: 12px;
     font-weight: 500;
     min-height: 0;
@@ -139,10 +139,18 @@ function M.build_waybar_css(cfg, _theme)
 }
 
 window#waybar {
-    background: alpha(@bg_alt, 0.92);
-    border-bottom: 1px solid alpha(@border, 0.85);
+    background: alpha(@bg_alt, 0.94);
+    border-bottom: 1px solid alpha(@border, 0.95);
     border-radius: 0;
     color: @fg;
+}
+
+.modules-left {
+    margin-left: 4px;
+}
+
+.modules-right {
+    margin-right: 4px;
 }
 
 #custom-menu {
@@ -159,22 +167,23 @@ window#waybar {
 }
 
 #workspaces {
-    margin: 0;
-    padding: 0 2px;
+    margin: 0 2px;
+    padding: 0;
 }
 
 #workspaces button {
-    padding: 0 8px;
-    margin: 0 1px;
+    padding: 0 9px;
+    margin: 0;
+    min-height: 27px;
     color: @fg_muted;
     background: transparent;
-    border-bottom: 2px solid transparent;
+    box-shadow: inset 0 -2px 0 0 transparent;
     font-weight: 600;
-    transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+    transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
 }
 
 #workspaces button.empty {
-    color: alpha(@fg_muted, 0.45);
+    color: alpha(@fg_muted, 0.65);
 }
 
 #workspaces button:hover {
@@ -184,18 +193,18 @@ window#waybar {
 
 #workspaces button.active {
     color: @fg;
-    background: alpha(@surface, 0.40);
-    border-bottom: 2px solid @accent;
+    background: alpha(@accent, 0.12);
+    box-shadow: inset 0 -2px 0 0 @accent;
 }
 
 #workspaces button.urgent {
     color: @danger;
-    border-bottom: 2px solid @danger;
+    box-shadow: inset 0 -2px 0 0 @danger;
 }
 
 #window {
     color: @fg_muted;
-    padding: 0 10px;
+    padding: 0 12px;
     font-weight: 400;
 }
 
@@ -208,15 +217,26 @@ window#waybar.empty #window {
 #clock {
     color: @fg;
     font-weight: 600;
-    padding: 0 10px;
-    letter-spacing: 0.2px;
+    padding: 0 12px;
 }
 
-#tray,
+#tray {
+    padding: 0;
+    margin: 0;
+}
+
+#tray > * {
+    padding: 0 4px;
+}
+
+#tray > .passive {
+    -gtk-icon-effect: dim;
+}
+
 #network,
 #wireplumber,
 #battery {
-    padding: 0 8px;
+    padding: 0 9px;
     margin: 0;
     color: @fg;
     transition: background 140ms ease, color 140ms ease;
@@ -256,7 +276,7 @@ window#waybar.empty #window {
 
 #custom-power {
     color: @fg_muted;
-    font-size: 13px;
+    font-size: 13.5px;
     padding: 0 10px;
     margin: 0;
     transition: background 140ms ease, color 140ms ease;
@@ -275,9 +295,9 @@ tooltip {
 
 tooltip label {
     color: @fg;
-    padding: 4px 6px;
+    padding: 6px 10px;
 }
-]], font)
+]], font, font)
 end
 
 return M

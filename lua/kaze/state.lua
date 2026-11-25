@@ -6,6 +6,14 @@ function M.path(config_dir)
     return (config_dir or fs.config_dir()) .. "/kaze/state.lua"
 end
 
+function M.pending_path()
+    local signature = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
+    local runtime = os.getenv("XDG_RUNTIME_DIR")
+    if signature and signature:match("^[%w_-]+$") and runtime and runtime:sub(1, 1) == "/" then
+        return runtime .. "/hypr/" .. signature .. "/kaze-pending-state.lua"
+    end
+end
+
 function M.load(path)
     local p = path or M.path()
     if not fs.file_exists(p) then

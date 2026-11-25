@@ -13,15 +13,17 @@ All targets are anchored against our isolated Arch Linux KVM VM benchmarks (`192
 
 | Metric | Typical Heavy QML Shell | Typical Light QML Bar | **`kaze-dots` Target Budget** | Gate |
 |---|---|---|---|---|
-| Total shell stack idle PSS (`1920×1080`) | ~279–344 MiB | ~89 MiB | **≤ 60 MiB** *(target ~52–56 MiB)* | Hard fail if > 65 MiB |
-| Bar (`waybar`) idle PSS | N/A | N/A | **≤ 40 MiB** | Warn if > 38 MiB |
-| Background idle CPU (10s window) | ~0.0–1.5% | ~0.0% | **0.0% (`≤ 0.2%`)** | Hard fail if > 0.5% |
-| Context switches/sec (idle) | ~0.2–30 CS/s | ~1.0 CS/s | **≤ 5 CS/s** | Warn if > 10 CS/s |
+| T0 shell stack idle PSS (`1920×1080`) | ~279–344 MiB | ~89 MiB | **≤ 60.0 MiB**, including any portal eagerly activated at login | Hard fail if > 60.0 MiB |
+| Bar (`waybar`) idle PSS | N/A | N/A | **≤ 40.0 MiB** | Hard fail if > 40.0 MiB |
+| Background idle CPU (120s window) | ~0.0–1.5% | ~0.0% | **≤ 0.20%** | Hard fail if > 0.20% |
+| Context switches/sec (all shell threads) | ~0.2–30 CS/s | ~1.0 CS/s | **≤ 5.0 CS/s** | Hard fail if > 5.0 CS/s |
 | Host dGPU (NVIDIA) wakeups | High (Vulkan/QML) | Low | **0 MiB VRAM / 0 wakeups** | Hard fail |
 | Live layout/theme switch latency | N/A | < 500 ms | **≤ 500 ms** | Target |
 | Hyprland `configerrors` count | 0 | 0 | **0 errors** | Hard fail |
 | Terminal RAM (5 windows via `footclient`) | ~482 MiB (`kitty`) | ~482 MiB (`kitty`) | **≤ 20 MiB** | Verified (~13.9 MiB) |
 | External AUR dependencies (core) | Several | AUR | **0** *(100% Arch `[extra]`)* | Hard fail |
+
+**T0** is a cold login before opening an app, sending a toast, or probing a portal. The strict gate includes any early portal in the 60.0 MiB cap. The development harness can report the exact known GTK3 failure separately, but always enforces a 55.0 MiB shell-only regression guard. Report resource use after notifications (**T1**) and after using portals (**T2**) separately; the 60.0 MiB cap is not a claim about either warm sample. List the Kaze shell, session services, known out-of-budget components, and any unclassified same-UID processes. File picking and screen sharing remain in scope even when they increase memory use.
 
 ## 3. Scope Boundaries
 
@@ -33,7 +35,7 @@ All targets are anchored against our isolated Arch Linux KVM VM benchmarks (`192
   2. `islands`: Floating top pill islands with soft corners and subtle frosted glass.
   3. `slim`: Flat `28px` edge-to-edge ultra-minimal top bar.
 - **4 curated color presets**: `kaze`, `lavender`, `tokyonight`, `carbon`, plus user override support via `~/.config/kaze/user.lua`.
-- **Lua CLI utilities**: `kaze-sync`, `kaze-layout`, `kaze-theme`, `kaze-menu`, `kaze-power`, `kaze-tui`, `kaze-osd`.
+- **On-demand Lua CLI utilities** for layout/theme, menus, Foot clients, OSD, session lifecycle, clipboard and screenshots; no custom resident helpers.
 - **On-demand floating TUIs** (`nmtui`, `bluetui`, `wiremix`, `btop`) via `footclient` (`0 MiB` when closed).
 - **Progress-bar OSD** (volume & brightness) powered by `fnott` + `notify-send` (`0 MiB` extra daemon cost).
 - **Clean Arch installer & symlink manager** (`scripts/install-packages.sh`, `scripts/apply.sh`) and clean Arch KVM VM test harness.

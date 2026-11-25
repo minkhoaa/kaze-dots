@@ -1,0 +1,15 @@
+[Unit]
+Description=Kaze status bar
+PartOf=kaze-session.target
+Requisite=kaze-session.target
+After=kaze-session.target fnott.service
+StartLimitIntervalSec=30s
+StartLimitBurst=5
+
+[Service]
+Type=exec
+EnvironmentFile=%t/kaze/session.env
+ExecStart=/usr/bin/waybar --config ${XDG_CONFIG_HOME}/waybar/config.jsonc --style ${XDG_CONFIG_HOME}/waybar/style.css
+Restart=on-failure
+RestartSec=250ms
+TimeoutStopSec=5s

@@ -39,35 +39,69 @@ local emit_fuzzel = require("kaze.emit_fuzzel")
 local emit_hyprlock = require("kaze.emit_hyprlock")
 local emit_waybar = require("kaze.emit_waybar")
 local fs = require("kaze.fs")
+local session = require("kaze.session")
+local state = require("kaze.state")
+local transaction = require("kaze.transaction")
 
-local function usage()
-    io.stderr:write("Usage: kaze-sync [--reload] [--check] [-h|--help]\n")
+local function usage(output)
+    output:write("Usage: kaze-sync [--reload | --check | --session-start | --set-layout NAME | --set-theme NAME]\n")
 end
 
-local check_only = false
-local do_reload = false
+local option, value = arg[1], arg[2]
+local check_only = option == "--check"
+local session_start = option == "--session-start"
+local setting = ({ ["--set-layout"] = "layout", ["--set-theme"] = "theme" })[option]
+local do_reload = option == "--reload" or setting ~= nil
+if #arg == 1 and (option == "-h" or option == "--help") then
+    usage(io.stdout)
+    os.exit(0)
+end
+if (setting and (#arg ~= 2 or value == ""))
+    or (not setting and (#arg > 1 or (option and not (check_only or session_start or do_reload)))) then
+    usage(io.stderr)
+    os.exit(2)
+end
 
-for i = 1, #arg do
-    local a = arg[i]
-    if a == "--check" then
-        check_only = true
-    elseif a == "--reload" then
-        do_reload = true
-    elseif a == "-h" or a == "--help" then
-        io.stdout:write("Usage: kaze-sync [--reload] [--check] [-h|--help]\n")
-        os.exit(0)
-    else
-        io.stderr:write(string.format("kaze-sync: unknown option '%s'\n", a))
-        usage()
-        os.exit(2)
+local function fail(err)
+    io.stderr:write("kaze-sync: " .. tostring(err) .. "\n")
+    os.exit(1)
+end
+
+local signature = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
+local live = do_reload and signature and signature ~= ""
+local work_dir
+if not check_only then
+    work_dir = fs.private_runtime_dir()
+    if not work_dir then
+        if live or session_start or fs.runtime_dir() then fail("cannot prepare $XDG_RUNTIME_DIR/kaze") end
+        work_dir = fs.config_dir() .. "/kaze"
+        fs.mkdir_p(work_dir)
+    end
+    if os.getenv("KAZE_SYNC_LOCKED") ~= "1" then
+        local args = { fs.shell_quote(arg[0]) }
+        for _, a in ipairs(arg) do args[#args + 1] = fs.shell_quote(a) end
+        os.exit(fs.exit_status(os.execute("umask 077; exec flock --close " .. fs.shell_quote(work_dir .. "/sync.lock")
+            .. " env KAZE_SYNC_LOCKED=1 " .. table.concat(args, " "))))
     end
 end
 
-local ok, cfg, theme, layout = pcall(config.load, { strict = true })
-if not ok then
-    io.stderr:write(string.format("kaze-sync: %s\n", tostring(cfg)))
-    os.exit(1)
+local pending
+if live then
+    if not session.is_active() then fail("no active Kaze session; start a new Hyprland login after apply.sh") end
+    pending = state.pending_path()
+    if not pending or not os.execute("[ -d " .. fs.shell_quote(fs.dirname(pending)) .. " ]") then
+        fail("Hyprland instance directory not found")
+    end
 end
+
+local candidate
+if setting then
+    candidate = state.load()
+    candidate[setting] = value
+end
+local ok, cfg, theme, layout = pcall(config.load, { strict = not session_start, state = candidate })
+if not ok then fail(cfg) end
+if setting and cfg[setting] ~= value then fail(setting .. " is pinned by user.lua") end
 
 local waybar = emit_waybar.emit(cfg, theme, layout)
 local foot_ini = emit_foot.emit(cfg, theme, layout)
@@ -85,43 +119,33 @@ local outputs = {
     { cfg_dir .. "/waybar/colors.css", waybar.colors_css },
     { cfg_dir .. "/waybar/config.jsonc", waybar.config_jsonc },
     { cfg_dir .. "/waybar/style.css", waybar.style_css },
-    { cfg_dir .. "/foot/foot.ini", foot_ini },
-    { cfg_dir .. "/fuzzel/fuzzel.ini", fuzzel_ini },
+    { cfg_dir .. "/foot/foot.ini", foot_ini, "foot --check-config -c" },
+    { cfg_dir .. "/fuzzel/fuzzel.ini", fuzzel_ini, "fuzzel --check-config --config" },
     { cfg_dir .. "/fnott/fnott.ini", fnott_ini },
     { cfg_dir .. "/hypr/hyprlock.conf", hyprlock_conf },
 }
 
-for _, item in ipairs(outputs) do
-    local write_ok, write_err = pcall(fs.write_atomic, item[1], item[2])
-    if not write_ok then
-        io.stderr:write(string.format("kaze-sync: %s\n", tostring(write_err)))
-        os.exit(1)
-    end
+local appearance
+if live or session_start then
+    local env_path = work_dir .. "/session.env"
+    local env_ok, contents, change = pcall(function()
+        local previous = live and assert(fs.read_file(env_path), "missing session.env; start a new Kaze login") or nil
+        local next_env = session.render_environment(cfg, theme, previous)
+        if previous then
+            return next_env, { before = session.read_appearance(previous), after = session.read_appearance(next_env) }
+        end
+        return next_env
+    end)
+    if not env_ok then fail(contents) end
+    outputs[#outputs + 1] = { env_path, contents }
+    appearance = change
 end
 
-if do_reload then
-    local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
-    local wl_disp = os.getenv("WAYLAND_DISPLAY")
-    local has_hypr = hypr_sig and hypr_sig ~= ""
-    local has_wayland = (wl_disp and wl_disp ~= "") or has_hypr
-
-    if has_hypr then
-        os.execute("hyprctl reload >/dev/null 2>&1")
-    end
-
-    if has_wayland then
-        local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
-        os.execute(
-            utf8_guard
-                .. "pkill -x waybar >/dev/null 2>&1 || true; "
-                .. "i=0; while pgrep -x waybar >/dev/null 2>&1 && [ \"$i\" -lt 15 ]; do sleep 0.02; i=$((i + 1)); done; "
-                .. "nohup waybar >/dev/null 2>&1 </dev/null &"
-        )
-        os.execute(
-            utf8_guard
-                .. "pkill -x fnott >/dev/null 2>&1 || true; "
-                .. "i=0; while pgrep -x fnott >/dev/null 2>&1 && [ \"$i\" -lt 10 ]; do sleep 0.02; i=$((i + 1)); done; "
-                .. "GLIBC_TUNABLES=glibc.malloc.trim_threshold=65536 nohup fnott >/dev/null 2>&1 </dev/null &"
-        )
-    end
-end
+local applied, err = transaction.apply(outputs, {
+    live = live,
+    appearance = appearance,
+    candidate = candidate,
+    pending = pending,
+    work_dir = work_dir,
+})
+if not applied then fail(err) end

@@ -1,0 +1,11 @@
+[Unit]
+Description=Kaze session lockscreen
+PartOf=kaze-session.target
+Requisite=kaze-session.target
+After=kaze-session.target
+
+[Service]
+Type=exec
+EnvironmentFile=%t/kaze/session.env
+ExecStart=/usr/bin/hyprlock
+TimeoutStopSec=5s

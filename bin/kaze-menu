@@ -71,25 +71,41 @@ end
 local items = {
     { label = "󰙵  Switch Layout",      cmd = fs.shell_quote(sibling_or_path("kaze-layout")) .. " --menu" },
     { label = "󰏘  Switch Theme",       cmd = fs.shell_quote(sibling_or_path("kaze-theme")) .. " --menu" },
-    { label = "󰖩  Wi-Fi (nmtui)",      cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " wifi" },
-    { label = "󰂯  Bluetooth (bluetui)", cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " bluetooth" },
-    { label = "󰕾  Audio Mixer (wiremix)", cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " audio" },
-    { label = "󰍛  System Monitor (btop)", cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " sysmon" },
-    { label = "󰅌  Clipboard History",  cmd = "sel=$(cliphist list | fuzzel --dmenu -p 'Clip > ') && [ -n \"$sel\" ] && printf '%s\\n' \"$sel\" | cliphist decode | wl-copy" },
-    { label = "󰄀  Screenshot Region",  cmd = "geom=$(slurp) && [ -n \"$geom\" ] && grim -g \"$geom\" - | wl-copy && notify-send -t 2000 'Screenshot' 'Region copied'" },
+    { label = "󰖩  Wi-Fi (nmtui)",      cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " wifi", needs = { "nmtui" } },
+    { label = "󰂯  Bluetooth",           cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " bluetooth", any_of = { "bluetui", "bluetoothctl" } },
+    { label = "󰕾  Audio Mixer",         cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " audio", any_of = { "wiremix", "pulsemixer", "alsamixer" } },
+    { label = "󰍛  System Monitor",       cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " sysmon", any_of = { "btop", "htop", "top" } },
+    { label = "󰅌  Clipboard History",  cmd = fs.shell_quote(sibling_or_path("kaze-clipboard")) .. " pick", needs = { "cliphist", "wl-copy" } },
+    { label = "󰄀  Screenshot Region",  cmd = fs.shell_quote(sibling_or_path("kaze-screenshot")) .. " region", needs = { "slurp", "grim", "wl-copy" } },
+    { label = "󰆓  Save Screenshot Region", cmd = fs.shell_quote(sibling_or_path("kaze-screenshot")) .. " region --save", needs = { "slurp", "grim" } },
     { label = "󰑓  Reload Shell",       cmd = fs.shell_quote(sibling_or_path("kaze-sync")) .. " --reload" },
-    { label = "⏻  Power Menu",         cmd = fs.shell_quote(sibling_or_path("kaze-power")) },
+    { label = "󰐥  Power Menu",         cmd = fs.shell_quote(sibling_or_path("kaze-power")) },
 }
+
+local function available(item)
+    for _, bin in ipairs(item.needs or {}) do
+        if not cmd_exists(bin) then return false end
+    end
+    if not item.any_of then return true end
+    for _, bin in ipairs(item.any_of) do
+        if cmd_exists(bin) then return true end
+    end
+    return false
+end
 
 local labels = {}
 local actions = {}
-for i, item in ipairs(items) do
-    labels[i] = item.label
-    actions[item.label] = item.cmd
+for _, item in ipairs(items) do
+    if available(item) then
+        labels[#labels + 1] = item.label
+        actions[item.label] = item.cmd
+    end
 end
 
+local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
 local cmd = string.format(
-    "printf '%%s\\n' %s | fuzzel --dmenu --lines %d -p %s",
+    "%sprintf '%%s\\n' %s | fuzzel --dmenu --lines %d -p %s",
+    utf8_guard,
     fs.shell_quote(table.concat(labels, "\n")),
     #labels,
     fs.shell_quote("Kaze > ")

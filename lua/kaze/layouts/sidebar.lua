@@ -2,8 +2,8 @@ local M = {
     name = "sidebar",
     label = "Sidebar (Vertical Left Rail)",
     hypr = {
-        gaps_in = 5,
-        gaps_out = 10,
+        gaps_in = 4,
+        gaps_out = 8,
         rounding = 12,
         border_size = 1,
     },
@@ -26,7 +26,7 @@ function M.build_waybar_config(_cfg, _theme)
   "margin-bottom": 8,
   "margin-left": 8,
   "margin-right": 0,
-  "spacing": 2,
+  "spacing": 0,
   "exclusive": true,
   "reload_style_on_change": false,
 
@@ -47,6 +47,8 @@ function M.build_waybar_config(_cfg, _theme)
 
   "custom/menu": {
     "format": "󰣇",
+    "align": 0.5,
+    "justify": "center",
     "tooltip-format": "Kaze Menu",
     "on-click": "kaze-menu"
   },
@@ -64,11 +66,13 @@ function M.build_waybar_config(_cfg, _theme)
 
   "tray": {
     "icon-size": 14,
-    "spacing": 8
+    "spacing": 6
   },
 
   "network": {
     "interval": 60,
+    "align": 0.5,
+    "justify": "center",
     "format-wifi": "󰤨",
     "format-ethernet": "󰈀",
     "format-disconnected": "󰤭",
@@ -79,6 +83,8 @@ function M.build_waybar_config(_cfg, _theme)
   },
 
   "wireplumber": {
+    "align": 0.5,
+    "justify": "center",
     "format": "{icon}",
     "format-muted": "󰖁",
     "format-icons": ["󰕿", "󰖀", "󰕾"],
@@ -91,6 +97,8 @@ function M.build_waybar_config(_cfg, _theme)
 
   "battery": {
     "interval": 60,
+    "align": 0.5,
+    "justify": "center",
     "states": {
       "warning": 30,
       "critical": 15
@@ -113,7 +121,9 @@ function M.build_waybar_config(_cfg, _theme)
   },
 
   "custom/power": {
-    "format": "⏻",
+    "format": "󰐥",
+    "align": 0.5,
+    "justify": "center",
     "tooltip-format": "Power Menu",
     "on-click": "kaze-power"
   }
@@ -127,7 +137,7 @@ function M.build_waybar_css(cfg, _theme)
 * {
     border: none;
     border-radius: 0;
-    font-family: "%s", monospace;
+    font-family: "%s Propo", "%s", monospace;
     font-size: 12.5px;
     font-weight: 500;
     min-height: 0;
@@ -135,44 +145,57 @@ function M.build_waybar_css(cfg, _theme)
 }
 
 window#waybar {
-    background: alpha(@bg_alt, 0.90);
-    border: 1px solid alpha(@border, 0.85);
+    background: alpha(@bg_alt, 0.92);
+    border: 1px solid alpha(@border, 0.95);
     border-radius: 14px;
     color: @fg;
 }
 
 .modules-left {
-    margin-top: 6px;
+    margin: 4px 0 0 0;
+    padding: 0;
+}
+
+.modules-center {
+    margin: 0;
+    padding: 0;
 }
 
 .modules-right {
-    margin-bottom: 6px;
+    margin: 0 0 4px 0;
+    padding: 0;
 }
 
 #custom-menu {
-    color: @accent;
-    font-size: 15px;
-    padding: 6px 0;
-    margin: 2px 4px;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+    margin: 0 4px;
     border-radius: 10px;
+    background: alpha(@accent, 0.14);
+    color: @accent;
+    font-size: 15.5px;
     transition: background 140ms ease, color 140ms ease;
 }
 
 #custom-menu:hover {
-    background: alpha(@surface, 0.90);
+    background: alpha(@accent, 0.24);
     color: @fg;
 }
 
 #workspaces {
-    margin: 0;
-    padding: 4px 0;
+    background: alpha(@surface, 0.55);
+    border: 1px solid alpha(@border, 0.55);
+    border-radius: 10px;
+    margin: 0 4px;
+    padding: 6px 0;
 }
 
 #workspaces button {
     padding: 0;
     min-width: 8px;
     min-height: 8px;
-    margin: 4px 16px;
+    margin: 4px 11px;
     border-radius: 99px;
     background: @fg_muted;
     transition: all 150ms cubic-bezier(0.2, 0.0, 0.0, 1.0);
@@ -207,22 +230,30 @@ window#waybar {
     background: @danger;
 }
 
-#tray,
-#network,
-#wireplumber,
-#battery,
-#clock {
-    padding: 6px 0;
-    margin: 2px 4px;
-    border-radius: 10px;
-    color: @fg;
-    transition: background 140ms ease, color 140ms ease;
+#tray {
+    margin: 0 4px;
+    padding: 0;
+}
+
+#tray > * {
+    padding: 3px 0;
+}
+
+#tray > .passive {
+    -gtk-icon-effect: dim;
 }
 
 #network,
 #wireplumber,
 #battery {
-    font-size: 14.5px;
+    min-width: 32px;
+    min-height: 30px;
+    padding: 0;
+    margin: 2px 4px;
+    border-radius: 9px;
+    font-size: 15px;
+    color: @fg;
+    transition: background 140ms ease, color 140ms ease;
 }
 
 #network:hover,
@@ -254,17 +285,25 @@ window#waybar {
 }
 
 #clock {
+    min-width: 30px;
+    background: alpha(@surface, 0.55);
+    border: 1px solid alpha(@border, 0.55);
+    border-radius: 10px;
+    margin: 4px 4px 3px 4px;
+    padding: 6px 0;
     font-weight: 700;
-    font-size: 12px;
+    font-size: 11.5px;
     color: @fg;
 }
 
 #custom-power {
-    color: @fg_muted;
-    font-size: 14px;
-    padding: 6px 0;
-    margin: 2px 4px;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+    margin: 1px 4px 0 4px;
     border-radius: 10px;
+    font-size: 15px;
+    color: @fg_muted;
     transition: background 140ms ease, color 140ms ease;
 }
 
@@ -281,9 +320,9 @@ tooltip {
 
 tooltip label {
     color: @fg;
-    padding: 4px 6px;
+    padding: 6px 10px;
 }
-]], font)
+]], font, font)
 end
 
 return M

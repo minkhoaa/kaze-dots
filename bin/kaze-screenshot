@@ -1,0 +1,69 @@
+#!/usr/bin/env lua
+
+local mode = arg[1]
+local save = arg[2] == "--save"
+if (mode ~= "screen" and mode ~= "region") or #arg > (save and 2 or 1) then
+    local help = #arg == 1 and (mode == "--help" or mode == "-h")
+    local stream = help and io.stdout or io.stderr
+    stream:write("Usage: kaze-screenshot <screen|region> [--save]\n")
+    os.exit(help and 0 or 2)
+end
+
+local script = arg[0]:gsub("'", "'\\''")
+local link = io.popen("readlink -f -- '" .. script .. "' 2>/dev/null")
+local resolved = link and link:read("*l")
+if link then link:close() end
+local repo = ((resolved or arg[0]):match("^(.*)/[^/]+$") or ".") .. "/../lua"
+local data = os.getenv("XDG_DATA_HOME") or ""
+if data == "" then data = (os.getenv("HOME") or "") .. "/.local/share" end
+local installed = data .. "/kaze-dots/lua"
+package.path = table.concat({ repo .. "/?.lua", repo .. "/?/init.lua",
+    installed .. "/?.lua", installed .. "/?/init.lua", package.path }, ";")
+
+local fs = require("kaze.fs")
+local quote = fs.shell_quote
+local tmp
+local function fail(msg)
+    if tmp then os.remove(tmp) end
+    io.stderr:write("kaze-screenshot: " .. msg .. "\n")
+    os.exit(1)
+end
+
+local region = ""
+if mode == "region" then
+    if not os.execute("command -v slurp >/dev/null") then fail("slurp not found in PATH") end
+    local geom = (fs.capture("slurp") or ""):gsub("\n$", "")
+    if geom == "" then os.exit(0) end  -- Esc: no capture, clipboard changes, file or toast.
+    region = " -g " .. quote(geom)
+end
+
+local dir = fs.private_runtime_dir()
+if not dir then fail("cannot prepare $XDG_RUNTIME_DIR/kaze") end
+tmp = fs.capture("mktemp -- " .. quote(dir .. "/screenshot.XXXXXXXX"))
+if not tmp then fail("cannot create a temporary file") end
+tmp = tmp:gsub("\n$", "")
+local payload = quote(tmp)
+if not os.execute("grim -t png" .. region .. " " .. payload .. " && test -s " .. payload) then
+    fail("grim did not produce a screenshot")
+end
+
+local message
+if save then
+    local pictures = (fs.capture("xdg-user-dir PICTURES 2>/dev/null") or ""):gsub("\n$", "")
+    dir = (pictures ~= "" and pictures ~= fs.home() and pictures or (fs.home() .. "/Pictures")) .. "/Screenshots"
+    if not os.execute("mkdir -p -- " .. quote(dir)) then fail("cannot create " .. dir) end
+    local dest = fs.capture("mktemp -- " .. quote(dir .. "/" .. os.date("%Y-%m-%d_%H-%M-%S") .. ".XXXXXX.png"))
+    if not dest then fail("cannot create a file in " .. dir) end
+    dest = dest:gsub("\n$", "")
+    if not os.execute("cp -- " .. payload .. " " .. quote(dest)) then
+        os.remove(dest)
+        fail("could not save " .. dest)
+    end
+    io.stdout:write(dest .. "\n")
+    message = "Saved to " .. dest
+else
+    if not os.execute("wl-copy --type image/png < " .. payload) then fail("wl-copy failed") end
+    message = mode == "region" and "Region copied" or "Full screen copied"
+end
+os.remove(tmp)
+os.execute("notify-send -t 2000 Screenshot " .. quote(message) .. " 2>/dev/null")

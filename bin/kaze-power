@@ -33,6 +33,7 @@ end
 setup_path()
 
 local fs = require("kaze.fs")
+local session = require("kaze.session")
 
 local function cmd_exists(bin)
     local ok = os.execute("command -v " .. fs.shell_quote(bin) .. " >/dev/null 2>&1")
@@ -59,12 +60,18 @@ if not cmd_exists("fuzzel") then
     os.exit(1)
 end
 
+local function logout()
+    local ok, err = session.stop()
+    if not ok then return nil, err end
+    return os.execute("hyprctl dispatch 'hl.dsp.exit()'")
+end
+
 local items = {
-    { label = "󰌾  Lock",     cmd = "pidof hyprlock >/dev/null 2>&1 || hyprlock" },
-    { label = "󰤄  Suspend",  cmd = "systemctl suspend" },
-    { label = "󰍃  Logout",   cmd = "hyprctl dispatch exit" },
-    { label = "󰜉  Reboot",   cmd = "systemctl reboot" },
-    { label = "⏻  Shutdown", cmd = "systemctl poweroff" },
+    { label = "󰌾  Lock",       cmd = session.lock },
+    { label = "󰍹  Screen Off", cmd = session.screen_off },
+    { label = "󰍃  Logout",     cmd = logout },
+    { label = "󰜉  Reboot",     cmd = "systemctl reboot" },
+    { label = "󰐥  Shutdown",   cmd = "systemctl poweroff" },
 }
 
 local labels = {}
@@ -74,8 +81,10 @@ for i, item in ipairs(items) do
     actions[item.label] = item.cmd
 end
 
+local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
 local cmd = string.format(
-    "printf '%%s\\n' %s | fuzzel --dmenu --lines %d -p %s",
+    "%sprintf '%%s\\n' %s | fuzzel --dmenu --lines %d -p %s",
+    utf8_guard,
     fs.shell_quote(table.concat(labels, "\n")),
     #labels,
     fs.shell_quote("Power > ")
@@ -99,7 +108,16 @@ if not action then
     os.exit(1)
 end
 
-local ok = os.execute(action)
-if not (ok == true or ok == 0) then
+local ok, err
+if type(action) == "function" then
+    ok, err = action()
+else
+    ok = os.execute(action)
+end
+if not ok then
+    if err then
+        io.stderr:write("kaze-power: " .. err .. "\n")
+        os.execute("notify-send -t 3500 'Power action failed' " .. fs.shell_quote(err) .. " 2>/dev/null")
+    end
     os.exit(1)
 end

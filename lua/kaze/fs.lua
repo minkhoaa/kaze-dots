@@ -36,6 +36,58 @@ function M.data_dir(home)
     return (home or M.home()) .. "/.local/share"
 end
 
+function M.cache_dir(home)
+    local xdg = os.getenv("XDG_CACHE_HOME")
+    if xdg and xdg ~= "" then
+        return xdg
+    end
+    return (home or M.home()) .. "/.cache"
+end
+
+function M.runtime_dir()
+    local runtime = os.getenv("XDG_RUNTIME_DIR")
+    if runtime and runtime:sub(1, 1) == "/" then
+        return runtime .. "/kaze"
+    end
+end
+
+function M.private_runtime_dir()
+    local dir = M.runtime_dir()
+    if not dir then
+        return nil
+    end
+    local q = M.shell_quote(dir)
+    if os.execute("[ ! -L " .. q .. " ] && install -d -m 700 -- " .. q) then
+        return dir
+    end
+end
+
+-- Normalize Lua's os.execute/pclose tuple to a CLI status.
+function M.exit_status(ok, why, code)
+    if ok then return 0 end
+    if why == "signal" and code then return 128 + code end
+    return code and code ~= 0 and code or 1
+end
+
+function M.utf8_locale()
+    local function value(key)
+        local setting = os.getenv(key)
+        if setting and setting ~= "" then return setting end
+    end
+    local lang, all, ctype = value("LANG"), value("LC_ALL"), value("LC_CTYPE")
+    local effective = all or ctype or lang or "C"
+    if effective:lower():find("utf%-?8") then return lang or "", all or "", ctype or effective end
+    -- An explicit non-UTF-8 LC_ALL would override the CTYPE fallback.
+    return lang or "", "", "C.UTF-8"
+end
+
+function M.capture(cmd)
+    local proc = io.popen(cmd, "r")
+    if not proc then return nil end
+    local out = proc:read("*a")
+    if proc:close() then return out end
+end
+
 function M.expand_home(path, home)
     if type(path) ~= "string" then
         return path

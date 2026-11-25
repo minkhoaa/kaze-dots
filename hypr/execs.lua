@@ -1,33 +1,22 @@
 local ctx = require("kaze._ctx")
 local fs = require("kaze.fs")
 
-local cfg = ctx.cfg
-local theme = ctx.theme
+local cli = fs.shell_quote(fs.home() .. "/.local/bin/kaze-session")
+local signature = os.getenv("HYPRLAND_INSTANCE_SIGNATURE") or ""
 
 hl.on("hyprland.start", function()
-    -- Ensure all generated daemon configs are fresh before launching daemons
-    local sync_cmd = (os.getenv("HOME") or "") .. "/.local/bin/kaze-sync"
-    if fs.file_exists(sync_cmd) then
-        os.execute(fs.shell_quote(sync_cmd) .. " >/dev/null 2>&1")
-    else
-        os.execute("kaze-sync >/dev/null 2>&1")
-    end
+    -- Inside the short-lived bootstrap, sync and the env import precede all units.
+    local cfg = ctx.cfg
+    hl.exec_cmd(cli .. " start && hyprctl setcursor " .. fs.shell_quote(cfg.cursor_theme) .. " " .. tostring(cfg.cursor_size))
+end)
 
-    hl.exec_cmd("foot --server")
-
-    local wallpaper = cfg.wallpaper_expanded
-    if type(wallpaper) == "string" and wallpaper ~= "" and fs.file_exists(wallpaper) then
-        hl.exec_cmd("swaybg -i " .. fs.shell_quote(wallpaper) .. " -m fill")
-    else
-        hl.exec_cmd("swaybg -c " .. fs.shell_quote("#" .. theme.bg))
-    end
-
-    hl.exec_cmd("waybar")
-    hl.exec_cmd("env GLIBC_TUNABLES=glibc.malloc.trim_threshold=65536 fnott")
-    hl.exec_cmd("hypridle")
-
-    hl.exec_cmd("wl-paste --type text --watch cliphist store")
-    hl.exec_cmd("wl-paste --type image --watch cliphist store")
-
-    hl.exec_cmd("hyprctl setcursor " .. fs.shell_quote(cfg.cursor_theme) .. " " .. tostring(cfg.cursor_size))
+hl.on("hyprland.shutdown", function()
+    -- Hyprland reaps children itself; pclose cannot reliably report their exit status.
+    -- Reading to EOF still waits for teardown before closing the compositor.
+    local cmd = "HYPRLAND_INSTANCE_SIGNATURE=" .. fs.shell_quote(signature) .. " " .. cli .. " stop 2>&1"
+    local proc = io.popen(cmd, "r")
+    if not proc then return end
+    local out = proc:read("*a")
+    proc:close()
+    if out and out ~= "" then io.stderr:write(out) end
 end)

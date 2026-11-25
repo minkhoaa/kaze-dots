@@ -36,7 +36,6 @@ setup_path()
 
 local config = require("kaze.config")
 local fs = require("kaze.fs")
-local state = require("kaze.state")
 local themes = require("kaze.themes")
 
 local function cmd_exists(bin)
@@ -73,8 +72,10 @@ local function pick_from_menu(current_theme)
         lines[#lines + 1] = string.format("%s  —  %s%s", name, t.label, marker)
     end
 
+    local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
     local cmd = string.format(
-        "printf '%%s\\n' %s | fuzzel --dmenu --lines %d -p %s",
+        "%sprintf '%%s\\n' %s | fuzzel --dmenu --lines %d -p %s",
+        utf8_guard,
         fs.shell_quote(table.concat(lines, "\n")),
         #lines,
         fs.shell_quote("Theme > ")
@@ -111,16 +112,14 @@ for i = 1, #arg do
     end
 end
 
-local cfg = config.load({ strict = false })
-
 if mode == "--current" then
-    io.stdout:write(cfg.theme .. "\n")
+    io.stdout:write(config.load({ strict = false }).theme .. "\n")
     os.exit(0)
 end
 
 local target = mode
 if not target or target == "--menu" then
-    target = pick_from_menu(cfg.theme)
+    target = pick_from_menu(config.load({ strict = false }).theme)
     if not target then
         os.exit(0)
     end
@@ -136,18 +135,9 @@ if not ok_theme then
     os.exit(1)
 end
 
-local st = state.load()
-st.theme = theme.name
-local save_ok, save_err = pcall(state.save, st)
-if not save_ok then
-    io.stderr:write(string.format("kaze-theme: failed to write state: %s\n", tostring(save_err)))
-    os.exit(1)
-end
-
 local sync_bin = sibling_or_path("kaze-sync")
-local sync_ok = os.execute(fs.shell_quote(sync_bin) .. " --reload")
-if not (sync_ok == true or sync_ok == 0) then
-    io.stderr:write("kaze-theme: kaze-sync --reload failed\n")
+if not os.execute(fs.shell_quote(sync_bin) .. " --set-theme " .. fs.shell_quote(theme.name)) then
+    io.stderr:write("kaze-theme: switch failed\n")
     os.exit(1)
 end
 
@@ -155,8 +145,7 @@ local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
 local wl_disp = os.getenv("WAYLAND_DISPLAY")
 if not quiet and ((hypr_sig and hypr_sig ~= "") or (wl_disp and wl_disp ~= "")) and cmd_exists("notify-send") then
     os.execute(string.format(
-        "i=0; while ! pgrep -x fnott >/dev/null 2>&1 && [ \"$i\" -lt 10 ]; do sleep 0.02; i=$((i + 1)); done; sleep 0.05; "
-            .. "notify-send -a kaze-theme -t 1800 -u low -h string:x-canonical-private-synchronous:kaze-switch %s %s >/dev/null 2>&1 || true",
+        "notify-send -a kaze-theme -t 1800 -u low -h string:x-canonical-private-synchronous:kaze-switch %s %s >/dev/null 2>&1 || true",
         fs.shell_quote("Theme switched"),
         fs.shell_quote("Active: " .. theme.label)
     ))

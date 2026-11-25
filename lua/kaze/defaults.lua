@@ -2,9 +2,9 @@ return {
     layout = "sidebar",
     theme = "kaze",
     font = "JetBrainsMono Nerd Font",
-    terminal = "footclient",
+    terminal = "kaze-footclient",
     browser = "firefox",
-    files = "footclient -e yazi",
+    files = "kaze-footclient -e yazi",
     wallpaper = "~/Pictures/Wallpapers/wallpaper.png",
     cursor_theme = "Adwaita",
     cursor_size = 24,
@@ -12,6 +12,11 @@ return {
     vol_step = 5,
     vol_max = 1.5,
     bright_step = 5,
+    clipboard = {
+        ephemeral = true,
+        max_items = 100,
+        max_bytes = 2 * 1024 * 1024,
+    },
     blur = {
         enabled = true,
         size = 3,

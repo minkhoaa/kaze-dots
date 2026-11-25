@@ -63,16 +63,6 @@ local function cmd_exists(bin)
     return ok == true or ok == 0
 end
 
-local function run_capture(cmd)
-    local p = io.popen(cmd .. " 2>&1")
-    if not p then
-        return false, ""
-    end
-    local out = p:read("*a") or ""
-    local ok = p:close()
-    return (ok == true or ok == 0), out
-end
-
 local function clamp_pct(v)
     local n = math.floor((tonumber(v) or 0) + 0.5)
     if n < 0 then
@@ -85,11 +75,8 @@ local function clamp_pct(v)
 end
 
 local function send_osd(title, body, pct)
-    if not cmd_exists("notify-send") then
-        return
-    end
     local cmd = string.format(
-        "notify-send -a kaze-osd -t 1400 -u low -h string:x-canonical-private-synchronous:kaze-osd -h int:value:%d %s %s >/dev/null 2>&1",
+        "exec notify-send -a kaze-osd -t 1400 -u low -h string:x-canonical-private-synchronous:kaze-osd -h int:value:%d %s %s >/dev/null 2>&1",
         clamp_pct(pct),
         fs.shell_quote(title),
         fs.shell_quote(body)
@@ -102,73 +89,52 @@ if not ok_cfg or type(cfg) ~= "table" then
     cfg = { vol_step = 5, vol_max = 1.5, bright_step = 5 }
 end
 
-local vol_step = tonumber(cfg.vol_step) or 5
-local vol_max = tonumber(cfg.vol_max) or 1.5
-local bright_step = tonumber(cfg.bright_step) or 5
+local function require_cmd(bin)
+    if cmd_exists(bin) then return end
+    io.stderr:write("kaze-osd: " .. bin .. " not found in PATH\n")
+    os.exit(1)
+end
 
-if action == "vol-up" or action == "vol-down" or action == "vol-mute" then
-    if not cmd_exists("wpctl") then
-        io.stderr:write("kaze-osd: wpctl not found in PATH\n")
-        os.exit(1)
-    end
-    local target = "@DEFAULT_AUDIO_SINK@"
-    if action == "vol-up" then
-        os.execute(string.format("wpctl set-mute %s 0 >/dev/null 2>&1; wpctl set-volume -l %s %s %d%%+ >/dev/null 2>&1",
-            target, tostring(vol_max), target, vol_step))
-    elseif action == "vol-down" then
-        os.execute(string.format("wpctl set-mute %s 0 >/dev/null 2>&1; wpctl set-volume %s %d%%- >/dev/null 2>&1",
-            target, target, vol_step))
-    else
-        os.execute(string.format("wpctl set-mute %s toggle >/dev/null 2>&1", target))
-    end
+local function step(value)
+    return math.floor(math.max(1, math.min(100, tonumber(value) or 5)))
+end
 
-    local ok_vol, out = run_capture("wpctl get-volume " .. target)
-    if not ok_vol then
-        send_osd("󰕾 Volume", "No audio sink", 0)
-        os.exit(0)
-    end
-    local raw = tonumber(out:match("Volume:%s*([%d%.]+)")) or 0
-    local pct = math.floor(raw * 100 + 0.5)
-    local muted = out:find("[MUTED]", 1, true) ~= nil
-    if muted then
-        send_osd("󰖁 Volume", string.format("Muted (%d%%)", pct), 0)
-    else
-        local icon = pct >= 60 and "󰕾" or (pct >= 25 and "󰖀" or "󰕿")
-        send_osd(icon .. " Volume", string.format("%d%%", pct), pct)
-    end
-elseif action == "mic-mute" then
-    if not cmd_exists("wpctl") then
-        io.stderr:write("kaze-osd: wpctl not found in PATH\n")
-        os.exit(1)
-    end
-    local target = "@DEFAULT_AUDIO_SOURCE@"
-    os.execute(string.format("wpctl set-mute %s toggle >/dev/null 2>&1", target))
-    local ok_mic, out = run_capture("wpctl get-volume " .. target)
-    if not ok_mic then
-        send_osd("󰍬 Microphone", "No audio source", 0)
-        os.exit(0)
-    end
-    local raw = tonumber(out:match("Volume:%s*([%d%.]+)")) or 0
-    local pct = math.floor(raw * 100 + 0.5)
-    local muted = out:find("[MUTED]", 1, true) ~= nil
-    if muted then
-        send_osd("󰍭 Microphone", "Muted", 0)
-    else
-        send_osd("󰍬 Microphone", string.format("%d%%", pct), pct)
-    end
+if action:match("^bright-") then
+    require_cmd("brightnessctl")
+    -- Limit to a panel backlight, never an LED (e.g. a keyboard on a desktop).
+    local info = fs.capture("exec brightnessctl -c backlight -m 2>/dev/null")
+    if not info then os.exit(0) end
+    local device, max = info:match("^([^,\n]+),backlight,%d+,%d+%%,(%d+)")
+    max = tonumber(max)
+    if not max or max < 1 then os.exit(0) end
+    local floor = math.max(1, (max + 49) // 50)
+    local delta = step(cfg.bright_step) .. (action == "bright-up" and "%+" or "%-")
+    local out = fs.capture(string.format("exec brightnessctl -c backlight -d %s -n %d -m set %s 2>/dev/null",
+        fs.shell_quote(device), floor, fs.shell_quote(delta)))
+    local pct = out and tonumber(out:match(",(%d+)%%,"))
+    if pct then send_osd("󰃠  Brightness", string.format("%d%%", pct), pct) end
+    os.exit(0)
+end
+
+require_cmd("wpctl")
+local mic = action == "mic-mute"
+local target = mic and "@DEFAULT_AUDIO_SOURCE@" or "@DEFAULT_AUDIO_SINK@"
+local change
+if action == "vol-up" or action == "vol-down" then
+    local max = tonumber(cfg.vol_max) or 1.5
+    change = string.format("wpctl set-mute %s 0 && wpctl set-volume -l %s %s %d%%%s",
+        target, tostring(max), target, step(cfg.vol_step), action == "vol-up" and "+" or "-")
 else
-    if not cmd_exists("brightnessctl") then
-        io.stderr:write("kaze-osd: brightnessctl not found in PATH\n")
-        os.exit(1)
-    end
-    local delta = action == "bright-up" and (bright_step .. "%+") or (bright_step .. "%-")
-    local ok_set = os.execute("brightnessctl set " .. fs.shell_quote(delta) .. " >/dev/null 2>&1")
-    local ok_get, out = run_capture("brightnessctl -m")
-    if not (ok_set == true or ok_set == 0) or not ok_get then
-        send_osd("󰃠 Brightness", "No backlight", 0)
-        os.exit(0)
-    end
-    local pct_str = out:match(",(%d+)%%,")
-    local pct = tonumber(pct_str) or 0
-    send_osd("󰃠 Brightness", string.format("%d%%", pct), pct)
+    change = "wpctl set-mute " .. target .. " toggle"
+end
+local out = fs.capture("{ " .. change .. " && exec wpctl get-volume " .. target .. "; } 2>/dev/null")
+local raw = out and tonumber(out:match("Volume:%s*([%d%.]+)"))
+if not raw then os.exit(0) end  -- No default device or PipeWire connection.
+local pct = math.floor(raw * 100 + 0.5)
+local muted = out:find("[MUTED]", 1, true) ~= nil
+local volume_icon = pct >= 60 and "󰕾" or (pct >= 25 and "󰖀" or "󰕿")
+if mic then
+    send_osd(muted and "󰍭  Microphone" or "󰍬  Microphone", muted and "Muted" or string.format("%d%%", pct), muted and 0 or pct)
+else
+    send_osd(muted and "󰖁  Volume" or volume_icon .. "  Volume", string.format(muted and "Muted (%d%%)" or "%d%%", pct), muted and 0 or pct)
 end

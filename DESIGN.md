@@ -34,7 +34,7 @@
 | **Bar thickness** | `42px` vertical rail | `34px` pill islands (transparent outer track) | `28px` flat solid/frosted strip |
 | **Bar corner radius** | `14px` unified rail | `14px` per island pill | `0px` (crisp horizontal edge) |
 | **Workspaces style** | Vertical dots; active expands into `24px` tall accent pill | Horizontal dots; active expands into `24px` accent pill | Minimal numbered tabs with bottom accent indicator |
-| **Window `gaps_in` / `gaps_out`** | `5px` / `10px` | `5px` / `10px` | `4px` / `6px` |
+| **Window `gaps_in` / `gaps_out`** | `4px` / `8px` | `5px` / `10px` | `4px` / `6px` |
 | **Window `rounding`** | `12px` | `10px` | `6px` |
 | **Window `border_size`** | `1px` | `1px` | `1px` |
 | **Popup (`fuzzel`) radius** | `14px` | `12px` | `8px` |

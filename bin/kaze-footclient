@@ -1,0 +1,34 @@
+#!/usr/bin/env lua
+
+local script = arg[0]:gsub("'", "'\\''")
+local link = io.popen("readlink -f -- '" .. script .. "' 2>/dev/null")
+local resolved = link and link:read("*l")
+if link then link:close() end
+local repo = ((resolved or arg[0]):match("^(.*)/[^/]+$") or ".") .. "/../lua"
+local data = os.getenv("XDG_DATA_HOME") or ""
+if data == "" then data = (os.getenv("HOME") or "") .. "/.local/share" end
+local installed = data .. "/kaze-dots/lua"
+package.path = table.concat({ repo .. "/?.lua", repo .. "/?/init.lua",
+    installed .. "/?.lua", installed .. "/?/init.lua", package.path }, ";")
+
+local fs = require("kaze.fs")
+local command = { "exec footclient -E" }
+local dir = fs.runtime_dir()
+if dir then command[#command + 1] = "--server-socket=" .. fs.shell_quote(fs.dirname(dir) .. "/foot.sock") end
+
+-- The server keeps its startup palette. Pass the current generated palette as
+-- per-window overrides so new windows can change theme without losing shells.
+local ini = io.open(fs.config_dir() .. "/foot/foot.ini", "r")
+if ini then
+    local section
+    for line in ini:lines() do
+        section = line:match("^%[([^%]]+)%]$") or section
+        local key, value = line:match("^([%w-]+)=(.+)$")
+        if key and (section == "colors-dark" or (section == "main" and key == "font")) then
+            command[#command + 1] = "-o " .. fs.shell_quote(section .. "." .. key .. "=" .. value)
+        end
+    end
+    ini:close()
+end
+for _, value in ipairs(arg) do command[#command + 1] = fs.shell_quote(value) end
+os.exit(fs.exit_status(os.execute(table.concat(command, " "))))

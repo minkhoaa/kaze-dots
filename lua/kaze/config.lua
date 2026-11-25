@@ -79,7 +79,7 @@ function M.load(opts)
     local state_path = opts.state_path or state.path(config_dir)
     local user_path = opts.user_path or (config_dir .. "/kaze/user.lua")
 
-    local state_tbl = state.load(state_path)
+    local state_tbl = opts.state or state.load(state_path)
     local user_tbl = load_lua_table(user_path)
 
     local layout_name = user_tbl.layout or state_tbl.layout or defaults.layout

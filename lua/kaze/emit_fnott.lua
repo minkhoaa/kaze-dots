@@ -13,29 +13,33 @@ icon-theme=hicolor
 edge-margin-vertical=%d
 edge-margin-horizontal=%d
 notification-margin=8
-max-width=340
+max-width=320
 min-width=240
 max-height=0
 max-icon-size=32
-padding-vertical=10
-padding-horizontal=14
+padding-vertical=12
+padding-horizontal=16
 border-size=1
 border-radius=%d
 background=%s
 border-color=%s
-title-font=%s:size=10.5:weight=bold
+title-font=%s Propo:size=8.5:weight=bold,%s:size=8.5:weight=bold
 title-color=%s
-summary-font=%s:size=10
+title-format=%%a
+summary-font=%s Propo:size=10.5:weight=bold,%s:size=10.5:weight=bold
 summary-color=%s
-body-font=%s:size=9.5
+summary-format=%%s
+body-font=%s Propo:size=9.5,%s:size=9.5
 body-color=%s
-progress-bar-height=6
+body-format=%%b
+progress-bar-height=5
 progress-color=%s
 progress-style=bar
 default-timeout=4
 max-timeout=8
 
 [low]
+title-format=
 border-color=%s
 default-timeout=2
 
@@ -51,17 +55,20 @@ default-timeout=0
         ui.fnott_edge_margin_vertical,
         ui.fnott_edge_margin_horizontal,
         ui.fnott_radius,
-        themes.hex_alpha(theme.bg_alt, "eb"),
-        themes.hex_alpha(theme.border, "dd"),
+        themes.hex_alpha(theme.bg_alt, "f0"),
+        themes.hex_alpha(theme.border, "ff"),
+        cfg.font,
+        cfg.font,
+        themes.hex_alpha(theme.fg_muted, "cc"),
+        cfg.font,
         cfg.font,
         themes.hex_alpha(theme.fg, "ff"),
         cfg.font,
-        themes.hex_alpha(theme.fg, "ee"),
         cfg.font,
         themes.hex_alpha(theme.fg_muted, "ff"),
         themes.hex_alpha(theme.accent, "ff"),
-        themes.hex_alpha(theme.border, "aa"),
-        themes.hex_alpha(theme.border, "dd"),
+        themes.hex_alpha(theme.border, "ee"),
+        themes.hex_alpha(theme.border, "ff"),
         themes.hex_alpha(theme.danger, "ff")
     )
 end

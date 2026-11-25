@@ -34,7 +34,11 @@ for _, mod in ipairs({
     package.loaded[mod] = nil
 end
 
-local cfg, theme, layout = require("kaze.config").load({ strict = false })
+local pending = require("kaze.state").pending_path()
+local cfg, theme, layout = require("kaze.config").load({
+    strict = false,
+    state_path = pending and require("kaze.fs").file_exists(pending) and pending or nil,
+})
 package.loaded["kaze._ctx"] = {
     cfg = cfg,
     theme = theme,

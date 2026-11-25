@@ -1,0 +1,10 @@
+[Unit]
+Description=Kaze Hyprland session
+BindsTo=graphical-session.target
+Wants=graphical-session-pre.target
+After=graphical-session-pre.target graphical-session.target
+# The services must start after this target, not before it.
+DefaultDependencies=no
+Conflicts=shutdown.target
+Before=shutdown.target
+Wants=kaze-waybar.service kaze-wallpaper.service fnott.service foot-server.service kaze-hypridle.service kaze-clipboard@text.service kaze-clipboard@image.service

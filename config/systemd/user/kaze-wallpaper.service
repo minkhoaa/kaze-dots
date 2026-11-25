@@ -1,0 +1,11 @@
+[Unit]
+Description=Kaze wallpaper
+PartOf=kaze-session.target
+Requisite=kaze-session.target
+After=kaze-session.target
+
+[Service]
+Type=exec
+EnvironmentFile=%t/kaze/session.env
+ExecStart=:/usr/bin/sh -c 'if [ -n "$KAZE_WALLPAPER" ]; then exec /usr/bin/swaybg -i "$KAZE_WALLPAPER" -m fill; else exec /usr/bin/swaybg -c "$KAZE_WALLPAPER_COLOR"; fi'
+TimeoutStopSec=5s

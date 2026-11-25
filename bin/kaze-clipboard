@@ -1,0 +1,103 @@
+#!/usr/bin/env lua
+
+local action = arg[1] or "pick"
+if #arg > 1 or not ({ pick = true, list = true, store = true, wipe = true })[action] then
+    local help = #arg == 1 and (action == "--help" or action == "-h")
+    local stream = help and io.stdout or io.stderr
+    stream:write("Usage: kaze-clipboard [pick|list|store|wipe]\n")
+    os.exit(help and 0 or 2)
+end
+
+-- Reject unknown states too: this must only store wl-paste events marked as data.
+if action == "store" and os.getenv("CLIPBOARD_STATE") ~= "data" then os.exit(0) end
+
+local script = arg[0]:gsub("'", "'\\''")
+local link = io.popen("readlink -f -- '" .. script .. "' 2>/dev/null")
+local resolved = link and link:read("*l")
+if link then link:close() end
+local repo = ((resolved or arg[0]):match("^(.*)/[^/]+$") or ".") .. "/../lua"
+local data_home = os.getenv("XDG_DATA_HOME") or ""
+if data_home == "" then data_home = (os.getenv("HOME") or "") .. "/.local/share" end
+local installed = data_home .. "/kaze-dots/lua"
+package.path = table.concat({ repo .. "/?.lua", repo .. "/?/init.lua",
+    installed .. "/?.lua", installed .. "/?/init.lua", package.path }, ";")
+
+local cfg = require("kaze.config").load({ strict = false })
+local fs = require("kaze.fs")
+local quote = fs.shell_quote
+
+local function fail(msg)
+    io.stderr:write("kaze-clipboard: " .. msg .. "\n")
+    os.exit(1)
+end
+
+local clipboard = cfg.clipboard
+local function positive_integer(n, limit)
+    return type(n) == "number" and math.tointeger(n) and n >= 1 and n <= limit
+end
+if type(clipboard) ~= "table" or type(clipboard.ephemeral) ~= "boolean"
+    or not positive_integer(clipboard.max_items, 750)
+    or not positive_integer(clipboard.max_bytes, 64 * 1024 * 1024) then
+    fail("invalid clipboard settings (max_items: 1–750, max_bytes: 1–67108864)")
+end
+
+local input
+if action == "store" then
+    -- Avoid stdio read-ahead past the byte budget. Exiting closes the pipe on oversize.
+    io.stdin:setvbuf("no")
+    local read_err
+    input, read_err = io.stdin:read(clipboard.max_bytes + 1)
+    if read_err then fail(read_err) end
+    if not input or #input == 0 or #input > clipboard.max_bytes then os.exit(0) end
+end
+
+local db
+if clipboard.ephemeral then
+    local dir = fs.private_runtime_dir()
+    if not dir then fail("cannot prepare $XDG_RUNTIME_DIR/kaze") end
+    db = dir .. "/cliphist.db"
+    if not os.execute("[ ! -L " .. quote(db) .. " ] && [ ! -L " .. quote(db .. ".tmp") .. " ]") then
+        fail("refusing symlink at the session database path")
+    end
+else
+    db = fs.cache_dir() .. "/cliphist/db"
+end
+
+-- Do not let a separate cliphist/config override the DB and limits for these calls.
+local cliphist = string.format("umask 077; exec cliphist -config-path /dev/null -db-path %s -max-items %d ",
+    quote(db), clipboard.max_items)
+
+if action == "store" then
+    local proc = io.popen(cliphist .. "store", "w")
+    if not proc then fail("cannot launch cliphist store") end
+    local written = proc:write(input)
+    local ok = proc:close()
+    if not (written and ok) then fail("cliphist store failed") end
+    os.exit(0)
+end
+
+-- With no DB there is no history to list, pick or wipe.
+if not fs.file_exists(db) then os.exit(0) end
+if action == "list" or action == "wipe" then
+    if not os.execute(cliphist .. action) then fail("cliphist " .. action .. " failed") end
+    os.exit(0)
+end
+
+if not os.execute("command -v cliphist >/dev/null && command -v fuzzel >/dev/null && command -v wl-copy >/dev/null") then
+    fail("pick requires cliphist, fuzzel and wl-copy")
+end
+local selected = fs.capture("bash -o pipefail -c " .. quote(cliphist .. "list | fuzzel --dmenu -p 'Clip > '"))
+if not selected then os.exit(0) end
+selected = selected:gsub("\n$", "")
+if not selected:match("^%d+\t") then os.exit(0) end
+
+-- Decode completely before opening wl-copy; deleted/stale selection must be a no-op.
+local data = fs.capture(cliphist .. "decode " .. quote(selected))
+if not data or data == "" then fail("clipboard entry could not be decoded") end
+-- wl-copy uses xdg-mime for other formats. Do not depend on that path for PNGs.
+local mime = data:sub(1, 8) == "\137PNG\r\n\26\n" and " --type image/png" or ""
+local copy = io.popen("exec wl-copy" .. mime, "w")
+if not copy then fail("cannot launch wl-copy") end
+local written = copy:write(data)
+local ok = copy:close()
+if not (written and ok) then fail("wl-copy failed") end

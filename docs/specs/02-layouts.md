@@ -9,8 +9,8 @@ return {
     name = "sidebar",
     label = "Sidebar (Vertical Left Rail)",
     hypr = {
-        gaps_in = 5,
-        gaps_out = 10,
+        gaps_in = 4,
+        gaps_out = 8,
         rounding = 12,
         border_size = 1,
     },
@@ -67,7 +67,7 @@ return {
   - Background: `alpha(@bg_alt, 0.90)`
   - Border: `1px solid alpha(@border, 0.85)`
   - Border radius: `14px`
-- Hyprland: `gaps_in = 5`, `gaps_out = 10`, `rounding = 12`, `border_size = 1` (framed canvas while preserving full `1080px` vertical screen height).
+- Hyprland: `gaps_in = 4`, `gaps_out = 8`, `rounding = 12`, `border_size = 1` (flush `8px` framing grid aligned with the `8px` sidebar margin while preserving full `1080px` vertical screen height).
 - Fnott: `anchor = top-right`, `edge-margin-vertical = 12`, `edge-margin-horizontal = 12`, `border-radius = 12`.
 
 ### Waybar Module Slots

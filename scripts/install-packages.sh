@@ -29,6 +29,10 @@ PACKAGES=(
     hyprland
     hypridle
     hyprlock
+    xdg-desktop-portal
+    xdg-desktop-portal-hyprland
+    xdg-desktop-portal-gtk
+    dconf
     waybar
     swaybg
     fuzzel
@@ -36,6 +40,7 @@ PACKAGES=(
     libnotify
     foot
     wl-clipboard
+    xdg-utils
     cliphist
     grim
     slurp

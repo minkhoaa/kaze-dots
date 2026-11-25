@@ -1,0 +1,15 @@
+[Unit]
+Description=Kaze idle and sleep lock integration
+PartOf=kaze-session.target
+Requisite=kaze-session.target
+After=kaze-session.target
+StartLimitIntervalSec=30s
+StartLimitBurst=5
+
+[Service]
+Type=exec
+EnvironmentFile=%t/kaze/session.env
+ExecStart=/usr/bin/hypridle
+Restart=on-failure
+RestartSec=250ms
+TimeoutStopSec=5s

@@ -8,41 +8,47 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 - Reads resolved config (`defaults` + `state.lua` + `user.lua` + active `layout`).
 - Generates all target configs atomically via `fs.write_atomic()`.
 - `--check`: Dry-run validation only (verifies theme/layout/emitters without writing `~/.config/*` or reloading daemons).
-- `--reload`: After writing, reloads Hyprland (`hyprctl reload`), restarts `waybar` and `fnott` cleanly (only when `HYPRLAND_INSTANCE_SIGNATURE` or `WAYLAND_DISPLAY` is active).
+- `--reload`: Stage and validate, then reload the active Kaze session. Restart Waybar and Fnott; restart swaybg only if the effective wallpaper (image or solid color) changes, and apply any new cursor setting. Foot is not restarted. On failure restore generated files, `session.env`, and the previous runtime appearance. With no powered outputs use service/PID health instead of requiring a mapped layer. Startup uses `--session-start` with safe preset fallbacks and no live reload.
 
 ### `kaze-layout [--quiet] [sidebar|islands|slim|--menu|--current]`
 - No args or `--menu`: Opens `fuzzel --dmenu -p "Layout > "` listing all layouts with `(active)` marker on the current one.
-- `<name>`: Validates, persists to `~/.config/kaze/state.lua`, executes `kaze-sync --reload`, sends a confirmation notification (suppressed with `--quiet`).
+- `<name>`: Validates, delegates the serialized switch to `kaze-sync`, then sends a confirmation notification (suppressed with `--quiet`). State is committed only after the switch succeeds.
 - `--current`: Prints active layout name to `stdout`.
 
 ### `kaze-theme [--quiet] [kaze|lavender|tokyonight|carbon|--menu|--current]`
 - No args or `--menu`: Opens `fuzzel --dmenu -p "Theme > "` listing all themes with `(active)` marker.
-- `<name>`: Validates, persists to `~/.config/kaze/state.lua`, executes `kaze-sync --reload`, sends a confirmation notification (suppressed with `--quiet`).
+- `<name>`: Validates, delegates the serialized switch to `kaze-sync`, then sends a confirmation notification (suppressed with `--quiet`). State is committed only after the switch succeeds.
 - `--current`: Prints active theme name to `stdout`.
 
 ### `kaze-menu`
-- Opens the Kaze command palette via `fuzzel --dmenu -p "Kaze > "` (toggles closed if `fuzzel` is already running):
+- Opens a flat command palette in `fuzzel` (toggles closed if `fuzzel` is already running). Entries without their backend binary are hidden:
   - `󰙵  Switch Layout` → calls `kaze-layout --menu`
   - `󰏘  Switch Theme` → calls `kaze-theme --menu`
   - `󰖩  Wi-Fi (nmtui)` → calls `kaze-tui wifi`
   - `󰂯  Bluetooth (bluetui)` → calls `kaze-tui bluetooth`
   - `󰕾  Audio Mixer (wiremix)` → calls `kaze-tui audio`
   - `󰍛  System Monitor (btop)` → calls `kaze-tui sysmon`
-  - `󰅌  Clipboard History` → `cliphist list | fuzzel --dmenu | cliphist decode | wl-copy`
-  - `󰄀  Screenshot Region` → `grim -g "$(slurp)" - | wl-copy`
+  - `󰅌  Clipboard History` → `kaze-clipboard pick`
+  - `󰄀  Screenshot Region` → `kaze-screenshot region`
+  - `󰆓  Save Screenshot Region` → `kaze-screenshot region --save`
   - `󰑓  Reload Shell` → `kaze-sync --reload`
   - `⏻  Power Menu` → calls `kaze-power`
 
 ### `kaze-power`
 - Opens `fuzzel --dmenu -p "Power > "` with clean options:
-  - `󰌾  Lock` → `pidof hyprlock || hyprlock`
-  - `󰤄  Suspend` → `systemctl suspend`
-  - `󰍃  Logout` → `hyprctl dispatch exit`
+  - `󰌾  Lock` → request a lock for the graphical login via logind; hypridle starts `kaze-lock.service` and updates `LockedHint` from Wayland confirmations
+  - `󰍹  Screen Off` → turn the displays off via Hyprland DPMS, with no suspend or immediate lock. A key press or mouse movement turns them back on.
+  - `󰍃  Logout` → stop the Kaze session, clear session clipboard and env, then dispatch `hl.dsp.exit()`
   - `󰜉  Reboot` → `systemctl reboot`
   - `⏻  Shutdown` → `systemctl poweroff`
+- Kaze does not request system sleep. Lid events and suspend requests from outside Kaze are governed by system policy.
+
+### `kaze-clipboard [pick|list|store|wipe]` and `kaze-screenshot <screen|region> [--save]`
+- Clipboard history is shared by both MIME watchers and picker, is private in `$XDG_RUNTIME_DIR/kaze` by default, and skips non-`data` events. `Esc` or a failed decode does not touch the clipboard.
+- Screenshot capture is staged before copying. An interrupted selection or failed capture leaves the clipboard untouched and sends no success notification. `--save` writes a PNG to the XDG Pictures `Screenshots` subdirectory instead of copying it.
 
 ### `kaze-tui <wifi|bluetooth|audio|sysmon>`
-- Launches a centered floating `footclient` window (`-a kaze-tui`, matched by Hyprland `window_rule` `^kaze-tui$`):
+- Launches a centered floating `kaze-footclient` window (`-a kaze-tui`, matched by Hyprland `window_rule` `^kaze-tui$`):
   - `wifi` → `nmtui`
   - `bluetooth` → `bluetui`
   - `audio` → `wiremix` (falls back to `pulsemixer` or `alsamixer` if absent)
@@ -52,11 +58,12 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 ### `kaze-osd <vol-up|vol-down|vol-mute|mic-mute|bright-up|bright-down>`
 - Executes the exact hardware command (`wpctl` or `brightnessctl`), reads the updated percentage/mute state, and fires a synchronous replacing notification to `fnott`:
   ```bash
-  notify-send -t 1400 -u low \
+  notify-send -a kaze-osd -t 1400 -u low \
     -h string:x-canonical-private-synchronous:kaze-osd \
     -h int:value:<pct> \
     "<icon> <label>" "<pct>%"
   ```
+- Hardware key auto-repeat is throttled inside Hyprland (80 ms per volume/backlight channel). Brightness changes only panel backlights and use a floor of `ceil(2% of max_brightness)`, at least one device unit.
 - **Zero extra resident OSD daemon** (`0 MiB` idle RAM).
 
 ---
@@ -69,11 +76,11 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 | `Super + Shift + Space` | Open `kaze-menu` | — |
 | `Super + Shift + L` | Quick Layout Switcher (`kaze-layout --menu`) | — |
 | `Super + Shift + T` | Quick Theme Switcher (`kaze-theme --menu`) | — |
-| `Super + Return` / `Super + T` | Open Terminal (`footclient`) | — |
+| `Super + Return` / `Super + T` | Open Terminal (`kaze-footclient`) | — |
 | `Super + W` | Open Browser (`cfg.browser`) | — |
 | `Super + E` | Open File Manager (`cfg.files`) | — |
 | `Super + V` | Clipboard History (`cliphist` + `fuzzel`) | — |
-| `Super + L` | Lock Screen (`hyprlock`) | — |
+| `Super + L` | Lock Screen (`kaze-session lock` → logind → hypridle/Hyprlock) | — |
 | `Ctrl + Alt + Delete` | Power Menu (`kaze-power`) | — |
 | `Ctrl + Alt + C` | Dismiss All Notifications (`fnottctl dismiss all`) | `locked` |
 | `Super + Alt + W` | Floating Wi-Fi TUI (`kaze-tui wifi`) | — |

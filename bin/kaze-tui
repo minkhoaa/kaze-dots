@@ -151,26 +151,8 @@ if not tool_bin then
     os.exit(1)
 end
 
-local server_alive = os.execute("pgrep -x foot >/dev/null 2>&1")
-if (server_alive == true or server_alive == 0) and cmd_exists("footclient") then
-    local cmd = string.format(
-        "footclient -N -a kaze-tui -T %s %s >/dev/null 2>&1",
-        fs.shell_quote(entry.title),
-        fs.shell_quote(tool_bin)
-    )
-    local ok = os.execute(cmd)
-    if not (ok == true or ok == 0) then
-        io.stderr:write("kaze-tui: failed to launch footclient\n")
-        os.exit(1)
-    end
-elseif cmd_exists("foot") then
-    local cmd = string.format(
-        "nohup foot -a kaze-tui -T %s %s >/dev/null 2>&1 </dev/null &",
-        fs.shell_quote(entry.title),
-        fs.shell_quote(tool_bin)
-    )
-    os.execute(cmd)
-else
-    io.stderr:write("kaze-tui: neither footclient (with foot --server) nor foot is available\n")
+local cmd = string.format("kaze-footclient -N -a kaze-tui -T %s %s", fs.shell_quote(entry.title), fs.shell_quote(tool_bin))
+if not os.execute(cmd) then
+    io.stderr:write("kaze-tui: could not open a window on the Kaze Foot server\n")
     os.exit(1)
 end

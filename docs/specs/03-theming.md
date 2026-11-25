@@ -59,12 +59,12 @@ Produces 3 files under `~/.config/waybar/`:
 3. `style.css`: Begins with `@import "colors.css";` followed by `layout.build_waybar_css(cfg, theme)`.
 
 ### 3.2 `emit_foot.lua` → `~/.config/foot/foot.ini`
-- `[main]`: `font=<cfg.font>:size=10.5`, `pad=12x10 center`, `dpi-aware=no`.
-- `[colors]`: `alpha=0.92`, `background=<bg>`, `foreground=<fg>`, crisp harmonious 16-color ANSI table derived from theme.
+- `[main]`: `font=<cfg.font>:size=10.5`, `pad=14x12 center`, `dpi-aware=no`.
+- `[colors-dark]`: `alpha=0.92`, `background=<bg>`, `foreground=<fg>`, crisp harmonious 16-color ANSI table derived from theme.
 - `[cursor]`: `style=beam`, `blink=no`, `color=<bg> <accent>`.
 
 ### 3.3 `emit_fuzzel.lua` → `~/.config/fuzzel/fuzzel.ini`
-- `[main]`: `font=<cfg.font>:size=11`, `dpi-aware=no`, `width=44`, `lines=8`, `horizontal-pad=16`, `vertical-pad=12`, `inner-pad=8`, `layer=overlay`, `exit-on-keyboard-focus-loss=yes`.
+- `[main]`: `font=<cfg.font> Propo:size=11,<cfg.font>:size=11`, `dpi-aware=no`, `use-bold=yes`, `width=40`, `lines=8`, `horizontal-pad=20`, `vertical-pad=16`, `inner-pad=12`, `line-height=26`, `image-size-ratio=0.45`, `layer=overlay`, `exit-on-keyboard-focus-loss=yes`.
 - `[border]`: `width=1`, `radius=<layout.ui.fuzzel_radius>`.
 - `[colors]` (`RRGGBBAA` format):
   - `background=<bg_alt>e8`
@@ -73,10 +73,11 @@ Produces 3 files under `~/.config/waybar/`:
   - `placeholder=<fg_muted>ff`
   - `input=<fg>ff`
   - `match=<accent>ff`
-  - `selection=<surface>ff`
+  - `selection=<accent>2e`
   - `selection-text=<fg>ff`
   - `selection-match=<accent>ff`
-  - `border=<border>dd`
+  - `counter=<fg_muted>ff`
+  - `border=<border>ff`
 
 ### 3.4 `emit_fnott.lua` → `~/.config/fnott/fnott.ini`
 - `[main]`:
@@ -85,14 +86,14 @@ Produces 3 files under `~/.config/waybar/`:
   - `edge-margin-vertical=<layout.ui.fnott_edge_margin_vertical>`
   - `edge-margin-horizontal=<layout.ui.fnott_edge_margin_horizontal>`
   - `notification-margin=8`
-  - `max-width=340`, `min-width=240`, `padding-vertical=10`, `padding-horizontal=14`
+  - `max-width=320`, `min-width=240`, `padding-vertical=12`, `padding-horizontal=16`
   - `border-size=1`, `border-radius=<layout.ui.fnott_radius>`
-  - `background=<bg_alt>eb`, `border-color=<border>dd`
-  - `title-font=<cfg.font>:size=10.5:weight=bold`, `title-color=<fg>ff`
-  - `summary-font=<cfg.font>:size=10`, `summary-color=<fg>ee`
-  - `body-font=<cfg.font>:size=9.5`, `body-color=<fg_muted>ff`
-  - `progress-bar-height=6`, `progress-color=<accent>ff`, `progress-style=bar`
-- `[low]`, `[normal]`, `[critical]` urgency overrides (`critical` border uses `<danger>ff`, timeout `0`).
+  - `background=<bg_alt>f0`, `border-color=<border>ff`
+  - `title-font=<cfg.font> Propo:size=8.5:weight=bold,<cfg.font>:size=8.5:weight=bold`, `title-color=<fg_muted>cc`, `title-format=%a`
+  - `summary-font=<cfg.font> Propo:size=10.5:weight=bold,<cfg.font>:size=10.5:weight=bold`, `summary-color=<fg>ff`, `summary-format=%s`
+  - `body-font=<cfg.font> Propo:size=9.5,<cfg.font>:size=9.5`, `body-color=<fg_muted>ff`, `body-format=%b`
+  - `progress-bar-height=5`, `progress-color=<accent>ff`, `progress-style=bar`
+- `[low]`, `[normal]`, `[critical]` urgency overrides (`low` clears `title-format=` for clean OSD/switch toasts; `critical` border uses `<danger>ff`, timeout `0`).
 
 ### 3.5 `emit_hyprlock.lua` → `~/.config/hypr/hyprlock.conf`
 - Clean minimal lockscreen matching `bg`, `bg_alt`, `fg`, `fg_muted`, `accent`, `danger` with blurred wallpaper background, large centered time (`68px`), date subtitle (`15px`), and minimalist rounded password pill (`fade_on_empty = true`).

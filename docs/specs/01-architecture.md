@@ -24,17 +24,19 @@
    │                                                               - (hyprland.lua reads
    │                                                                  state + presets live!)
    ▼
-Live Reload (hyprctl reload + restart waybar + restart fnott; ~250–400ms total)
+Live Reload (validate staging, reload Hyprland, refresh appearance, restart affected services, then commit state)
 ```
 
 ### Key Architectural Invariant
 **Zero persistent Lua processes run in the background.** Lua runs in only two places:
 1. Embedded inside **Hyprland `0.57+`** when loading/reloading `~/.config/hypr/hyprland.lua`.
-2. Short-lived **CLI invocations** (`kaze-sync`, `kaze-layout`, `kaze-theme`, `kaze-menu`, `kaze-power`, `kaze-tui`, `kaze-osd`) that complete in milliseconds and exit.
+2. On-demand **CLI invocations**, including session hooks (`kaze-session`) and watcher callbacks (`kaze-clipboard store`). There are no background Lua loops. The live compiler waits for Waybar readiness only while a switch is in progress.
 
 ## 2. Runtime Process Graph (Steady-State Idle)
 
-Only 6 lightweight native daemons remain resident in memory:
+The Kaze shell starts seven native processes in six roles. `kaze-session.target` pulls in `graphical-session.target` and owns their lifecycle (`PartOf=`). Before starting the target, the bootstrap renders configs, clears stale session clipboard history, and imports only `WAYLAND_DISPLAY`, `XDG_CURRENT_DESKTOP` and `HYPRLAND_INSTANCE_SIGNATURE` to D-Bus/systemd. Live reload stages `session.env` with the generated configs, retaining the login's locale. Changes restart swaybg only if the effective image path or fallback color changes; cursor changes are applied to the compositor. Logout stops the target before dispatching compositor exit. Portal services remain D-Bus-activatable. On the tested stock Arch packages, GTK3 requests portal activation on Waybar startup despite Kaze not starting a portal unit explicitly; see [Spec 05](05-verification-and-benchmarks.md).
+
+Shell-only estimates from the previous VM baseline:
 
 | Daemon | Role | Language | Expected Idle PSS (`1920×1080`) |
 |---|---|---|---|
@@ -56,9 +58,9 @@ Ephemeral processes (`fuzzel`, `hyprlock`, `grim`, `slurp`, `footclient`, `nmtui
    - `layout = "sidebar"`
    - `theme = "kaze"`
    - `font = "JetBrainsMono Nerd Font"`
-   - `terminal = "footclient"`
-   - `browser = "firefox"` (auto-fallback if unset)
-   - `files = "footclient -e yazi"` (or `thunar` if present)
+   - `terminal = "kaze-footclient"` uses the packaged Foot server with per-window overrides from the generated `foot.ini`.
+   - `browser = "firefox"`
+   - `files = "kaze-footclient -e yazi"` (shows an installation/configuration hint if Yazi is missing)
    - `wallpaper = "~/Pictures/Wallpapers/wallpaper.png"`
    - `cursor_theme = "Adwaita"`, `cursor_size = 24`
    - `vol_step = 5`, `vol_max = 1.5`, `bright_step = 5`
@@ -66,7 +68,7 @@ Ephemeral processes (`fuzzel`, `hyprlock`, `grim`, `slurp`, `footclient`, `nmtui
    - `shadow = false`
    - `opacity = { active = 0.96, inactive = 0.92 }`
 2. **Active Persisted State** (`~/.config/kaze/state.lua`):
-   - Written by `kaze-layout` and `kaze-theme`.
+   - Committed by `kaze-sync` after successful layout/theme changes. The transaction holds `$XDG_RUNTIME_DIR/kaze/sync.lock`, stages and snapshots files, and uses a compositor-instance-local candidate state until reload succeeds. On failure it restores the previous files and reloads the previous configuration.
    - Contains only `{ layout = "...", theme = "..." }` so switching layout/theme never clobbers the user's manual overrides.
 3. **User Overrides** (`~/.config/kaze/user.lua`, optional):
    - User-owned Lua table returning overrides (e.g., custom `wallpaper`, `font`, `kb_layout`, `monitors`, or custom `theme_overrides`).
@@ -97,7 +99,7 @@ lua/kaze/
 
 ## 5. Installation & Symlink Map
 
-`scripts/apply.sh` deploys non-destructively (backing up existing configs to `~/.config/.kaze-backup-<timestamp>/`):
+`scripts/apply.sh` backs up existing configs to `~/.config/.kaze-backup-<timestamp>/`. Reapplying carries forward the active install's original files and tracks both existing and new Kaze paths. Run the rollback recorded in `kaze/last-backup` (under `$XDG_CONFIG_HOME`); `user.lua` is preserved.
 
 | Target Path | Source / Type |
 |---|---|
@@ -105,12 +107,15 @@ lua/kaze/
 | `~/.config/hypr/{hyprland,core,env,rules,execs,keybinds}.lua` | Symlink → `<repo>/hypr/*.lua` |
 | `~/.config/hypr/hypridle.conf` | Symlink → `<repo>/templates/hypridle.conf` |
 | `~/.local/bin/kaze-*` | Symlink → `<repo>/bin/kaze-*` |
+| `$XDG_CONFIG_HOME/systemd/user/` | Kaze units and drop-ins for packaged `foot-server` and `fnott` |
+| `$XDG_DATA_HOME/dbus-1/services/org.freedesktop.Notifications.service` | Activation routes to the same `fnott.service`, not a second daemon |
+| `$XDG_RUNTIME_DIR/kaze/` | Private per-user runtime storage for the active session, including `cliphist.db` (default) |
 | `~/.config/waybar/{config.jsonc,style.css,colors.css}` | Generated by `kaze-sync` |
 | `~/.config/foot/foot.ini` | Generated by `kaze-sync` |
 | `~/.config/fuzzel/fuzzel.ini` | Generated by `kaze-sync` |
 | `~/.config/fnott/fnott.ini` | Generated by `kaze-sync` |
 | `~/.config/hypr/hyprlock.conf` | Generated by `kaze-sync` |
-| `~/.config/kaze/state.lua` | Managed by `kaze-layout` / `kaze-theme` |
+| `~/.config/kaze/state.lua` | Managed by `kaze-sync` on behalf of `kaze-layout` and `kaze-theme` |
 | `~/.config/kaze/user.lua` | Created once from template if absent; never overwritten |
 
 ## 6. Pure-Lua Path Resolution

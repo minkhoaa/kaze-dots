@@ -1,0 +1,41 @@
+#!/usr/bin/env lua
+
+local action = arg[1]
+if #arg ~= 1 or not ({ start = true, stop = true, lock = true, ["wake-displays"] = true })[action] then
+    local help = #arg == 1 and (action == "--help" or action == "-h")
+    local stream = help and io.stdout or io.stderr
+    stream:write("Usage: kaze-session <start|stop|lock|wake-displays> (Hyprland lifecycle and idle hooks)\n")
+    os.exit(help and 0 or 2)
+end
+
+local script = arg[0]:gsub("'", "'\\''")
+local link = io.popen("readlink -f -- '" .. script .. "' 2>/dev/null")
+local resolved = link and link:read("*l")
+if link then link:close() end
+local bin_dir = (resolved or arg[0]):match("^(.*)/[^/]+$") or "."
+local repo = bin_dir .. "/../lua"
+local data = os.getenv("XDG_DATA_HOME") or ""
+if data == "" then data = (os.getenv("HOME") or "") .. "/.local/share" end
+local installed = data .. "/kaze-dots/lua"
+package.path = table.concat({ repo .. "/?.lua", repo .. "/?/init.lua",
+    installed .. "/?.lua", installed .. "/?/init.lua", package.path }, ";")
+
+local fs = require("kaze.fs")
+local session = require("kaze.session")
+local ok, err
+if action == "start" then
+    local sync = bin_dir .. "/kaze-sync"
+    if not fs.file_exists(sync) then sync = fs.home() .. "/.local/bin/kaze-sync" end
+    if not fs.file_exists(sync) then sync = "kaze-sync" end
+    ok, err = session.start(sync)
+elseif action == "stop" then
+    ok, err = session.stop()
+elseif action == "lock" then
+    ok, err = session.lock()
+else
+    ok = session.wake_displays()
+end
+if not ok then
+    io.stderr:write("kaze-session: " .. (err or (action .. " failed")) .. "\n")
+    os.exit(1)
+end
