@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VMDIR="${KAZE_VM_DIR:-/home/khoa/.local/share/shell-bench-vm}"
-KEY="$VMDIR/bench_id_ed25519"
-SSH_OPTS=(-i "$KEY" -p 22222 -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o ConnectTimeout=2 -o ServerAliveInterval=2 -o ServerAliveCountMax=3 -o LogLevel=ERROR)
+# shellcheck source=tests/vm-common.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/vm-common.sh"
 
 samples=3
 mode=
 strict_t0=false
+stage2=false
 while (( $# )); do
     case "$1" in
         --functional-only|--samples)
@@ -22,7 +20,8 @@ while (( $# )); do
                 shift
             fi ;;
         --strict-t0-portal) strict_t0=true ;;
-        -h|--help) echo "Usage: $0 [--functional-only | --samples N] [--strict-t0-portal]"; exit 0 ;;
+        --stage2) stage2=true ;;
+        -h|--help) echo "Usage: $0 [--functional-only | --samples N] [--strict-t0-portal] [--stage2]"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
     shift
@@ -32,96 +31,20 @@ if (( samples == 0 )) && [[ "$strict_t0" == true ]]; then
     exit 2
 fi
 
-if pgrep -x qemu-system-x86 >/dev/null; then
-    echo "vm-verify: a QEMU instance is already running; leaving it untouched" >&2
-    exit 1
-fi
-
-ssh_guest() { ssh "${SSH_OPTS[@]}" bench@127.0.0.1 "$@"; }
-vm_pid=
-boot_status=0
-stop_vm() {
-    [ -n "$vm_pid" ] || return 0
-    if kill -0 "$vm_pid" 2>/dev/null; then
-        ssh_guest 'sudo systemctl poweroff' >/dev/null 2>&1 || true
-        for _ in {1..30}; do
-            kill -0 "$vm_pid" 2>/dev/null || break
-            sleep 1
-        done
-    fi
-    if kill -0 "$vm_pid" 2>/dev/null; then
-        echo "vm-verify: guest PID $vm_pid still running after requesting poweroff" >&2
-        return 1
-    fi
-    vm_pid=
-    echo "==> Guest powered off cleanly"
-}
+require_vm_off
 trap stop_vm EXIT
-
-boot_vm() {
-    local phase=${1:-cold} start now
-    start=$(date +%s)
-    "$REPO_DIR/scripts/launch-vm.sh" --headless --vm-dir "$VMDIR"
-    vm_pid=$(<"$VMDIR/vm.pid")
-    for _ in {1..40}; do
-        if ssh_guest true >/dev/null 2>&1; then
-            now=$(date +%s)
-            printf '    SSH available in %ds (%s boot)\n' "$(( now - start ))" "$phase"
-            if [[ "$phase" == cold ]] && (( now - start >= 20 )); then
-                echo 'vm-verify: SSH startup missed the <20s boot gate (continuing other checks)' >&2
-                boot_status=1
-            fi
-            if grep -qi 'failed to load' "$VMDIR/serial.log"; then
-                grep -i 'failed to load' "$VMDIR/serial.log" >&2
-                return 1
-            fi
-            return 0
-        fi
-        sleep 1
-    done
-    echo "vm-verify: guest SSH did not become available" >&2
-    return 1
-}
-
-wait_session() {
-    ssh_guest 'bash -s' <<'GUEST'
-set -euo pipefail
-export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-for _ in {1..30}; do
-    # Type=exec only confirms the daemon was launched. Wait until both surfaces
-    # are mapped before starting the idle settle timer. hyprctl does not use portals.
-    if systemctl --user is-active --quiet kaze-waybar.service && [ -S "$XDG_RUNTIME_DIR/foot.sock" ]; then
-        sig=$(systemctl --user show-environment | awk -F= '$1=="HYPRLAND_INSTANCE_SIGNATURE" {print $2}')
-        if [[ -n "$sig" ]] && layers=$(hyprctl -i "$sig" layers 2>/dev/null) &&
-            grep -q 'namespace: wallpaper' <<< "$layers" && grep -q 'namespace: waybar' <<< "$layers"; then
-            errors=$(hyprctl -i "$sig" configerrors)
-            if [[ -n "$errors" ]]; then printf '%s\n' "$errors" >&2; exit 1; fi
-            monitors=$(hyprctl -i "$sig" monitors)
-            grep -q 1920x1080 <<< "$monitors"
-            exit 0
-        fi
-    fi
-    sleep .5
-done
-journalctl --user -b -n 80 --no-pager >&2
-exit 1
-GUEST
-}
+trap 'exit 130' INT
+trap 'exit 143' TERM
+boot_opts=()
+if [[ "$stage2" == true ]]; then boot_opts=(--qmp); fi
 
 echo "==> Deploying to the isolated Arch guest (Intel iGPU, 1920x1080)"
 boot_vm staging
-ssh_guest 'bash -s' <<'GUEST'
-set -euo pipefail
-pacman -Q hyprland hypridle waybar fnott foot xdg-desktop-portal xdg-desktop-portal-hyprland xdg-desktop-portal-gtk dconf
-export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-if systemctl --user is-active --quiet kaze-session.target; then
-    export HYPRLAND_INSTANCE_SIGNATURE=$(systemctl --user show-environment | awk -F= '$1=="HYPRLAND_INSTANCE_SIGNATURE" {print $2}')
-    "$HOME/.local/bin/kaze-session" stop
+ssh_guest 'pacman -Q hyprland hypridle waybar fnott foot xdg-desktop-portal xdg-desktop-portal-hyprland xdg-desktop-portal-gtk dconf'
+if [[ "$stage2" == true ]]; then
+    ssh_guest 'pacman -Q hyprsunset wf-recorder hyprpicker swappy ffmpeg xdg-user-dirs'
 fi
-sudo systemctl stop getty@tty1.service
-mkdir -p ~/kaze-dots
-GUEST
-tar -C "$REPO_DIR" --exclude=.git --exclude=.pi -czf - . | ssh_guest 'tar xzf - -C ~/kaze-dots'
+stage_guest
 ssh_guest 'bash -s' <<'GUEST'
 set -euo pipefail
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
@@ -138,6 +61,10 @@ export HOME_ORIG="$HOME"
     "$HOME_ORIG/kaze-dots/scripts/apply.sh" --yes
     test -L "$XDG_CONFIG_HOME/systemd/user/kaze-waybar.service"
     test -L "$XDG_DATA_HOME/dbus-1/services/org.freedesktop.Notifications.service"
+    for name in record night inhibit; do
+        test -L "$XDG_CONFIG_HOME/systemd/user/kaze-$name.service"
+        test -L "$HOME/.local/bin/kaze-$name"
+    done
     first=$(<"$XDG_CONFIG_HOME/kaze/last-backup")
     "$HOME_ORIG/kaze-dots/scripts/apply.sh" --yes
     backup=$(<"$XDG_CONFIG_HOME/kaze/last-backup")
@@ -148,6 +75,10 @@ export HOME_ORIG="$HOME"
     grep -Fxq unit-marker "$XDG_CONFIG_HOME/systemd/user/kaze-waybar.service"
     grep -Fxq style-marker "$XDG_CONFIG_HOME/waybar/style.css"
     test ! -L "$HOME/.local/bin/kaze-sync"
+    for name in record night inhibit; do
+        test ! -L "$XDG_CONFIG_HOME/systemd/user/kaze-$name.service"
+        test ! -L "$HOME/.local/bin/kaze-$name"
+    done
     test ! -L "$XDG_CONFIG_HOME/systemd/user/kaze-session.target"
     test ! -e "$XDG_CONFIG_HOME/waybar/config.jsonc"
     test ! -L "$XDG_DATA_HOME/dbus-1/services/org.freedesktop.Notifications.service"
@@ -167,7 +98,7 @@ if (( samples > 0 )); then
     for (( i=1; i<=samples; i++ )); do
         stop_vm
         echo "==> [Gate 3] Cold T0 sample $i/$samples"
-        boot_vm
+        boot_vm cold "${boot_opts[@]}"
         wait_session
         if ssh_guest "$sample_cmd"; then
             :
@@ -178,7 +109,7 @@ if (( samples > 0 )); then
         fi
     done
 else
-    boot_vm
+    boot_vm cold "${boot_opts[@]}"
     wait_session
 fi
 
@@ -366,8 +297,13 @@ test "$(read_env XDG_CURRENT_DESKTOP)" = Hyprland
 echo '    Logout/login: new instance and bar PID; old process and clipboard removed'
 GUEST
 
-stop_vm
 echo '==> Gate 2 session checks passed.'
+if [[ "$stage2" == true ]]; then
+    # shellcheck source=tests/vm-stage2.sh
+    source "$REPO_DIR/tests/vm-stage2.sh"
+    exercise_stage2
+fi
+stop_vm
 if (( boot_status )); then
     echo 'vm-verify: at least one deployed cold boot missed the <20s SSH startup gate' >&2
 fi

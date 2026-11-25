@@ -1,0 +1,22 @@
+[Unit]
+Description=Kaze screen recording
+PartOf=kaze-session.target
+Requisite=kaze-session.target
+After=kaze-session.target
+
+[Service]
+Type=exec
+UMask=0077
+EnvironmentFile=%t/kaze/session.env
+EnvironmentFile=-%t/kaze/record.env
+# With damage-only screencopy, the main Wayland thread can stay blocked after
+# SIGINT on a static screen even after the encoder thread writes the trailer.
+ExecStart=:/usr/bin/sh -c 'test -f "$KAZE_RECORD_FILE" && test -n "$KAZE_RECORD_OUTPUT" || exit 1; set -- -o "$KAZE_RECORD_OUTPUT"; if test -n "$KAZE_RECORD_REGION"; then set -- "$@" -g "$KAZE_RECORD_REGION"; fi; exec /usr/bin/wf-recorder --overwrite --no-damage --framerate 30 "$@" -f "$KAZE_RECORD_FILE"'
+ExecStartPost=-/usr/bin/pkill -RTMIN+8 -x --require-handler -u %U waybar
+ExecStopPost=-/usr/bin/pkill -RTMIN+8 -x --require-handler -u %U waybar
+# An ffprobe packet read checks that the MP4 was finalized and contains video.
+# The receipt is scoped to the unique filename and consumed only after stop waits.
+ExecStopPost=:/usr/bin/sh -c 'if test -z "$KAZE_RECORD_FILE"; then exit 0; fi; if test "$SERVICE_RESULT:$EXIT_CODE:$EXIT_STATUS" = success:exited:0 && /usr/bin/timeout 3s /usr/bin/ffprobe -v error -select_streams v:0 -read_intervals "%%+#1" -show_entries packet=codec_type -of csv=p=0 "$KAZE_RECORD_FILE" | /usr/bin/grep -qx video; then tmp=$(/usr/bin/mktemp -- "$XDG_RUNTIME_DIR/kaze/record.done.XXXXXXXX") && printf "%%s\\n" "$KAZE_RECORD_FILE" > "$tmp" && /usr/bin/mv -fT -- "$tmp" "$XDG_RUNTIME_DIR/kaze/record.done"; else echo "Recording may be incomplete: $KAZE_RECORD_FILE" >&2; /usr/bin/timeout 2s /usr/bin/notify-send -t 4000 -- "Recording may be incomplete" "$KAZE_RECORD_FILE" || :; fi'
+ExecStopPost=/usr/bin/rm -f -- %t/kaze/record.env
+KillSignal=SIGINT
+TimeoutStopSec=10s

@@ -1,0 +1,13 @@
+[Unit]
+Description=Kaze Caffeine (inhibit automatic idle actions for up to two hours)
+PartOf=kaze-session.target
+Requisite=kaze-session.target
+After=kaze-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/systemd-inhibit --what=idle --mode=block --who=Kaze --why="User inhibit" /usr/bin/sleep infinity
+ExecStartPost=-/usr/bin/pkill -RTMIN+11 -x --require-handler -u %U waybar
+ExecStopPost=-/usr/bin/pkill -RTMIN+11 -x --require-handler -u %U waybar
+RuntimeMaxSec=7200s
+TimeoutStopSec=5s

@@ -31,6 +31,11 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
   - `󰅌  Clipboard History` → `kaze-clipboard pick`
   - `󰄀  Screenshot Region` → `kaze-screenshot region`
   - `󰆓  Save Screenshot Region` → `kaze-screenshot region --save`
+  - `Annotate Screenshot` → `kaze-screenshot region --annotate` (`swappy`)
+  - `Pick Color` → `kaze-screenshot color` (`hyprpicker`)
+  - `Toggle Screen Recording` / `Toggle Region Recording` → `kaze-record [--region]` (`wf-recorder`)
+  - `Toggle Night Light` → `kaze-night` (`hyprsunset`)
+  - `Toggle Caffeine` → `kaze-inhibit` (`systemd-inhibit`)
   - `󰑓  Reload Shell` → `kaze-sync --reload`
   - `⏻  Power Menu` → calls `kaze-power`
 
@@ -38,14 +43,29 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 - Opens `fuzzel --dmenu -p "Power > "` with clean options:
   - `󰌾  Lock` → request a lock for the graphical login via logind; hypridle starts `kaze-lock.service` and updates `LockedHint` from Wayland confirmations
   - `󰍹  Screen Off` → turn the displays off via Hyprland DPMS, with no suspend or immediate lock. A key press or mouse movement turns them back on.
-  - `󰍃  Logout` → stop the Kaze session, clear session clipboard and env, then dispatch `hl.dsp.exit()`
+  - `󰍃  Logout` → finalize any active recording, stop the Kaze session, clear session clipboard and env, then dispatch `hl.dsp.exit()`
   - `󰜉  Reboot` → `systemctl reboot`
   - `⏻  Shutdown` → `systemctl poweroff`
 - Kaze does not request system sleep. Lid events and suspend requests from outside Kaze are governed by system policy.
 
-### `kaze-clipboard [pick|list|store|wipe]` and `kaze-screenshot <screen|region> [--save]`
+### `kaze-clipboard [pick|list|store|wipe]`
 - Clipboard history is shared by both MIME watchers and picker, is private in `$XDG_RUNTIME_DIR/kaze` by default, and skips non-`data` events. `Esc` or a failed decode does not touch the clipboard.
+
+### `kaze-screenshot <screen|region> [--save]` / `region --annotate` / `color`
 - Screenshot capture is staged before copying. An interrupted selection or failed capture leaves the clipboard untouched and sends no success notification. `--save` writes a PNG to the XDG Pictures `Screenshots` subdirectory instead of copying it.
+- `region --annotate` opens a private temporary PNG in `swappy` after a successful selection and removes it when the editor closes. Saving or copying annotations is left to the editor.
+- `color` runs `hyprpicker` without autocopy. Only a valid `#RRGGBB` from a successful pick replaces the clipboard and triggers a color toast.
+
+### `kaze-record [toggle|--region|stop|status]`
+- No args / `toggle` starts video-only capture on the focused output. `--region` starts from a `slurp` selection cropped to one output. Either toggle stops an active recording; `stop` never starts one. `Esc` doesn't reserve a file. `status` prints `on` or `off`.
+- Writes a unique MP4 under the XDG Videos `Recordings` subdirectory (`~/Videos/Recordings` fallback). A nonblocking `record.lock` ignores overlapping invocations.
+- Captures at 30 fps with damage-only capture disabled so a static screen doesn't stall a normal stop. Stops via `kaze-record.service` (`SIGINT`, 10s stop timeout); announces the path only after the job completes, the encoder exited successfully, and a bounded `ffprobe` read found a video packet. Failures warn about incomplete video.
+- Use the Kaze Power menu to log out: it stops the recorder before asking Hyprland to exit. The direct compositor shutdown hook also attempts a bounded stop; if Wayland is already blocked in shutdown or the recorded output disappears, the recorder's main thread can time out. Treat such a file as potentially incomplete even if the encoder got time to write the trailer.
+
+### `kaze-night [on|off|toggle|status]` / `kaze-inhibit [on|off|toggle|status]`
+- Both toggle by default; `status` reports `on` or `off`. They only run during the Kaze login and add no worker when off.
+- Night Light runs `hyprsunset` at `night_temp` (default `4500` K, `1000..6500`). Run `kaze-sync --reload` after editing the setting and turn Night Light off/on to use it.
+- Caffeine uses logind's `idle` inhibitor, honored by hypridle. It stops on demand, on logout, or after two hours, releasing the inhibitor without disabling manual lock or changing sleep/lid policy.
 
 ### `kaze-tui <wifi|bluetooth|audio|sysmon>`
 - Launches a centered floating `kaze-footclient` window (`-a kaze-tui`, matched by Hyprland `window_rule` `^kaze-tui$`):

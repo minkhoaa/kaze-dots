@@ -28,16 +28,7 @@ local function clear_environment()
     return dbus_ok and systemd_ok
 end
 
-local function entry(key, value)
-    assert(type(value) == "string" and not value:find("[%z\r\n]"), "invalid session.env value for " .. key)
-    -- systemd EnvironmentFile double quotes, not shell syntax.
-    return key .. '="' .. value:gsub('["\\]', '\\%0') .. '"\n'
-end
-
-local function read_entry(contents, key)
-    local value = ("\n" .. contents):match("\n" .. key .. '="([^\n]*)"\n')
-    return value and value:gsub('\\(["\\])', '%1')
-end
+local entry, read_entry = fs.env_entry, fs.read_env_entry
 
 function M.render_environment(cfg, theme, previous)
     local base = previous and previous:match("^(.-\n)XCURSOR_THEME=")
@@ -65,6 +56,7 @@ function M.render_environment(cfg, theme, previous)
         entry("XCURSOR_SIZE", tostring(cursor_size)),
         entry("KAZE_WALLPAPER", wallpaper),
         entry("KAZE_WALLPAPER_COLOR", "#" .. theme.bg),
+        entry("KAZE_NIGHT_TEMP", tostring(cfg.night_temp)),
     })
 end
 
@@ -123,6 +115,15 @@ function M.stop()
     local owns = owns_environment()
     if owns == nil then return nil, "cannot read systemd's activation environment" end
     if not owns then return true end
+    -- Finish the MP4 while the compositor still exists. Do not take the
+    -- recorder CLI's lock here: it may be held by an interactive slurp.
+    local recorder = "kaze-record.service"
+    local status = fs.capture(ctl .. "show -p ActiveState --value " .. recorder)
+    if status and status ~= "inactive\n" and status ~= "failed\n" then
+        if not os.execute(ctl .. "stop " .. recorder) then
+            io.stderr:write("kaze-session: recorder stop failed; the recording may be incomplete\n")
+        end
+    end
     if not os.execute(ctl .. "stop " .. target) then
         return nil, "could not stop " .. target
     end

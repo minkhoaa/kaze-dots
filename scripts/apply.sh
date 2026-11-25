@@ -126,6 +126,8 @@ done
 
 backup_and_link "$REPO_DIR/templates/hypridle.conf" "$CONFIG_HOME/hypr/hypridle.conf"
 
+# Includes on-demand units; linking them does not enable or start them.
+# backup_and_link records each path for the generated rollback.
 UNIT_SRC="$REPO_DIR/config/systemd/user"
 while IFS= read -r -d '' unit; do
     backup_and_link "$unit" "$CONFIG_HOME/systemd/user/${unit#"$UNIT_SRC"/}"

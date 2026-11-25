@@ -35,7 +35,7 @@ All targets are anchored against our isolated Arch Linux KVM VM benchmarks (`192
   2. `islands`: Floating top pill islands with soft corners and subtle frosted glass.
   3. `slim`: Flat `28px` edge-to-edge ultra-minimal top bar.
 - **4 curated color presets**: `kaze`, `lavender`, `tokyonight`, `carbon`, plus user override support via `~/.config/kaze/user.lua`.
-- **On-demand Lua CLI utilities** for layout/theme, menus, Foot clients, OSD, session lifecycle, clipboard and screenshots; no custom resident helpers.
+- **On-demand Lua CLI utilities** for layout/theme, menus, Foot clients, OSD, session lifecycle, clipboard, and screen capture. Optional annotation, color picking, recording, Night Light and Caffeine do not add anything to the login process graph; no custom resident helpers.
 - **On-demand floating TUIs** (`nmtui`, `bluetui`, `wiremix`, `btop`) via `footclient` (`0 MiB` when closed).
 - **Progress-bar OSD** (volume & brightness) powered by `fnott` + `notify-send` (`0 MiB` extra daemon cost).
 - **Clean Arch installer & symlink manager** (`scripts/install-packages.sh`, `scripts/apply.sh`) and clean Arch KVM VM test harness.

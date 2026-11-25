@@ -1,0 +1,10 @@
+#!/usr/bin/env lua
+
+local script = arg[0]:gsub("'", "'\\''")
+local link <close> = io.popen("readlink -f -- '" .. script .. "'")
+local repo = ((link and link:read("*l") or arg[0]):match("^(.*)/[^/]+$") or ".") .. "/../lua"
+local data = os.getenv("XDG_DATA_HOME") or ""
+if data == "" then data = os.getenv("HOME") .. "/.local/share" end
+package.path = repo .. "/?.lua;" .. data .. "/kaze-dots/lua/?.lua;" .. package.path
+
+require("kaze.utility").toggle("kaze-inhibit", "kaze-inhibit.service", "systemd-inhibit", arg)

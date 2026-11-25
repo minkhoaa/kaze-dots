@@ -1,3 +1,4 @@
+local indicators = require("kaze.layouts.indicators")
 local M = {
     name = "sidebar",
     label = "Sidebar (Vertical Left Rail)",
@@ -41,6 +42,7 @@ function M.build_waybar_config(_cfg, _theme)
     "network",
     "wireplumber",
     "battery",
+]] .. indicators.slots .. [[
     "clock",
     "custom/power"
   ],
@@ -120,6 +122,7 @@ function M.build_waybar_config(_cfg, _theme)
     "tooltip-format": "{:%A, %d %B %Y}\n\n<tt>{calendar}</tt>"
   },
 
+]] .. indicators.config .. [[
   "custom/power": {
     "format": "󰐥",
     "align": 0.5,
@@ -322,7 +325,7 @@ tooltip label {
     color: @fg;
     padding: 6px 10px;
 }
-]], font, font)
+]], font, font) .. indicators.css(true)
 end
 
 return M

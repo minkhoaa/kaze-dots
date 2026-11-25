@@ -478,6 +478,22 @@ test("emitters: all 3 layouts x 4 themes (12 combinations) produce valid configs
             assert_eq(parsed["custom/menu"].interval, nil, tag .. ": custom/menu must have zero polling interval")
             assert_eq(parsed["custom/power"].exec, nil, tag .. ": custom/power must have zero polling exec")
             assert_eq(parsed["custom/power"].interval, nil, tag .. ": custom/power must have zero polling interval")
+            for _, feature in ipairs({ { "recording", "record", 8, "stop" }, { "night", "night", 9, "off" },
+                { "inhibit", "inhibit", 11, "off" } }) do
+                local name, unit, signal, action = table.unpack(feature)
+                local mod = "custom/" .. name
+                assert_contains(table.concat(parsed["modules-right"], " "), mod, tag .. ": missing indicator slot")
+                local indicator = assert(parsed[mod])
+                assert_eq(indicator.interval, "once", mod .. " must not poll")
+                assert_eq(indicator.signal, signal)
+                assert_eq(indicator["exec-on-event"], false)
+                assert_eq(indicator["on-click"], "kaze-" .. unit .. " " .. action)
+                assert_contains(indicator.exec, "show -p SubState --value kaze-" .. unit .. ".service")
+                local service = assert(fs.read_file(repo_dir .. "/config/systemd/user/kaze-" .. unit .. ".service"))
+                for _, phase in ipairs({ "Start", "Stop" }) do
+                    assert_contains(service, "Exec" .. phase .. "Post=-/usr/bin/pkill -RTMIN+" .. signal .. " -x")
+                end
+            end
 
             local foot_ini = emit_foot.emit(cfg, theme, layout)
             assert_contains(foot_ini, "background=" .. theme.bg, tag .. ": foot background")
@@ -508,6 +524,13 @@ test("emitters: all 3 layouts x 4 themes (12 combinations) produce valid configs
             assert_contains(fnott_ini, "border-radius=" .. exp.fnott_radius, tag .. ": fnott radius")
             assert_contains(fnott_ini, "edge-margin-vertical=" .. exp.fnott_vmargin, tag .. ": fnott vertical margin")
             assert_no_unresolved_tokens(fnott_ini:gsub("summary%-format=%%s", "summary-format=SUMMARY"), tag .. ": fnott.ini")
+
+            local mako = require("kaze.emit_mako").emit(cfg, theme, layout)
+            assert_contains(mako, "background-color=#" .. theme.bg_alt .. "f0")
+            assert_contains(mako, "outer-margin=" .. exp.fnott_vmargin .. ",")
+            assert_contains(mako, "[app-name=kaze-osd]\nhistory=0\n\n[mode=do-not-disturb]\ninvisible=1\n\n"
+                .. "[mode=do-not-disturb app-name=kaze-osd]\ninvisible=0\n")
+            assert_no_unresolved_tokens(mako, tag .. ": mako config")
 
             local hl_conf = emit_hyprlock.emit(cfg, theme, layout)
             assert_contains(hl_conf, "rgb(" .. theme.accent .. ")", tag .. ": hyprlock accent")
@@ -631,6 +654,28 @@ local function with_stubs(fn)
     if not ok then error(err, 0) end
 end
 
+test("menu: stage 2 actions appear only when their optional tools are available", function()
+    with_stubs(function(tmp, stub, run)
+        for _, bin in ipairs({ "lua", "readlink" }) do
+            local actual = assert(fs.capture("command -v " .. bin)):gsub("\n$", "")
+            assert(os.execute("ln -s " .. fs.shell_quote(actual) .. " " .. fs.shell_quote(tmp .. "/bin/" .. bin)))
+        end
+        stub("pgrep", "exit 1")
+        stub("fuzzel", [[/usr/bin/cat > "$HOME/items"]])
+        local function menu()
+            assert(os.execute(run("kaze-menu", "", "PATH=" .. fs.shell_quote(tmp .. "/bin"))))
+            return assert(fs.read_file(tmp .. "/items"))
+        end
+        local labels = { "Annotate Screenshot", "Pick Color", "Toggle Screen Recording", "Toggle Region Recording", "Toggle Night Light", "Toggle Caffeine" }
+        local minimal = menu()
+        for _, label in ipairs(labels) do assert_true(not minimal:find(label, 1, true), label .. " leaks into minimal") end
+        for _, bin in ipairs({ "swappy", "grim", "slurp", "hyprpicker", "wl-copy", "wf-recorder", "ffprobe", "flock",
+            "hyprsunset", "systemd-inhibit" }) do stub(bin, "exit 99") end
+        local full = menu()
+        for _, label in ipairs(labels) do assert_contains(full, label) end
+    end)
+end)
+
 test("apply: reapply preserves the uninstall baseline, custom symlinks and user.lua", function()
     with_stubs(function(tmp)
         local q = fs.shell_quote
@@ -654,6 +699,10 @@ test("apply: reapply preserves the uninstall baseline, custom symlinks and user.
         local manifest = assert(fs.read_file(second .. "/installed.list"))
         assert_contains(manifest, tmp .. "/.local/bin/kaze-sync\n", "unchanged symlink tracked on reapply")
         assert_contains(manifest, data .. "/dbus-1/services/org.freedesktop.Notifications.service\n")
+        for _, name in ipairs({ "record", "night", "inhibit" }) do
+            assert_contains(manifest, tmp .. "/.local/bin/kaze-" .. name .. "\n")
+            assert_contains(manifest, cfg .. "/systemd/user/kaze-" .. name .. ".service\n")
+        end
         assert_true(not fs.file_exists(second .. "/reapply/config space/waybar/style.css"), "generated file must not be backed up again")
         local function rollback(dir)
             return os.execute(env .. " " .. q(dir .. "/rollback.sh") .. " --yes >/dev/null 2>&1")
@@ -667,6 +716,10 @@ test("apply: reapply preserves the uninstall baseline, custom symlinks and user.
         assert_true(not fs.file_exists(last), "rollback unregisters active backup")
         for _, path in ipairs({ tmp .. "/.local/bin/kaze-sync", data .. "/kaze-dots/lua/kaze", cfg .. "/waybar/config.jsonc" }) do
             assert(os.execute("test ! -e " .. q(path) .. " && test ! -L " .. q(path)))
+        end
+        for _, name in ipairs({ "record", "night", "inhibit" }) do
+            assert(os.execute("test ! -L " .. q(tmp .. "/.local/bin/kaze-" .. name)))
+            assert(os.execute("test ! -L " .. q(cfg .. "/systemd/user/kaze-" .. name .. ".service")))
         end
         assert_true(not rollback(second), "a second rollback cannot delete restored files")
     end)
@@ -915,13 +968,24 @@ printf image > "$dest"
 [ "${FAIL_GRIM:-0}" = 0 ]
 ]])
         stub("wl-copy", [[
-test "$1" = --type && test "$2" = image/png
+test "$1" = --type
+printf '%s' "$2" > "$HOME/mime"
 cat > "$HOME/copied"
+]])
+        stub("swappy", [[
+test "$1" = -f && test -s "$2"
+printf '%s' "$2" > "$HOME/annotated"
+]])
+        stub("hyprpicker", [[
+printf '%s' "${HEX:-}"
+exit "${PICK_STATUS:-0}"
 ]])
         stub("notify-send", [[printf '%s\n' "$@" > "$HOME/toast"]])
         stub("xdg-user-dir", [[printf '%s\n' "$HOME"]])
         assert(os.execute(run("kaze-screenshot", "region", "CANCEL=1")))
         assert(os.execute(run("kaze-screenshot", "region --save", "CANCEL=1")))
+        assert(os.execute(run("kaze-screenshot", "region --annotate", "CANCEL=1")))
+        assert_true(not fs.file_exists(tmp .. "/annotated"), "cancel does not open swappy")
         assert_true(not fs.file_exists(tmp .. "/runtime/kaze"), "cancel must not even prepare capture storage")
         assert_true(not os.execute(run("kaze-screenshot", "region", "FAIL_GRIM=1") .. " 2>/dev/null"), "grim failure exits nonzero")
         assert_true(not fs.file_exists(tmp .. "/copied") and not fs.file_exists(tmp .. "/toast"))
@@ -933,6 +997,101 @@ cat > "$HOME/copied"
         assert_contains(saved, tmp .. "/Pictures/Screenshots/")
         assert_eq(fs.read_file(saved), "image", "saved image")
         assert_true(not fs.file_exists(tmp .. "/copied"), "save-only mode leaves clipboard intact")
+        os.remove(tmp .. "/toast")
+        assert(os.execute(run("kaze-screenshot", "region --annotate")))
+        local annotated = assert(fs.read_file(tmp .. "/annotated"))
+        assert_true(not fs.file_exists(annotated), "swappy temporary file is removed")
+        assert_true(not fs.file_exists(tmp .. "/copied") and not fs.file_exists(tmp .. "/toast"))
+        for _, vars in ipairs({ "", "HEX=abc", "HEX='#AA8877' PICK_STATUS=1" }) do
+            assert(os.execute(run("kaze-screenshot", "color", vars)))
+            assert_true(not fs.file_exists(tmp .. "/copied") and not fs.file_exists(tmp .. "/toast"))
+        end
+        assert(os.execute(run("kaze-screenshot", "color", "HEX='#Aa8877'")))
+        assert_eq(fs.read_file(tmp .. "/mime"), "text/plain")
+        assert_eq(fs.read_file(tmp .. "/copied"), "#Aa8877")
+        assert_contains(fs.read_file(tmp .. "/toast"), "#Aa8877")
+    end)
+end)
+
+test("night temperature validates, and monitor selection ignores quoted/nested lookalikes", function()
+    local focus = require("kaze.capture").focused_output
+    assert_eq(focus([[ [{"name":"DP-1","focused":false,"description":"name"},
+        {"name":"eDP-1","nested":[{"name":"Fake-1","focused":false}], "description":"} \" {", "focused":true}] ]]), "eDP-1")
+    assert_eq(focus([[ [{"name":"DP-1","focused":true},{"name":"eDP-1","focused":true}] ]]), nil)
+    assert_eq(focus([[ [{"name":"DP-1","focused":false}] ]]), nil)
+    assert_eq(focus("invalid query"), nil)
+    with_stubs(function(tmp)
+        local user = tmp .. "/user.lua"
+        fs.write_atomic(user, "return { night_temp = 3900 }")
+        local cfg, theme = config.load({ home = tmp, user_path = user })
+        assert_eq(cfg.night_temp, 3900)
+        assert_contains(require("kaze.session").render_environment(cfg, theme), 'KAZE_NIGHT_TEMP="3900"')
+        fs.write_atomic(user, "return { night_temp = 4500.5 }")
+        assert_true(not pcall(config.load, { home = tmp, user_path = user }), "must reject fractional Kelvin")
+        assert_eq(config.load({ home = tmp, user_path = user, strict = false }).night_temp, 4500)
+    end)
+end)
+
+test("recording: lock excludes double taps, wait for exact completion receipt, and stop before target", function()
+    with_stubs(function(tmp, stub, run)
+        local dir = tmp .. "/runtime/kaze"
+        local dest = tmp .. "/Video Space/Recordings/"
+        stub("xdg-user-dir", [[test "$1" = VIDEOS; printf '%s/Video Space\n' "$HOME"]])
+        for _, name in ipairs({ "wf-recorder", "ffprobe" }) do stub(name, "exit 0") end
+        stub("slurp", [[test "$1" = -f; exit 1]])
+        stub("hyprctl", [[test "$*" = '-j monitors'; printf '[{"name":"DP-2","focused":true}]\n']])
+        stub("notify-send", [[printf '%s\n' "$@" > "$HOME/toast"]])
+        stub("dbus-update-activation-environment", "exit 0")
+        stub("systemctl", [[
+record="$XDG_RUNTIME_DIR/kaze/record.env"
+state="$HOME/recording"
+case "$*" in
+  '--user show -p ActiveState kaze-record.service')
+    if [ -f "$state" ]; then echo ActiveState=active; else echo ActiveState=inactive; fi ;;
+  '--user show -p ActiveState --value kaze-record.service')
+    if [ -f "$state" ]; then echo active; else echo inactive; fi ;;
+  '--user start kaze-record.service')
+    grep -Fx 'KAZE_RECORD_OUTPUT="DP-2"' "$record" >&2
+    grep -Fx 'KAZE_RECORD_REGION=""' "$record" >&2
+    touch "$state" ;;
+  '--user stop kaze-record.service')
+    printf 'recorder\n' >> "$HOME/stop-order"
+    [ -f "$state" ]
+    if [ "${FAIL_RECORD:-0}" = 0 ]; then
+        awk -F'"' '/^KAZE_RECORD_FILE=/{print $2}' "$record" > "$XDG_RUNTIME_DIR/kaze/record.done"
+    fi
+    rm "$state" "$record" ;;
+  '--user show-environment') echo HYPRLAND_INSTANCE_SIGNATURE=test-hyprland ;;
+  '--user is-active --quiet kaze-session.target') exit 0 ;;
+  '--user stop kaze-session.target')
+    test ! -e "$state"
+    printf 'target\n' >> "$HOME/stop-order" ;;
+  '--user unset-environment '*) exit 0 ;;
+  *) exit 2 ;;
+esac
+]])
+        local function rec(args, vars)
+            return run("kaze-record", args, "HYPRLAND_INSTANCE_SIGNATURE=test-hyprland " .. (vars or ""))
+        end
+        assert(os.execute(rec("--region")))
+        assert_true(not fs.file_exists(dest), "Esc must not reserve an MP4")
+        local locked = "flock --close " .. fs.shell_quote(dir .. "/record.lock") .. " sh -c " .. fs.shell_quote(rec("toggle"))
+        assert(os.execute(locked))
+        assert_true(not fs.file_exists(dir .. "/record.env"), "second toggle skipped under held lock")
+        assert_eq(fs.capture(rec("status")), "off\n")
+        assert(os.execute(rec("toggle")))
+        assert_eq(fs.capture(rec("status")), "on\n")
+        local output = assert(fs.capture(rec("stop")))
+        assert_contains(output, dest)
+        assert_contains(fs.read_file(tmp .. "/toast"), "Recording saved")
+        os.remove(tmp .. "/toast")
+        assert(os.execute(rec("toggle")))
+        assert_true(not os.execute(rec("stop", "FAIL_RECORD=1") .. " 2>/dev/null"), "no receipt = no success")
+        assert_true(not fs.file_exists(tmp .. "/toast"), "no saved toast on failure")
+        assert(os.execute(rec("toggle")))
+        os.remove(tmp .. "/stop-order")
+        assert(os.execute(run("kaze-session", "stop", "HYPRLAND_INSTANCE_SIGNATURE=test-hyprland")))
+        assert_eq(fs.read_file(tmp .. "/stop-order"), "recorder\ntarget\n")
     end)
 end)
 

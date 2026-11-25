@@ -12,6 +12,7 @@ return {
     vol_step = 5,
     vol_max = 1.5,
     bright_step = 5,
+    night_temp = 4500,
     clipboard = {
         ephemeral = true,
         max_items = 100,

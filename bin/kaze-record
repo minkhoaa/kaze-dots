@@ -1,0 +1,104 @@
+#!/usr/bin/env lua
+
+local action = arg[1] or "toggle"
+local help = #arg == 1 and (action == "--help" or action == "-h")
+local region = action == "--region"
+if help or #arg > 1 or not (region or action == "toggle" or action == "stop" or action == "status") then
+    (help and io.stdout or io.stderr):write("Usage: kaze-record [toggle|--region|stop|status]\n")
+    os.exit(help and 0 or 2)
+end
+
+local script = arg[0]:gsub("'", "'\\''")
+local link = io.popen("readlink -f -- '" .. script .. "'")
+local resolved = link and link:read("*l")
+if link then link:close() end
+local repo = ((resolved or arg[0]):match("^(.*)/[^/]+$") or ".") .. "/../lua"
+local data = os.getenv("XDG_DATA_HOME") or ""
+if data == "" then data = os.getenv("HOME") .. "/.local/share" end
+package.path = table.concat({ repo .. "/?.lua", repo .. "/?/init.lua", data .. "/kaze-dots/lua/?.lua",
+    data .. "/kaze-dots/lua/?/init.lua", package.path }, ";")
+
+local fs = require("kaze.fs")
+local capture = require("kaze.capture")
+local utility = require("kaze.utility")
+local unit = "kaze-record.service"
+local q = fs.shell_quote
+local function fail(msg) utility.fail("kaze-record", msg) end
+local function get(...)
+    local properties = utility.properties(unit, ...)
+    if not properties then fail("cannot query " .. unit) end
+    return properties
+end
+local function has_data(path)
+    return path and os.execute("test -s " .. q(path))
+end
+
+if action == "status" then
+    print(utility.active(get("ActiveState").ActiveState) and "on" or "off")
+    return
+end
+
+local dir = fs.private_runtime_dir()
+if not dir then fail("cannot prepare $XDG_RUNTIME_DIR/kaze") end
+local receipt = dir .. "/record.done"
+if os.getenv("KAZE_RECORD_LOCKED") ~= "1" then
+    if not fs.command_exists("flock") then fail("flock not found in PATH") end
+    local status = fs.exit_status(os.execute("umask 077; exec flock -n --close --conflict-exit-code 75 "
+        .. q(dir .. "/record.lock") .. " env KAZE_RECORD_LOCKED=1 " .. q(arg[0]) .. " " .. q(action)))
+    os.exit(status == 75 and 0 or status) -- overlapping toggle/selection: ignore the second call
+end
+
+local env_path = dir .. "/record.env"
+local state = get("ActiveState").ActiveState
+if utility.active(state) or state == "deactivating" then
+    local env = fs.read_file(env_path)
+    local path = env and fs.read_env_entry(env, "KAZE_RECORD_FILE")
+    local stopped = utility.change(unit, "stop") -- synchronous; SIGINT then bounded systemd timeout
+    -- Systemd may unload the inactive unit immediately. Use the stop-post
+    -- receipt for this exact file, not an ExecMainStatus query after GC.
+    local completed = fs.read_file(receipt)
+    os.remove(receipt)
+    if not stopped or not path or completed ~= path .. "\n" then
+        fail("recording may be incomplete" .. (path and (": " .. path) or " (see journalctl --user -u " .. unit .. ")"))
+    end
+    print(path)
+    os.execute("notify-send -t 2500 -- 'Recording saved' " .. q(path) .. " 2>/dev/null")
+    return
+elseif action == "stop" then
+    if state == "failed" then fail("previous recording may be incomplete; see journalctl --user -u " .. unit) end
+    return -- a stale click must not start a new recording
+end
+
+for _, dependency in ipairs({ "wf-recorder", "ffprobe" }) do
+    if not fs.command_exists(dependency) then fail(dependency .. " not found in PATH") end
+end
+local session = require("kaze.session")
+if not session.is_active() then fail("no active Kaze session") end
+local output, geom
+if region then
+    if not fs.command_exists("slurp") then fail("slurp not found in PATH") end
+    -- Crop to the selected output. wf-recorder can otherwise silently fall
+    -- back to recording the whole display for an out-of-bounds rectangle.
+    local picked = fs.capture("slurp -f " .. q("%x,%y %Wx%H\n%o\n") .. " </dev/null")
+    if not picked or picked == "" then return end
+    geom, output = picked:match("^(%-?%d+,%-?%d+ [1-9]%d*x[1-9]%d*)\n([%w_.:%-]+)\n$")
+    if not output then fail("selection does not belong to a single output") end
+else
+    output = capture.focused_output(fs.capture("timeout 3s hyprctl -j monitors"))
+    if not output then fail("cannot find the focused Hyprland output") end
+end
+if not session.is_active() then fail("Kaze session ended before capture") end
+
+local videos = capture.directory("VIDEOS", "Videos", "Recordings")
+if videos:find("[%z\r\n]") then fail("invalid XDG Videos path") end
+os.remove(receipt)
+local path = capture.reserve(videos, "mp4")
+if not path then fail("cannot reserve an MP4 in " .. videos) end
+local entry = fs.env_entry
+local written, err = pcall(fs.write_atomic, env_path, entry("KAZE_RECORD_FILE", path)
+    .. entry("KAZE_RECORD_OUTPUT", output) .. entry("KAZE_RECORD_REGION", geom or ""))
+if not written or not utility.change(unit, "start") then
+    os.remove(env_path)
+    if not has_data(path) then os.remove(path) end
+    fail(err and tostring(err) or "recorder could not start; the recording may be incomplete (see journalctl --user -u " .. unit .. ")")
+end

@@ -69,6 +69,21 @@ function M.exit_status(ok, why, code)
     return code and code ~= 0 and code or 1
 end
 
+-- systemd EnvironmentFile double quotes, not shell syntax.
+function M.env_entry(key, value)
+    assert(type(value) == "string" and not value:find("[%z\r\n]"), "invalid EnvironmentFile value for " .. key)
+    return key .. '="' .. value:gsub('["\\]', '\\%0') .. '"\n'
+end
+
+function M.read_env_entry(contents, key)
+    local value = ("\n" .. contents):match("\n" .. key .. '="([^\n]*)"\n')
+    return value and value:gsub('\\(["\\])', '%1')
+end
+
+function M.command_exists(bin)
+    return os.execute("command -v " .. M.shell_quote(bin) .. " >/dev/null 2>&1")
+end
+
 function M.utf8_locale()
     local function value(key)
         local setting = os.getenv(key)

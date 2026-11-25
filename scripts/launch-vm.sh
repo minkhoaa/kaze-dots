@@ -3,11 +3,16 @@ set -euo pipefail
 
 VMDIR="${KAZE_VM_DIR:-/home/khoa/.local/share/shell-bench-vm}"
 HEADLESS=false
+QMP=false
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --headless)
             HEADLESS=true
+            shift
+            ;;
+        --qmp)
+            QMP=true
             shift
             ;;
         --vm-dir)
@@ -19,7 +24,7 @@ while [ "$#" -gt 0 ]; do
             shift 2
             ;;
         -h|--help)
-            echo "Usage: $0 [--headless] [--vm-dir <path>]"
+            echo "Usage: $0 [--headless] [--vm-dir <path>] [--qmp]"
             echo "Launches the isolated Arch KVM VM pinned to Intel iGPU (no seed.iso, single virtio-vga-gl 1920x1080)."
             exit 0
             ;;
@@ -43,6 +48,9 @@ for req in "$VMDIR/arch-bench.qcow2" "$VMDIR/OVMF_VARS.fd" "/usr/share/edk2/x64/
 done
 
 export __GLX_VENDOR_LIBRARY_NAME=mesa
+# Pin EGL's vendor as well as the render node: otherwise GLVND can open the
+# NVIDIA render node during device enumeration even though VirGL uses Intel.
+export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 export MESA_LOADER_DRIVER_OVERRIDE=iris
 
 DISPLAY_ARGS=()
@@ -77,6 +85,15 @@ QEMU_ARGS=(
     -serial "file:$VMDIR/serial.log"
     -pidfile "$VMDIR/vm.pid"
 )
+
+if [ "$QMP" = true ]; then
+    # Local input injection is only exposed in a private, disposable VM directory.
+    if [[ $(stat -c '%u:%a' -- "$VMDIR") != "$(id -u):700" ]]; then
+        echo 'launch-vm.sh: --qmp requires a VM directory owned by you with mode 700' >&2
+        exit 1
+    fi
+    QEMU_ARGS+=(-qmp "unix:$VMDIR/qmp.sock,server=on,wait=off")
+fi
 
 if [ "$HEADLESS" = true ]; then
     exec qemu-system-x86_64 "${QEMU_ARGS[@]}"

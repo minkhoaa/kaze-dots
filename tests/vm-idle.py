@@ -15,11 +15,15 @@ CORE = {
     "kaze-waybar.service": "waybar",
     "kaze-wallpaper.service": "swaybg",
     "foot-server.service": "foot",
-    "fnott.service": "fnott",
     "kaze-hypridle.service": "hypridle",
     "kaze-clipboard@text.service": "wl-paste",
     "kaze-clipboard@image.service": "wl-paste",
 }
+NOTIFICATIONS = {name: (f"{name}.service", name) for name in ("fnott", "mako")}
+ON_DEMAND = {
+    "kaze-record.service": "wf-recorder", "kaze-night.service": "hyprsunset", "kaze-inhibit.service": "systemd-inhibit",
+}
+SHELL_UNITS = CORE | dict(NOTIFICATIONS.values()) | ON_DEMAND
 PORTALS = {
     "xdg-desktop-portal.service", "xdg-desktop-portal-gtk.service",
     "xdg-desktop-portal-hyprland.service", "xdg-document-portal.service",
@@ -61,10 +65,10 @@ def owned_processes():
         except (OSError, IndexError):
             cgroup = ""
         scopes = [item for item in reversed(cgroup.split("/")) if item.endswith((".service", ".scope"))]
-        unit = next((item for item in scopes if item in CORE or item in SESSION), scopes[0] if scopes else "-")
-        if comm in CORE.values():
+        unit = next((item for item in scopes if item in SHELL_UNITS or item in SESSION), scopes[0] if scopes else "-")
+        if comm in SHELL_UNITS.values():
             core_seen[comm] += 1
-        if unit in CORE or comm in CORE.values():
+        if unit in SHELL_UNITS or comm in SHELL_UNITS.values():
             group = "shell"
         elif unit in SESSION or comm in SESSION_COMMS:
             group = "session"
@@ -74,6 +78,10 @@ def owned_processes():
             group = "unclassified"
         procs[pid] = (comm, unit, group)
     return procs, core_seen
+
+
+def decode_workers(procs):
+    return {pid: (comm, unit) for pid, (comm, unit, _) in procs.items() if comm == "bwrap" or comm.startswith("glycin")}
 
 
 def counters(pid):
@@ -115,7 +123,8 @@ def snapshot_counters(procs):
     return result
 
 
-def probe(seconds, guest_sudo_pss=False):
+def probe(seconds, guest_sudo_pss=False, notifications="fnott", phase="T0"):
+    core = CORE | dict([NOTIFICATIONS[notifications]])
     first, _ = owned_processes()
     start = time.monotonic()
     before = snapshot_counters(first)
@@ -124,9 +133,17 @@ def probe(seconds, guest_sudo_pss=False):
     last, counts = owned_processes()
     after = snapshot_counters(last)
     err = []
+    if phase == "T1_retained":
+        for label, processes in (("start", first), ("end", last)):
+            left = decode_workers(processes)
+            print(f"T1_retained decode workers ({label}): {len(left)} {left}")
+            if left:
+                err.append(f"decode workers not reaped at {label} of T1_retained: {left}")
 
-    def note(group, message):
-        if group in BUDGET_GROUPS:
+    def note(group, message, *, counters_only=False):
+        # Warm portal threads can retire after a client closes. Their endpoint
+        # PSS is still valid, but do not claim a complete CPU/CS total for them.
+        if group in BUDGET_GROUPS and not (phase != "T0" and group == "session" and counters_only):
             err.append(message)
         else:
             print(f"WARN ({group}): {message}", file=sys.stderr)
@@ -136,9 +153,9 @@ def probe(seconds, guest_sudo_pss=False):
         exited = {pid: desc[:2] for pid, desc in first.items() if desc[2] == group and last.get(pid) != desc}
         if begun or exited:
             note(group, f"PID set changed: started={begun}, exited={exited}; CPU/CS totals cover stable PIDs only")
-    if counts != Counter(CORE.values()):
+    if counts != Counter(core.values()):
         err.append(f"unexpected daemon counts: {dict(counts)}")
-    for unit, comm in CORE.items():
+    for unit, comm in core.items():
         if len([pid for pid, desc in last.items() if desc[:2] == (comm, unit)]) != 1:
             err.append(f"expected exactly one {comm} in {unit}")
     print(f"dt={stop - start:.2f}s")
@@ -165,7 +182,7 @@ def probe(seconds, guest_sudo_pss=False):
         start1, cpu1, cs1 = after[pid]
         start0, cpu0, cs0 = before[pid]
         if start0 != start1 or cpu1 < cpu0 or cs0.keys() != cs1.keys() or any(cs1[tid] < cs0[tid] for tid in cs0):
-            note(group, f"PID/thread identities changed for {comm} [{pid}]; CPU/CS unavailable")
+            note(group, f"PID/thread identities changed for {comm} [{pid}]; CPU/CS unavailable", counters_only=True)
             print(prefix + " CPU/CS unavailable (changed threads)")
             continue
         cpu = (cpu1 - cpu0) / CLK / (stop - start) * 100
@@ -182,7 +199,7 @@ def probe(seconds, guest_sudo_pss=False):
                if unit in PORTALS or comm in PORTAL_COMMS}
     combined = totals["shell"][0] + totals["session"][0]
     print(f"Summary: shell+session={combined:.2f} MiB, waybar={bar:.2f} MiB, live portals={','.join(sorted(portals)) or 'none'}")
-    return totals, bar, portals, portal_pss, err
+    return totals, bar, portals, portal_pss, stop - start, err
 
 
 def units_started_this_boot(units):
@@ -225,13 +242,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seconds", type=float, default=120)
     parser.add_argument("--phase", choices=("T0", "T1_retained", "T2"), default="T0")
+    parser.add_argument("--notifications", choices=NOTIFICATIONS, default="fnott")
     parser.add_argument("--allow-known-t0-portal", action="store_true", help="report the known GTK3-only T0 failure separately")
     parser.add_argument("--guest-sudo-pss", action="store_true", help="use VM sudo only to read nondumpable same-UID PSS")
     args = parser.parse_args()
     if not math.isfinite(args.seconds) or args.seconds <= 0:
         parser.error("--seconds must be finite and positive")
     print(f"Phase: {args.phase}", flush=True)
-    packages = subprocess.run(["pacman", "-Q", "hyprland", "waybar", "swaybg", "foot", "fnott", "hypridle", "wl-clipboard",
+    packages = subprocess.run(["pacman", "-Q", "hyprland", "waybar", "swaybg", "foot", args.notifications, "hypridle", "wl-clipboard",
                                "cliphist", "xdg-desktop-portal", "xdg-desktop-portal-gtk", "xdg-desktop-portal-hyprland", "gtk3",
                                "glib2", "gdk-pixbuf2", "dconf"], check=True, stdout=subprocess.PIPE, text=True).stdout
     print(packages, end="", flush=True)
@@ -241,13 +259,19 @@ def main():
     settle = 45 if args.phase == "T0" else 10
     print(f"settling for {settle}s", flush=True)
     time.sleep(settle)
-    totals, waybar, portals, portal_pss, errors = probe(args.seconds, args.guest_sudo_pss)
+    totals, waybar, portals, portal_pss, elapsed, errors = probe(args.seconds, args.guest_sudo_pss, args.notifications, args.phase)
     expected = []
     if args.phase == "T0":
         started = units_started_this_boot(PORTALS | {"kaze-waybar.service"})
         print(f"Portal unit starts this boot: {', '.join(sorted(started & PORTALS)) or 'none'}")
         bad, expected = t0_issues(totals, waybar, portals, portal_pss, started, versions, args.allow_known_t0_portal)
         errors.extend(bad)
+    print("SAMPLE " + json.dumps({
+        "phase": args.phase, "boot": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+        "notification_daemon": args.notifications, "seconds": elapsed, "versions": versions,
+        "totals_pss_mib_cpu_pct_cs_per_s": dict(totals), "waybar_mib": waybar,
+        "portals": sorted(portals), "portal_mib": portal_pss, "errors": errors, "expected": expected,
+    }, sort_keys=True))
     for err in expected:
         print(f"EXPECTED_UPSTREAM_FAIL: {err}", file=sys.stderr)
     for err in errors:

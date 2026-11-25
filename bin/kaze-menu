@@ -78,6 +78,12 @@ local items = {
     { label = "󰅌  Clipboard History",  cmd = fs.shell_quote(sibling_or_path("kaze-clipboard")) .. " pick", needs = { "cliphist", "wl-copy" } },
     { label = "󰄀  Screenshot Region",  cmd = fs.shell_quote(sibling_or_path("kaze-screenshot")) .. " region", needs = { "slurp", "grim", "wl-copy" } },
     { label = "󰆓  Save Screenshot Region", cmd = fs.shell_quote(sibling_or_path("kaze-screenshot")) .. " region --save", needs = { "slurp", "grim" } },
+    { label = "󰏫  Annotate Screenshot", cmd = fs.shell_quote(sibling_or_path("kaze-screenshot")) .. " region --annotate", needs = { "slurp", "grim", "swappy" } },
+    { label = "󰈋  Pick Color",         cmd = fs.shell_quote(sibling_or_path("kaze-screenshot")) .. " color", needs = { "hyprpicker", "wl-copy" } },
+    { label = "󰑋  Toggle Screen Recording", cmd = fs.shell_quote(sibling_or_path("kaze-record")), needs = { "wf-recorder", "ffprobe", "flock" } },
+    { label = "󰑋  Toggle Region Recording", cmd = fs.shell_quote(sibling_or_path("kaze-record")) .. " --region", needs = { "wf-recorder", "ffprobe", "slurp", "flock" } },
+    { label = "󰖔  Toggle Night Light", cmd = fs.shell_quote(sibling_or_path("kaze-night")), needs = { "hyprsunset" } },
+    { label = "󰅶  Toggle Caffeine",    cmd = fs.shell_quote(sibling_or_path("kaze-inhibit")), needs = { "systemd-inhibit" } },
     { label = "󰑓  Reload Shell",       cmd = fs.shell_quote(sibling_or_path("kaze-sync")) .. " --reload" },
     { label = "󰐥  Power Menu",         cmd = fs.shell_quote(sibling_or_path("kaze-power")) },
 }

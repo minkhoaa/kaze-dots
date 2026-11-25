@@ -1,3 +1,4 @@
+local indicators = require("kaze.layouts.indicators")
 local M = {
     name = "slim",
     label = "Slim (Minimal Top Bar)",
@@ -43,6 +44,7 @@ function M.build_waybar_config(_cfg, _theme)
     "network",
     "wireplumber",
     "battery",
+]] .. indicators.slots .. [[
     "custom/power"
   ],
 
@@ -116,6 +118,7 @@ function M.build_waybar_config(_cfg, _theme)
     "on-click": "kaze-tui sysmon"
   },
 
+]] .. indicators.config .. [[
   "custom/power": {
     "format": "󰐥",
     "tooltip-format": "Power Menu",
@@ -297,7 +300,7 @@ tooltip label {
     color: @fg;
     padding: 6px 10px;
 }
-]], font, font)
+]], font, font) .. indicators.css(false)
 end
 
 return M

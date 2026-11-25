@@ -27,13 +27,16 @@ return {
 ```
 
 ### Shared Rules Across All 3 Layouts
-- **Zero polling**: Only native Waybar C++ modules (`hyprland/workspaces`, `hyprland/window`, `mpris`, `clock`, `network`, `wireplumber`, `battery`, `tray`) plus static click-only launchers (`custom/menu`, `custom/power` with **no `exec`** and **no `interval`** — pure `format` + `on-click`).
+- **Zero polling scripts**: Prefer native Waybar modules (`hyprland/workspaces`, `hyprland/window`, `mpris`, `clock`, `network`, `wireplumber`, `battery`, `tray`). Static launchers `custom/menu` / `custom/power` are click-only, with **no `exec` or `interval`**. Stateful indicators use `interval: "once"`, `exec-on-event: false`, and a dedicated `signal`: the command queries the unit once at startup and on unit start/stop, including external kills and expiry. Empty output hides the whole widget (no blank padding). `pkill --require-handler` avoids signalling a Waybar that has not installed its RT handler yet.
 - **Consistent click targets**:
   - `custom/menu` → `kaze-menu`
   - `network` → `kaze-tui wifi`
   - `wireplumber` → left-click `kaze-tui audio`, right-click `kaze-osd vol-mute`, scroll up/down `kaze-osd vol-up` / `vol-down`
   - `battery` → tooltip shows power draw & time remaining; click opens `kaze-tui sysmon`
   - `custom/power` → `kaze-power`
+  - `custom/recording` (`RTMIN+8`) → red dot while recording; click runs `kaze-record stop`
+  - `custom/night` (`RTMIN+9`) → moon while Night Light is on; click runs `kaze-night off`
+  - `custom/inhibit` (`RTMIN+11`) → coffee cup while Caffeine is on; click runs `kaze-inhibit off`
   - `hyprland/workspaces` → scroll up/down switches workspace (`hl.dsp.focus`)
 - **Layer blur**: Hyprland applies `hl.layer_rule({ match = { namespace = "waybar" }, blur = true, ignore_alpha = 0.25 })`. Because `ignore_alpha = 0.25` skips fully transparent gaps (`alpha = 0.0`), floating pill layouts (`islands`) blur **only inside the visible pills**, never creating blurred boxes in empty spaces between islands.
 
@@ -74,7 +77,7 @@ return {
 - **Top (`modules-left`)**: `["custom/menu"]`
 - **Middle (`modules-center`)**: `["hyprland/workspaces"]`
   - Vertical stack; inactive `8px × 8px` dots, active expands vertically to **`8px × 24px` pill in `@accent`**.
-- **Bottom (`modules-right`)**: `["tray", "network", "wireplumber", "battery", "clock", "custom/power"]`
+- **Bottom (`modules-right`)**: `tray`, `network`, `wireplumber`, `battery`, recording/Night Light/Caffeine indicators, `clock`, `custom/power`
   - Every status module uses compact **icon-only** format (`󰤨`, `󰕾`, `󰁹`) with rich hover tooltips (exact percentage, SSID, device name) so nothing overflows the `42px` width.
   - `clock`: 2-line vertical format `"{:%H\n%M}"` (`font-weight: 700`, centered, tooltip shows full date + calendar).
   - `tray`: vertical stack, `icon-size: 14`, `spacing: 8`.
@@ -109,7 +112,7 @@ return {
 - **Center**: `["mpris", "clock"]`
   - `mpris`: Shows `󰎈 Artist - Title` (max-length 28) only when playing/paused; collapses cleanly when idle.
   - `clock`: `Tue 25 Nov · 00:15` (weight `600`, tooltip shows full monthly calendar).
-- **Right**: `["tray", "network", "wireplumber", "battery", "custom/power"]`
+- **Right**: `tray`, `network`, `wireplumber`, `battery`, recording/Night Light/Caffeine indicators, `custom/power`
 
 ---
 
@@ -135,7 +138,7 @@ return {
 - **Left**: `["custom/menu", "hyprland/workspaces", "hyprland/window"]`
   - Numbered workspaces (`1..5`) with crisp `2px` bottom accent underline on active tab; subtle truncated active window title (`max-length: 42`).
 - **Center**: `["clock"]`
-- **Right**: `["tray", "network", "wireplumber", "battery", "custom/power"]`
+- **Right**: `tray`, `network`, `wireplumber`, `battery`, recording/Night Light/Caffeine indicators, `custom/power`
 
 ---
 
@@ -143,10 +146,8 @@ return {
 
 Switching layout must execute cleanly in **`≤ 500 ms`** without restarting Hyprland:
 1. Validate `<name>` ∈ `{ "sidebar", "islands", "slim" }`.
-2. Update `~/.config/kaze/state.lua` atomically (`layout = "<name>"`).
-3. Invoke `kaze-sync --reload`:
-   - Regenerates `waybar/{config.jsonc,style.css,colors.css}`, `fnott.ini`, `fuzzel.ini`, `foot.ini`, `hyprlock.conf`.
-   - Runs `hyprctl reload` (applies new `gaps_in`, `gaps_out`, `rounding`, `border_size`).
-   - Restarts `waybar` cleanly (`pkill -x waybar`, wait up to `300ms` for exit, launch `waybar` detached).
-   - Restarts `fnott` cleanly (`pkill -x fnott`, relaunch detached) so notification anchor/radius/margins match the new layout immediately.
-4. Send a brief confirmation toast via `notify-send` (`"Layout switched"` → `"Active: Sidebar (Vertical Left Rail)"`), unless `--quiet` is passed.
+2. Ask `kaze-sync` to stage and validate the generated configs under its switch lock.
+3. Reload Hyprland, restart the Waybar and Fnott user units, and wait for Waybar to map. Optional units are not restarted; the new bar queries their state at startup.
+4. Commit `state.lua` atomically only after successful reload (restore the previous config on error). Send a confirmation toast unless `--quiet` is passed.
+
+The all-on geometry gate uses all three indicators together, with MPRIS also visible in `islands` (the only layout that includes it). Exact layer rectangles at 1920×1080: `8 8 42 1064`, `10 6 1900 34`, and `0 0 1920 28`, respectively.

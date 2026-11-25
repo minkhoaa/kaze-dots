@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Test the VM sampler's process attribution and T0 verdict without a desktop."""
 
+from collections import Counter
+from contextlib import redirect_stderr, redirect_stdout
+import io
 from pathlib import Path
 import runpy
 import tempfile
@@ -40,6 +43,25 @@ class IdleTest(unittest.TestCase):
                 16: ("pipewire", "pipewire.service", "outside"),
             })
             self.assertEqual(counts, {"waybar": 1})
+
+    def test_mako_is_exclusive_and_warm_portal_thread_churn_is_reported(self):
+        probe = sampler["probe"]
+        core = sampler["CORE"] | {"mako.service": "mako"}
+        procs = {pid: (comm, unit, "shell") for pid, (unit, comm) in enumerate(core.items(), 12)}
+        procs[40] = ("xdg-document-po", "xdg-document-portal.service", "session")
+        before = {pid: (123, 0, {"1": 0, "2": 0}) for pid in procs}
+        after = before | {40: (123, 0, {"1": 0})}
+        with patch.dict(probe.__globals__, {
+            "owned_processes": lambda: (procs, Counter(core.values())), "pss_kib": lambda *args: 1024,
+        }), patch("time.sleep"), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as warn:
+            for phase in ("T0", "T1_retained"):
+                snapshots = iter((before, after))
+                with patch.dict(probe.__globals__, {"snapshot_counters": lambda _: next(snapshots)}):
+                    totals, _, _, portal, _, errors = probe(1, notifications="mako", phase=phase)
+                self.assertEqual(bool(errors), phase == "T0")
+                self.assertEqual(portal, 1)
+                self.assertEqual(totals["shell"][0], 7)
+        self.assertIn("WARN (session): PID/thread identities changed", warn.getvalue())
 
     def test_nondumpable_pss_requires_explicit_guest_opt_in(self):
         read = sampler["pss_kib"]

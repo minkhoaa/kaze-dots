@@ -103,6 +103,14 @@ function M.load(opts)
     )
     cfg.layout = layout_spec.name
     cfg.wallpaper_expanded = fs.expand_home(cfg.wallpaper, home)
+    local temp = type(cfg.night_temp) == "number" and math.tointeger(cfg.night_temp)
+    if not temp or temp < 1000 or temp > 6500 then
+        local msg = "night_temp must be an integer between 1000 and 6500 K"
+        if strict then error(msg, 0) end
+        io.stderr:write("kaze warning: " .. msg .. "; using the default\n")
+        temp = defaults.night_temp
+    end
+    cfg.night_temp = temp
 
     local theme_name = cfg.theme or defaults.theme
     local ok_theme, theme = pcall(themes.get, theme_name, cfg.theme_overrides)

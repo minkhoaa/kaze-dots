@@ -1,0 +1,14 @@
+[Unit]
+Description=Kaze Night Light
+PartOf=kaze-session.target
+Requisite=kaze-session.target
+After=kaze-session.target
+
+[Service]
+Type=exec
+EnvironmentFile=%t/kaze/session.env
+# Use a fixed Kaze temperature, not a second profile scheduler.
+ExecStart=/usr/bin/hyprsunset -c /dev/null --temperature ${KAZE_NIGHT_TEMP}
+ExecStartPost=-/usr/bin/pkill -RTMIN+9 -x --require-handler -u %U waybar
+ExecStopPost=-/usr/bin/pkill -RTMIN+9 -x --require-handler -u %U waybar
+TimeoutStopSec=5s

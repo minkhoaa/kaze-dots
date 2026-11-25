@@ -95,6 +95,9 @@ Produces 3 files under `~/.config/waybar/`:
   - `progress-bar-height=5`, `progress-color=<accent>ff`, `progress-style=bar`
 - `[low]`, `[normal]`, `[critical]` urgency overrides (`low` clears `title-format=` for clean OSD/switch toasts; `critical` border uses `<danger>ff`, timeout `0`).
 
+### Mako A/B candidate (`emit_mako.lua`)
+The verification harness also generates a themed Mako config on its disposable image. It shares the layout's notification anchor, outer margins and radius, enables bounded history, and orders criteria as OSD no-history → DND invisible → OSD-visible DND exception. The emitter performs no I/O. It is not installed by `kaze-sync` while Fnott is the default.
+
 ### 3.5 `emit_hyprlock.lua` → `~/.config/hypr/hyprlock.conf`
 - Clean minimal lockscreen matching `bg`, `bg_alt`, `fg`, `fg_muted`, `accent`, `danger` with blurred wallpaper background, large centered time (`68px`), date subtitle (`15px`), and minimalist rounded password pill (`fade_on_empty = true`).
 

@@ -21,6 +21,7 @@ return {
     -- vol_step = 5,
     -- vol_max = 1.5,
     -- bright_step = 5,
+    -- night_temp = 4500, -- Kelvin (1000..6500); restart Night Light after kaze-sync --reload
 
     -- clipboard = {
     --     ephemeral = true,       -- false keeps history in $XDG_CACHE_HOME/cliphist/db
