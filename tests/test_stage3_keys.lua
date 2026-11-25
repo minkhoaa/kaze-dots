@@ -65,7 +65,7 @@ local function register_tests(test, assert_eq, assert_true, assert_contains, rep
         assert_eq(rawget(_G, "hl"), nil, "keybinds_data must run without compositor hl global")
 
         local entries = keybinds_data.build(defaults)
-        assert_eq(#entries, 84, "83 baseline binds + SUPER + slash")
+        assert_true(#entries >= 115, "Caelestia-aligned keybind table completeness")
 
         local by_chord = {}
         for _, entry in ipairs(entries) do
@@ -86,8 +86,20 @@ local function register_tests(test, assert_eq, assert_true, assert_contains, rep
 
         assert_eq(by_chord["SUPER + T"].cmd, "kaze-footclient -N", "default kaze-footclient adds -N")
         assert_eq(by_chord["SUPER + Return"].cmd, "kaze-footclient -N", "default Return kaze-footclient adds -N")
+        assert_eq(by_chord["SUPER + SUPER_L"].release, true, "Super tap launcher triggers on release")
+        assert_contains(by_chord["SUPER + C"].cmd, "command -v codium", "default editor checks codium with fallback")
         assert_contains(by_chord["SUPER + E"].cmd, "command -v yazi", "default files keeps missing-yazi guard")
         assert_contains(by_chord["SUPER + E"].cmd, "File manager unavailable", "default files keeps notification hint")
+        assert_eq(by_chord["SUPER + SHIFT + C"].cmd, "kaze-screenshot color", "color picker bind")
+        assert_eq(by_chord["CTRL + ALT + R"].cmd, "kaze-record", "screen recording bind")
+        assert_eq(by_chord["SUPER + SHIFT + ALT + R"].cmd, "kaze-record --region", "region recording bind")
+        assert_eq(by_chord["SUPER + Comma"].kind, "group_toggle", "window group toggle")
+        assert_eq(by_chord["SUPER + Minus"].kind, "window_resize_step", "window resize step")
+        assert_eq(by_chord["SUPER + ALT + Backslash"].kind, "window_pip", "PiP bind")
+        assert_eq(by_chord["SUPER + M"].workspace, "music", "music special workspace")
+        assert_eq(by_chord["SUPER + D"].workspace, "communication", "communication special workspace")
+        assert_eq(by_chord["SUPER + R"].workspace, "todo", "todo special workspace")
+        assert_eq(by_chord["CTRL + SUPER + Space"].cmd, "playerctl play-pause", "keyboard media toggle")
 
         for i = 1, 10 do
             local key = tostring(i % 10)
@@ -108,6 +120,7 @@ local function register_tests(test, assert_eq, assert_true, assert_contains, rep
         local custom = keybinds_data.build({
             terminal = "foot",
             browser = "chromium",
+            editor = "nvim",
             files = "thunar",
         })
         local custom_by_chord = {}
@@ -116,6 +129,7 @@ local function register_tests(test, assert_eq, assert_true, assert_contains, rep
         end
         assert_eq(custom_by_chord["SUPER + T"].cmd, "foot", "custom terminal preserved without -N")
         assert_eq(custom_by_chord["SUPER + W"].cmd, "chromium", "custom browser preserved")
+        assert_eq(custom_by_chord["SUPER + C"].cmd, "nvim", "custom editor preserved")
         assert_eq(custom_by_chord["SUPER + E"].cmd, "thunar", "custom file manager bypasses yazi fallback")
 
         local rows = keybinds_data.format_rows(defaults)
@@ -252,6 +266,7 @@ printf '[Launchers]  Super + /  —  Search keyboard shortcuts\n'
         local exec_calls = {}
         local timers = {}
 
+        local dispatches = {}
         with_mock_hl({ cfg = defaults, theme = theme, layout = layout }, function()
             rawset(_G, "hl", {
                 bind = function(keys, dispatcher, opts)
@@ -265,18 +280,35 @@ printf '[Launchers]  Super + /  —  Search keyboard shortcuts\n'
                 exec_cmd = function(cmd)
                     exec_calls[#exec_calls + 1] = cmd
                 end,
+                dispatch = function(action)
+                    dispatches[#dispatches + 1] = action
+                end,
+                get_active_window = function()
+                    return { address = "0x1234", floating = false, size = { x = 1000, y = 800 } }
+                end,
+                get_active_monitor = function()
+                    return { x = 0, y = 0, width = 1920, height = 1080, scale = 1 }
+                end,
                 dsp = {
                     exec_cmd = function(cmd) return { dsp = "exec_cmd", cmd = cmd } end,
                     focus = function(args) return { dsp = "focus", args = args } end,
+                    group = {
+                        toggle = function() return { dsp = "group.toggle" } end,
+                        lock = function() return { dsp = "group.lock" } end,
+                        next = function() return { dsp = "group.next" } end,
+                        prev = function() return { dsp = "group.prev" } end,
+                    },
                     window = {
                         close = function() return { dsp = "window.close" } end,
                         fullscreen = function(args) return { dsp = "window.fullscreen", args = args } end,
                         float = function() return { dsp = "window.float" } end,
-                        pin = function() return { dsp = "window.pin" } end,
+                        pin = function(args) return { dsp = "window.pin", args = args } end,
+                        center = function() return { dsp = "window.center" } end,
+                        set_prop = function(args) return { dsp = "window.set_prop", args = args } end,
                         cycle_next = function(args) return { dsp = "window.cycle_next", args = args } end,
                         move = function(args) return { dsp = "window.move", args = args } end,
                         drag = function() return { dsp = "window.drag" } end,
-                        resize = function() return { dsp = "window.resize" } end,
+                        resize = function(args) return { dsp = "window.resize", args = args } end,
                     },
                     workspace = {
                         toggle_special = function(ws) return { dsp = "workspace.toggle_special", ws = ws } end,
@@ -285,7 +317,24 @@ printf '[Launchers]  Super + /  —  Search keyboard shortcuts\n'
             })
             dofile(repo_dir .. "/hypr/keybinds.lua")
 
-            assert_eq(#binds, 84, "all 84 binds registered via hl.bind")
+            assert_eq(#binds, #keybinds_data.build(defaults), "every bind registered via hl.bind")
+            local super_tap = assert(by_chord["SUPER + SUPER_L"], "SUPER + SUPER_L bound")
+            assert_eq(super_tap.opts.release, true, "SUPER_L launcher uses release option")
+            assert_eq(by_chord["SUPER + Comma"].dispatcher.dsp, "group.toggle")
+            assert_eq(by_chord["CTRL + SUPER + Backslash"].dispatcher.dsp, "window.center")
+
+            -- Exercise dynamic window helpers (resize step, normalize, PiP)
+            by_chord["SUPER + Minus"].dispatcher()
+            assert_eq(dispatches[#dispatches].dsp, "window.resize")
+            assert_eq(dispatches[#dispatches].args.x, -100)
+            assert_eq(dispatches[#dispatches].args.relative, true)
+
+            by_chord["CTRL + SUPER + ALT + Backslash"].dispatcher()
+            assert_eq(dispatches[#dispatches].dsp, "window.center")
+
+            by_chord["SUPER + ALT + Backslash"].dispatcher()
+            assert_eq(dispatches[#dispatches].dsp, "window.pin")
+            assert_eq(dispatches[#dispatches].args.action, "on")
             local slash = assert(by_chord["SUPER + slash"], "SUPER + slash bound")
             assert_eq(slash.dispatcher.dsp, "exec_cmd")
             assert_eq(slash.dispatcher.cmd, "kaze-keys")

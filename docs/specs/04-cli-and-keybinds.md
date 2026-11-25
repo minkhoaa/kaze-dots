@@ -32,7 +32,9 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 - Verifies required `PATH` binaries for the active profile (`minimal` never fails on absent `full` packages), deployed XDG symlink integrity (including systemd user units and drop-ins), UTF-8 locale, empty `hyprctl configerrors`, matching `systemd --user` Wayland activation vars, passive `busctl --user --activatable` portal check (never waking portals), active PipeWire/WirePlumber, and singleton daemon PID counts. Prints informational guidance on user-managed opt-ins (`gnome-keyring`/`keepassxc`, `mpris-proxy`, `udisks2`).
 
 ### `kaze-menu`
-- Opens a flat command palette in `fuzzel` (toggles closed if `fuzzel` is already running). Entries without their backend binary are hidden:
+- Opens a flat command palette in `fuzzel` (toggles closed if `fuzzel` is already running). When launched from `kaze-waybar.service`, actions detach via `systemd-run --user --scope --quiet` so bar restarts never terminate switch transactions. Entries without their backend binary are hidden:
+  - `󰀻  App Launcher` → calls `fuzzel`
+  - `󰆍  Terminal` → calls `kaze-footclient -N`
   - `󰙵  Switch Layout` → calls `kaze-layout --menu`
   - `󰏘  Switch Theme` → calls `kaze-theme --menu`
   - `󰖩  Wi-Fi (nmtui)` → calls `kaze-tui wifi`
@@ -104,13 +106,14 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 
 | Keybind | Action | Flags |
 |---|---|---|
-| `Super + Space` / `Super + D` | Toggle App Launcher (`fuzzel`) | — |
+| `Super` (tap release) / `Super + Space` | Toggle App Launcher (`fuzzel`) | `release` (`SUPER_L`) |
 | `Super + Shift + Space` | Open `kaze-menu` | — |
 | `Super + /` | Search Keyboard Shortcuts (`kaze-keys`) | — |
 | `Super + Shift + L` | Quick Layout Switcher (`kaze-layout --menu`) | — |
 | `Super + Shift + T` | Quick Theme Switcher (`kaze-theme --menu`) | — |
 | `Super + Return` / `Super + T` | Open Terminal (`kaze-footclient`) | — |
 | `Super + W` | Open Browser (`cfg.browser`) | — |
+| `Super + C` | Open Editor (`cfg.editor`, fallback `code`/`nvim`) | — |
 | `Super + E` | Open File Manager (`cfg.files`) | — |
 | `Super + V` | Clipboard History (`cliphist` + `fuzzel`) | — |
 | `Super + L` | Lock Screen (`kaze-session lock` → logind → hypridle/Hyprlock) | — |
@@ -118,21 +121,33 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 | `Ctrl + Alt + C` | Dismiss All Notifications (`fnottctl dismiss all`) | `locked` |
 | `Super + Alt + W` | Floating Wi-Fi TUI (`kaze-tui wifi`) | — |
 | `Super + Alt + B` | Floating Bluetooth TUI (`kaze-tui bluetooth`) | — |
-| `Super + Alt + A` | Floating Audio TUI (`kaze-tui audio`) | — |
+| `Ctrl + Alt + V` / `Super + Alt + A` | Floating Audio TUI (`kaze-tui audio`) | — |
 | `Ctrl + Shift + Esc` | Floating System Monitor (`kaze-tui sysmon`) | — |
 | `Print` | Fullscreen Screenshot → Clipboard | `locked` |
 | `Super + Shift + S` | Region Screenshot (`slurp`) → Clipboard | — |
-| `Ctrl + Super + Alt + R` | Sync & Reload Shell (`kaze-sync --reload`) | — |
+| `Super + Shift + Alt + S` | Annotate Region Screenshot (`swappy`) | — |
+| `Super + Shift + C` | Color Picker (`hyprpicker`) | — |
+| `Ctrl + Alt + R` / `Super + Shift + Alt + R` | Toggle Screen / Region Recording (`kaze-record`) | — |
+| `Ctrl + Super + Alt + R` | Sync & Reload Shell (`kaze-sync --reload`) | `release` |
 | `Super + Q` | Close Active Window | — |
 | `Super + F` / `Super + Alt + F` | Fullscreen / Maximize | — |
 | `Super + Alt + Space` | Toggle Floating | — |
 | `Super + P` | Toggle Pin | — |
-| `Super + S` / `Super + Alt + S` | Toggle / Move to Scratchpad (`special:scratch`) | — |
+| `Ctrl + Super + \` / `Ctrl + Super + Alt + \` | Center / Normalize (55%×70% + Center) Window | — |
+| `Super + Alt + \` | Pin Window as Picture-in-Picture (bottom-right) | — |
+| `Super + ,` / `Super + Shift + ,` / `Super + U` | Toggle / Lock / Ungroup Window Group | — |
+| `Ctrl + Alt + Tab` / `Ctrl + Shift + Alt + Tab` | Cycle Window Group Tabs | `repeating` |
+| `Super + -/=` / `Super + Shift + -/=` / `Super + Alt + Arrows` | Resize Active Window (±10%) | `repeating` |
+| `Super + S` / `Super + Alt + S` / `Ctrl + Super + Shift + Up/Down` | Toggle / Move In & Out of Scratchpad (`special:scratch`) | — |
+| `Super + M` / `Super + D` / `Super + R` | Toggle Special Workspaces (`music`, `communication`, `todo`) | — |
 | `Super + H/J/K/Arrows` | Focus Window Direction | — |
 | `Super + Shift + Arrows` | Move Window Direction | — |
-| `Super + 1..0` / `Super + Shift + 1..0` | Focus / Move to Workspace `1..10` | — |
-| `Super + LMB / RMB` | Drag / Resize Window | `mouse` |
+| `Super + 1..0` / `Super + Shift/Alt + 1..0` | Focus / Move to Workspace `1..10` | — |
+| `Ctrl + Super + Left/Right` / `Super + Page_Up/Down` / `Scroll` | Cycle Prev / Next Workspace | `repeating` |
+| `Ctrl + Super + Shift + Left/Right` / `Super + Alt + Page_Up/Down` | Move Window to Prev / Next Workspace | `repeating` |
+| `Super + LMB / Z` · `Super + RMB / X` | Drag / Resize Window | `mouse` |
 | `XF86AudioRaiseVolume` / `Lower` | `kaze-osd vol-up` / `vol-down` | `locked`, `repeating` |
-| `XF86AudioMute` / `MicMute` | `kaze-osd vol-mute` / `mic-mute` | `locked` |
+| `XF86AudioMute` / `Super + Shift + M` / `MicMute` | `kaze-osd vol-mute` / `mic-mute` | `locked` |
 | `XF86MonBrightnessUp` / `Down` | `kaze-osd bright-up` / `bright-down` | `locked`, `repeating` |
-| `XF86AudioPlay` / `Next` / `Prev` | `playerctl play-pause` / `next` / `previous` | `locked` |
+| `XF86AudioPlay` / `Ctrl + Super + Space` | `playerctl play-pause` | `locked` |
+| `XF86AudioNext` / `Prev` / `Stop` (`Ctrl + Super + = / - / Backspace`) | `playerctl next` / `previous` / `stop` | `locked` |

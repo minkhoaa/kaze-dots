@@ -5,6 +5,7 @@ return {
     font = "JetBrainsMono Nerd Font",
     terminal = "kaze-footclient",
     browser = "firefox",
+    editor = "codium",
     files = "kaze-footclient -e yazi",
     wallpaper = "~/Pictures/Wallpapers/wallpaper.png",
     wallpaper_dir = "~/Pictures/Wallpapers",
