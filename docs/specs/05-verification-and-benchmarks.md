@@ -108,6 +108,17 @@ KAZE_VM_DIR=/path/to/disposable-vm ./tests/vm-bench.sh
 
 Only T0 has the 60 MiB hard cap. For the Mako decision, require every matched T0 to pass the 55 MiB shell guard and the 60.0 MiB limit after subtracting only the exact known eagerly activated portal units; report the original strict T0 alongside it. Require worker reaping and every DND/OSD check to pass, and compare paired `T1_retained` totals (no pre-approved positive margin).
 
+**Empirical Stage 2 Mako vs Fnott outcome (`vm-bench.sh`, Arch KVM/VirGL, `1920×1080`, `fnott 1.8.0-1` vs `mako 1.11.0-1`):**
+- Cold `T0` shell-only PSS: Fnott `48.17–48.37 MiB` (`0.00%` CPU, `0.56 CS/s`) vs Mako `47.28–47.76 MiB` (`0.00%` CPU, `0.56 CS/s`).
+- `T1_retained` (starting 10s after text + 64×64 PNG icon toasts closed): Fnott retained `58.22–58.42 MiB` with **0** leftover decoder workers; Mako retained `53.15 MiB` **but failed the worker-reaping gate** (`{bwrap ×2, glycin-image-rs}` remained alive inside `mako.service` past the 10s post-dismissal boundary and exited mid-sample, mutating session PID/thread sets).
+- **Decision:** Keep **Fnott** as the default notification/OSD daemon; retain `lua/kaze/emit_mako.lua` as a pure, unit-tested candidate module without installing or activating Mako by default.
+
+### Stage 3: profile installer, dynamic theme, IME, Polkit, and `kaze-doctor`
+
+On a disposable copy-on-write VM overlay (`KAZE_VM_DIR`, mode `0700`):
+- **`minimal` profile (`./scripts/install.sh --profile minimal --yes`):** passes full Gate 2 (`./tests/vm-verify.sh --functional-only`), `Super + /` (`kaze-keys`) via QMP hardware key injection, zero-flash `kaze-wall` image transitions and corrupt-image rejection, `input:accel_profile = flat`, `kaze-polkit.service` and `kaze-fcitx5.service` inactive (`0 MiB` overhead), and `kaze-doctor` (`9 OK, 0 WARN, 0 FAIL`).
+- **`full` profile (`./scripts/install.sh --profile full --yes`):** installs all 14 extra official Arch `[extra]` packages (`0` AUR), starts `kaze-polkit.service` (`mate-polkit`) and `kaze-fcitx5.service` (`fcitx5` + `fcitx5-bamboo`, `XMODIFIERS=@im=fcitx` without global `GTK_IM_MODULE`/`QT_IM_MODULE`), verifies `kaze-theme dynamic` (`matugen 4.2` `--dry-run --json hex --source-color-index 0` + WCAG 2.1 contrast clamping across `sidebar`, `islands`, and `slim`), opt-in `sync_prefer_dark` via `gsettings`, Vietnamese + emoji rendering (`noto-fonts` + `noto-fonts-emoji`), Polkit authentication dialog cancellation, and `kaze-doctor` (`10 OK, 0 WARN, 0 FAIL`). Physical laptop lid-switch and `/sys/class/backlight` checks remain hardware-only gates.
+
 ## 3. VM Shutdown Discipline
 
 Every automated VM test script MUST finish with:

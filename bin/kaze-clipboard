@@ -96,7 +96,7 @@ local data = fs.capture(cliphist .. "decode " .. quote(selected))
 if not data or data == "" then fail("clipboard entry could not be decoded") end
 -- wl-copy uses xdg-mime for other formats. Do not depend on that path for PNGs.
 local mime = data:sub(1, 8) == "\137PNG\r\n\26\n" and " --type image/png" or ""
-local copy = io.popen("exec wl-copy" .. mime, "w")
+local copy = io.popen("exec wl-copy" .. mime .. " >/dev/null 2>&1", "w")
 if not copy then fail("cannot launch wl-copy") end
 local written = copy:write(data)
 local ok = copy:close()

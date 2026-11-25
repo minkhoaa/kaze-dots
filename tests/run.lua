@@ -1201,6 +1201,10 @@ fi
     end)
 end)
 
+dofile(repo_dir .. "/tests/test_stage3_keys.lua")(test, assert_eq, assert_true, assert_contains, repo_dir)
+dofile(repo_dir .. "/tests/test_stage3_theme_wall.lua")(test, assert_eq, assert_true, assert_contains, repo_dir)
+dofile(repo_dir .. "/tests/test_stage3_profile_doctor.lua")(test, assert_eq, assert_true, assert_contains, repo_dir)
+
 io.stdout:write(string.format("\nSummary: %d passed, %d failed\n", passed, failed))
 if failed > 0 then
     os.exit(1)

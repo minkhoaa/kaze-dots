@@ -62,27 +62,30 @@ boot_vm() {
 }
 
 wait_session() {
-    ssh_guest 'bash -s' <<'GUEST'
+    for _ in {1..30}; do
+        # Keep each SSH probe short-lived so an early SSH login never pins
+        # logind's User.Display ahead of the graphical tty1 session.
+        if ssh_guest 'bash -s' <<'GUEST'
 set -euo pipefail
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-for _ in {1..30}; do
-    # Type=exec confirms a launch, not that the Wayland surfaces are mapped.
-    if systemctl --user is-active --quiet kaze-waybar.service && [ -S "$XDG_RUNTIME_DIR/foot.sock" ]; then
-        sig=$(systemctl --user show-environment | awk -F= '$1=="HYPRLAND_INSTANCE_SIGNATURE" {print $2}')
-        if [[ -n "$sig" ]] && layers=$(hyprctl -i "$sig" layers 2>/dev/null) &&
-            grep -q 'namespace: wallpaper' <<< "$layers" && grep -q 'namespace: waybar' <<< "$layers"; then
-            errors=$(hyprctl -i "$sig" configerrors)
-            if [[ -n "$errors" ]]; then printf '%s\n' "$errors" >&2; exit 1; fi
-            monitors=$(hyprctl -i "$sig" monitors)
-            grep -q 1920x1080 <<< "$monitors"
-            exit 0
-        fi
-    fi
-    sleep .5
-done
-journalctl --user -b -n 80 --no-pager >&2
-exit 1
+systemctl --user is-active --quiet kaze-waybar.service &&
+    systemctl --user is-active --quiet kaze-hypridle.service &&
+    [ -S "$XDG_RUNTIME_DIR/foot.sock" ] || exit 1
+sig=$(systemctl --user show-environment | awk -F= '$1=="HYPRLAND_INSTANCE_SIGNATURE" {print $2}')
+[[ -n "$sig" ]] && layers=$(hyprctl -i "$sig" layers 2>/dev/null) &&
+    grep -q 'namespace: wallpaper' <<< "$layers" && grep -q 'namespace: waybar' <<< "$layers" || exit 1
+errors=$(hyprctl -i "$sig" configerrors)
+if [[ -n "$errors" ]]; then printf '%s\n' "$errors" >&2; exit 2; fi
+monitors=$(hyprctl -i "$sig" monitors)
+grep -q 1920x1080 <<< "$monitors"
 GUEST
+        then
+            return 0
+        fi
+        sleep .5
+    done
+    ssh_guest 'journalctl --user -b -n 80 --no-pager >&2' || true
+    return 1
 }
 
 in_session() { ssh_guest '~/kaze-dots/tests/vm-in-session.sh' "$@"; }

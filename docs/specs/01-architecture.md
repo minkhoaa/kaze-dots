@@ -34,7 +34,7 @@ Live Reload (validate staging, reload Hyprland, refresh appearance, restart affe
 
 ## 2. Runtime Process Graph (Steady-State Idle)
 
-The Kaze shell starts seven native processes in six roles. `kaze-session.target` pulls in `graphical-session.target` and owns their lifecycle (`PartOf=`). Before starting the target, the bootstrap renders configs, clears stale session clipboard history, and imports only `WAYLAND_DISPLAY`, `XDG_CURRENT_DESKTOP` and `HYPRLAND_INSTANCE_SIGNATURE` to D-Bus/systemd. Live reload stages `session.env` with the generated configs, retaining the login's locale. Changes restart swaybg only if the effective image path or fallback color changes; cursor changes are applied to the compositor. Logout stops the target before dispatching compositor exit. Portal services remain D-Bus-activatable. On the tested stock Arch packages, GTK3 requests portal activation on Waybar startup despite Kaze not starting a portal unit explicitly; see [Spec 05](05-verification-and-benchmarks.md).
+The Kaze shell starts seven native processes in six roles in the `minimal` profile. In the `full` profile (`scripts/install.sh --profile full`), `kaze-session.target` additionally activates `kaze-polkit.service` (`mate-polkit`) and `kaze-fcitx5.service` (`fcitx5` + `fcitx5-bamboo`, seeding `~/.config/fcitx5/profile` only when absent and exporting `XMODIFIERS=@im=fcitx` without forcing global `GTK_IM_MODULE`/`QT_IM_MODULE`). Both optional units gate startup via `ExecCondition` against `session.env`, adding `0 MiB` in `minimal`. `kaze-session.target` pulls in `graphical-session.target` and owns their lifecycle (`PartOf=`). Before starting the target, the bootstrap renders configs, clears stale session clipboard history, and imports only `WAYLAND_DISPLAY`, `XDG_CURRENT_DESKTOP` and `HYPRLAND_INSTANCE_SIGNATURE` to D-Bus/systemd. Live reload stages `session.env` with the generated configs, retaining the login's locale. Wallpaper switches pre-map a transient `swaybg` candidate on every powered monitor before restarting `kaze-wallpaper.service` so image changes never flash black; cursor changes are applied to the compositor. Logout stops the target before dispatching compositor exit. Portal services remain D-Bus-activatable. On the tested stock Arch packages, GTK3 requests portal activation on Waybar startup despite Kaze not starting a portal unit explicitly; see [Spec 05](05-verification-and-benchmarks.md).
 
 Shell-only estimates from the previous VM baseline:
 
@@ -55,22 +55,25 @@ Ephemeral processes (`fuzzel`, `hyprlock`, `grim`, `slurp`, `swappy`, `hyprpicke
 `lua/kaze/config.lua` resolves effective configuration deterministically by deep-merging tables in strict priority order:
 
 1. **Built-in Defaults** (`lua/kaze/defaults.lua`):
+   - `profile = "minimal"` (`"minimal"` or `"full"`)
    - `layout = "sidebar"`
    - `theme = "kaze"`
    - `font = "JetBrainsMono Nerd Font"`
    - `terminal = "kaze-footclient"` uses the packaged Foot server with per-window overrides from the generated `foot.ini`.
    - `browser = "firefox"`
    - `files = "kaze-footclient -e yazi"` (shows an installation/configuration hint if Yazi is missing)
-   - `wallpaper = "~/Pictures/Wallpapers/wallpaper.png"`
+   - `wallpaper = "~/Pictures/Wallpapers/wallpaper.png"`, `wallpaper_dir = "~/Pictures/Wallpapers"`
    - `cursor_theme = "Adwaita"`, `cursor_size = 24`
+   - `kb_layout = "us"`, `accel_profile = "flat"`, `workspace_swipe = true`
+   - `sync_prefer_dark = false`
    - `vol_step = 5`, `vol_max = 1.5`, `bright_step = 5`
    - `night_temp = 4500` K (on-demand `hyprsunset`; applied on next start)
    - `blur = { enabled = true, size = 3, passes = 1, xray = true }`
    - `shadow = false`
    - `opacity = { active = 0.96, inactive = 0.92 }`
 2. **Active Persisted State** (`~/.config/kaze/state.lua`):
-   - Committed by `kaze-sync` after successful layout/theme changes. The transaction holds `$XDG_RUNTIME_DIR/kaze/sync.lock`, stages and snapshots files, and uses a compositor-instance-local candidate state until reload succeeds. On failure it restores the previous files and reloads the previous configuration.
-   - Contains only `{ layout = "...", theme = "..." }` so switching layout/theme never clobbers the user's manual overrides.
+   - Committed by `kaze-sync` after successful layout/theme/wallpaper/profile changes. The transaction holds `$XDG_RUNTIME_DIR/kaze/sync.lock`, stages and snapshots files, and uses a compositor-instance-local candidate state until reload succeeds. On failure it restores the previous files and reloads the previous configuration.
+   - Stores `{ layout, theme, wallpaper, profile, dynamic_palette, prev_color_scheme }` so switching runtime state never clobbers the user's manual overrides in `user.lua`.
 3. **User Overrides** (`~/.config/kaze/user.lua`, optional):
    - User-owned Lua table returning overrides (e.g., custom `wallpaper`, `font`, `kb_layout`, `monitors`, or custom `theme_overrides`).
    - Loaded safely via `pcall(dofile, ...)` — syntax errors log to `stderr` and fall back gracefully to defaults instead of breaking Hyprland startup.
@@ -82,19 +85,28 @@ Ephemeral processes (`fuzzel`, `hyprlock`, `grim`, `slurp`, `swappy`, `hyprpicke
 ```text
 lua/kaze/
 ├── defaults.lua        # Base default configuration table
-├── themes.lua          # Built-in color palettes + hex/rgba conversion helpers
+├── color.lua           # Pure-Lua WCAG 2.1 luminance/contrast clamping & JSON parser
+├── themes.lua          # Built-in color palettes + dynamic palette loader + hex/rgba helpers
+├── keybinds_data.lua   # Single pure-Lua shortcut registry shared by Hyprland & kaze-keys
+├── power_profile.lua   # Standalone iwd/NM detection & zero-Python busctl PowerProfiles
 ├── layouts/
 │   ├── init.lua        # Layout registry & validator ("sidebar", "islands", "slim")
+│   ├── indicators.lua  # Zero-polling RT-signal Waybar indicator builders
 │   ├── sidebar.lua     # 42px left vertical sidebar geometry + Waybar JSONC/CSS builders
 │   ├── islands.lua     # Floating top pill islands geometry + Waybar JSONC/CSS builders
 │   └── slim.lua        # 28px flat minimal top bar geometry + Waybar JSONC/CSS builders
-├── config.lua          # Deep-merge loader (defaults -> state -> user -> layout)
+├── config.lua          # Deep-merge loader (defaults -> layout -> state -> user)
 ├── state.lua           # Read/write ~/.config/kaze/state.lua atomically
+├── session.lua         # Session target lifecycle, session.env rendering & lock/DPMS helpers
+├── transaction.lua     # Staging, zero-flash swaybg swap, reload & rollback engine
+├── capture.lua         # Monitor/region geometry helpers for screenshots & wf-recorder
+├── utility.lua         # Shared systemd user unit start/stop/status helper
 ├── fs.lua              # Atomic file write (.tmp -> os.rename), mkdir -p, shell_quote
 ├── emit_waybar.lua     # Pure emitter: (cfg, theme, layout) -> { config_jsonc, style_css, colors_css }
 ├── emit_foot.lua       # Pure emitter: (cfg, theme, layout) -> foot.ini
 ├── emit_fuzzel.lua     # Pure emitter: (cfg, theme, layout) -> fuzzel.ini
 ├── emit_fnott.lua      # Pure emitter: (cfg, theme, layout) -> fnott.ini
+├── emit_mako.lua       # Pure emitter: (cfg, theme, layout) -> candidate mako config
 └── emit_hyprlock.lua   # Pure emitter: (cfg, theme, layout) -> hyprlock.conf
 ```
 

@@ -144,26 +144,26 @@ kaze-session wake-displays
 grep -Eq '"dpmsStatus":[[:space:]]*true' <<< "$(hyprctl -j monitors all)"
 
 # Event-driven clipboard ingestion. Only the verification harness sleeps.
-printf normal-kaze-qa | wl-copy
+printf normal-kaze-qa | wl-copy >/dev/null 2>&1
 sleep .5
 grep -q normal-kaze-qa <<< "$(kaze-clipboard list)"
 db="$XDG_RUNTIME_DIR/kaze/cliphist.db"
 test "$(stat -c %a "$db")" = 600
-printf tagged-fake-secret | wl-copy --sensitive
+printf tagged-fake-secret | wl-copy --sensitive >/dev/null 2>&1
 sleep .5
 if grep -q tagged-fake-secret <<< "$(kaze-clipboard list)"; then
     echo 'sensitive clipboard item leaked into history' >&2
     exit 1
 fi
 snapshot=$(sha256sum "$db")
-head -c 20971520 /dev/zero | tr '\0' a | wl-copy --type text/plain
+head -c 20971520 /dev/zero | tr '\0' a | wl-copy --type text/plain >/dev/null 2>&1
 sleep .5
 test "$(sha256sum "$db")" = "$snapshot"
 
 # Offer a real PNG, replace the clipboard, then restore through the actual
 # cliphist decode and wl-copy pipeline. Only the picker selection is scripted.
 printf %s 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/q9kAAAAASUVORK5CYII=' | base64 --decode > "$qa/one.png"
-wl-copy --type image/png < "$qa/one.png"
+wl-copy --type image/png < "$qa/one.png" >/dev/null 2>&1
 for ((i=0; i<20; ++i)); do
     if kaze-clipboard list | grep -qi 'png 1x1'; then break; fi
     sleep .1
@@ -172,7 +172,7 @@ kaze-clipboard list | grep -i 'png 1x1'
 mkdir -- "$qa/bin"
 printf '%s\n' '#!/bin/sh' "awk '/png 1x1/ && !found++ { print } END { if (!found) exit 1 }'" > "$qa/bin/fuzzel"
 chmod 700 "$qa/bin/fuzzel"
-printf 'not the image' | wl-copy --type text/plain
+printf 'not the image' | wl-copy --type text/plain >/dev/null 2>&1
 PATH="$qa/bin:$PATH" kaze-clipboard pick
 wl-paste --list-types | grep -Fx 'image/png'
 wl-paste --no-newline --type image/png > "$qa/restored.png"

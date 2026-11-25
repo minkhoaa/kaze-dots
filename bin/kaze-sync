@@ -33,6 +33,7 @@ end
 setup_path()
 
 local config = require("kaze.config")
+local defaults = require("kaze.defaults")
 local emit_fnott = require("kaze.emit_fnott")
 local emit_foot = require("kaze.emit_foot")
 local emit_fuzzel = require("kaze.emit_fuzzel")
@@ -44,27 +45,89 @@ local state = require("kaze.state")
 local transaction = require("kaze.transaction")
 
 local function usage(output)
-    output:write("Usage: kaze-sync [--reload | --check | --session-start | --set-layout NAME | --set-theme NAME]\n")
+    output:write(
+        "Usage: kaze-sync [--reload | --check | --session-start | --set-layout NAME"
+            .. " | --set-theme NAME | --set-dynamic-theme | --set-wallpaper PATH | --set-profile NAME]\n"
+    )
 end
 
-local option, value = arg[1], arg[2]
-local check_only = option == "--check"
-local session_start = option == "--session-start"
-local setting = ({ ["--set-layout"] = "layout", ["--set-theme"] = "theme" })[option]
-local do_reload = option == "--reload" or setting ~= nil
-if #arg == 1 and (option == "-h" or option == "--help") then
+local function bad_args()
+    usage(io.stderr)
+    os.exit(2)
+end
+
+if #arg == 1 and (arg[1] == "-h" or arg[1] == "--help") then
     usage(io.stdout)
     os.exit(0)
 end
-if (setting and (#arg ~= 2 or value == ""))
-    or (not setting and (#arg > 1 or (option and not (check_only or session_start or do_reload)))) then
-    usage(io.stderr)
-    os.exit(2)
+
+local check_only = false
+local session_start = false
+local do_reload = false
+local set_dynamic_theme = false
+local updates = {}
+local has_updates = false
+
+local i = 1
+while i <= #arg do
+    local a = arg[i]
+    if a == "--check" then
+        if #arg ~= 1 then bad_args() end
+        check_only = true
+        i = i + 1
+    elseif a == "--session-start" then
+        if #arg ~= 1 then bad_args() end
+        session_start = true
+        i = i + 1
+    elseif a == "--reload" then
+        do_reload = true
+        i = i + 1
+    elseif a == "--set-dynamic-theme" then
+        set_dynamic_theme = true
+        updates.theme = "dynamic"
+        has_updates = true
+        do_reload = true
+        i = i + 1
+    elseif a == "--set-layout" or a == "--set-theme" or a == "--set-wallpaper" or a == "--set-profile" then
+        local v = arg[i + 1]
+        if not v or v == "" then
+            bad_args()
+        end
+        local key = ({
+            ["--set-layout"] = "layout",
+            ["--set-theme"] = "theme",
+            ["--set-wallpaper"] = "wallpaper",
+            ["--set-profile"] = "profile",
+        })[a]
+        updates[key] = v
+        if key == "theme" and v == "dynamic" then
+            set_dynamic_theme = true
+        end
+        has_updates = true
+        do_reload = true
+        i = i + 2
+    else
+        bad_args()
+    end
 end
 
 local function fail(err)
     io.stderr:write("kaze-sync: " .. tostring(err) .. "\n")
     os.exit(1)
+end
+
+local function resolve_wallpaper_arg(raw_path)
+    local expanded = fs.expand_home(raw_path)
+    if expanded:sub(1, 1) ~= "/" then
+        local cwd = fs.capture("pwd")
+        cwd = cwd and cwd:gsub("\n$", "") or "."
+        expanded = cwd .. "/" .. expanded
+    end
+    local resolved = fs.capture("readlink -f -- " .. fs.shell_quote(expanded) .. " 2>/dev/null")
+    if resolved and resolved ~= "" then
+        expanded = resolved:gsub("\n$", "")
+    end
+    return expanded
 end
 
 local signature = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
@@ -94,14 +157,57 @@ if live then
     end
 end
 
+local user_tbl = config.user_overrides()
 local candidate
-if setting then
+local zero_flash_wallpaper = nil
+
+if has_updates then
+    for k, _ in pairs(updates) do
+        if user_tbl[k] ~= nil then
+            fail(k .. " is pinned by user.lua")
+        end
+    end
+
     candidate = state.load()
-    candidate[setting] = value
+
+    if updates.wallpaper then
+        local resolved_wall = resolve_wallpaper_arg(updates.wallpaper)
+        local ok_wall, wall_err = transaction.validate_wallpaper(resolved_wall)
+        if not ok_wall then
+            fail(wall_err)
+        end
+        updates.wallpaper = resolved_wall
+        zero_flash_wallpaper = resolved_wall
+    end
+
+    for k, v in pairs(updates) do
+        candidate[k] = v
+    end
+
+    local effective_theme = user_tbl.theme or candidate.theme or defaults.theme
+    if set_dynamic_theme or (updates.wallpaper and effective_theme == "dynamic") then
+        local raw_wall = user_tbl.wallpaper or candidate.wallpaper or defaults.wallpaper
+        local wall_for_theme = fs.expand_home(raw_wall)
+        local pal, pal_err = transaction.extract_matugen_palette(wall_for_theme)
+        if not pal then
+            fail(pal_err)
+        end
+        candidate.dynamic_palette = pal
+    elseif updates.theme and updates.theme ~= "dynamic" then
+        candidate.dynamic_palette = nil
+    end
 end
+
 local ok, cfg, theme, layout = pcall(config.load, { strict = not session_start, state = candidate })
 if not ok then fail(cfg) end
-if setting and cfg[setting] ~= value then fail(setting .. " is pinned by user.lua") end
+
+if has_updates then
+    for k, v in pairs(updates) do
+        if cfg[k] ~= v then
+            fail(k .. " is pinned by user.lua")
+        end
+    end
+end
 
 local waybar = emit_waybar.emit(cfg, theme, layout)
 local foot_ini = emit_foot.emit(cfg, theme, layout)
@@ -147,5 +253,7 @@ local applied, err = transaction.apply(outputs, {
     candidate = candidate,
     pending = pending,
     work_dir = work_dir,
+    zero_flash_wallpaper = zero_flash_wallpaper,
+    sync_prefer_dark = cfg.sync_prefer_dark == true,
 })
 if not applied then fail(err) end

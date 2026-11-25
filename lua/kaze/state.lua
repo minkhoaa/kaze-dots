@@ -2,6 +2,39 @@ local fs = require("kaze.fs")
 
 local M = {}
 
+local PALETTE_KEYS = {
+    "bg",
+    "bg_alt",
+    "surface",
+    "border",
+    "fg",
+    "fg_muted",
+    "accent",
+    "accent_fg",
+    "ok",
+    "warn",
+    "danger",
+}
+
+local function is_hex6(v)
+    return type(v) == "string" and #v == 6 and v:match("^%x%x%x%x%x%x$") ~= nil
+end
+
+local function clean_palette(raw)
+    if type(raw) ~= "table" then
+        return nil
+    end
+    local out = {}
+    for _, k in ipairs(PALETTE_KEYS) do
+        local v = raw[k]
+        if not is_hex6(v) then
+            return nil
+        end
+        out[k] = v:lower()
+    end
+    return out
+end
+
 function M.path(config_dir)
     return (config_dir or fs.config_dir()) .. "/kaze/state.lua"
 end
@@ -36,6 +69,25 @@ function M.load(path)
     if type(res.theme) == "string" and res.theme ~= "" then
         out.theme = res.theme
     end
+    if type(res.wallpaper) == "string" and res.wallpaper ~= "" then
+        out.wallpaper = res.wallpaper
+    end
+    if res.profile == "minimal" or res.profile == "full" then
+        out.profile = res.profile
+    elseif res.profile ~= nil then
+        io.stderr:write(string.format("kaze warning: ignoring invalid profile %q in %s\n", tostring(res.profile), p))
+    end
+    if type(res.prev_color_scheme) == "string" and res.prev_color_scheme ~= "" then
+        out.prev_color_scheme = res.prev_color_scheme
+    end
+    if res.dynamic_palette ~= nil then
+        local pal = clean_palette(res.dynamic_palette)
+        if pal then
+            out.dynamic_palette = pal
+        else
+            io.stderr:write(string.format("kaze warning: ignoring invalid dynamic_palette in %s\n", p))
+        end
+    end
     return out
 end
 
@@ -51,6 +103,25 @@ function M.save(tbl, path)
     end
     if type(tbl.theme) == "string" and tbl.theme ~= "" then
         lines[#lines + 1] = string.format("    theme = %q,", tbl.theme)
+    end
+    if type(tbl.wallpaper) == "string" and tbl.wallpaper ~= "" then
+        lines[#lines + 1] = string.format("    wallpaper = %q,", tbl.wallpaper)
+    end
+    if tbl.profile == "minimal" or tbl.profile == "full" then
+        lines[#lines + 1] = string.format("    profile = %q,", tbl.profile)
+    elseif tbl.profile ~= nil then
+        error("state.save: profile must be 'minimal' or 'full'")
+    end
+    if type(tbl.prev_color_scheme) == "string" and tbl.prev_color_scheme ~= "" then
+        lines[#lines + 1] = string.format("    prev_color_scheme = %q,", tbl.prev_color_scheme)
+    end
+    if tbl.dynamic_palette ~= nil then
+        local pal = assert(clean_palette(tbl.dynamic_palette), "state.save: invalid dynamic_palette")
+        lines[#lines + 1] = "    dynamic_palette = {"
+        for _, k in ipairs(PALETTE_KEYS) do
+            lines[#lines + 1] = string.format("        %s = %q,", k, pal[k])
+        end
+        lines[#lines + 1] = "    },"
     end
     lines[#lines + 1] = "}"
     lines[#lines + 1] = ""

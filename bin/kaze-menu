@@ -11,7 +11,7 @@ local function setup_path()
     local paths = {}
     local script = arg and arg[0] or ""
     local q = "'" .. script:gsub("'", "'\\''") .. "'"
-    local p = io.popen("readlink -f " .. q .. " 2>/dev/null")
+    local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
     local resolved = p and p:read("*l") or nil
     if p then
         p:close()
@@ -35,6 +35,7 @@ end
 setup_path()
 
 local fs = require("kaze.fs")
+local power_profile = require("kaze.power_profile")
 
 local function cmd_exists(bin)
     local ok = os.execute("command -v " .. fs.shell_quote(bin) .. " >/dev/null 2>&1")
@@ -46,6 +47,13 @@ local function sibling_or_path(bin)
         return script_dir .. "/" .. bin
     end
     return bin
+end
+
+local function kaze_tool_exists(bin)
+    if script_dir and fs.file_exists(script_dir .. "/" .. bin) then
+        return true
+    end
+    return cmd_exists(bin)
 end
 
 if #arg > 0 then
@@ -68,10 +76,16 @@ if not cmd_exists("fuzzel") then
     os.exit(1)
 end
 
+local wifi_bin = power_profile.wifi_tool()
+local wifi_label = wifi_bin == "impala" and "󰖩  Wi-Fi (impala)" or "󰖩  Wi-Fi (nmtui)"
+
 local items = {
     { label = "󰙵  Switch Layout",      cmd = fs.shell_quote(sibling_or_path("kaze-layout")) .. " --menu" },
     { label = "󰏘  Switch Theme",       cmd = fs.shell_quote(sibling_or_path("kaze-theme")) .. " --menu" },
-    { label = "󰖩  Wi-Fi (nmtui)",      cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " wifi", needs = { "nmtui" } },
+    { label = "󰸉  Switch Wallpaper",   cmd = fs.shell_quote(sibling_or_path("kaze-wall")) .. " --menu", check = function() return kaze_tool_exists("kaze-wall") end },
+    { label = "󰌌  Keyboard Shortcuts", cmd = fs.shell_quote(sibling_or_path("kaze-keys")), check = function() return kaze_tool_exists("kaze-keys") end },
+    { label = wifi_label,              cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " wifi", check = function() return wifi_bin ~= nil end },
+    { label = "󰓅  Power Profile",      cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " power-profile", check = power_profile.available },
     { label = "󰂯  Bluetooth",           cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " bluetooth", any_of = { "bluetui", "bluetoothctl" } },
     { label = "󰕾  Audio Mixer",         cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " audio", any_of = { "wiremix", "pulsemixer", "alsamixer" } },
     { label = "󰍛  System Monitor",       cmd = fs.shell_quote(sibling_or_path("kaze-tui")) .. " sysmon", any_of = { "btop", "htop", "top" } },
@@ -84,11 +98,20 @@ local items = {
     { label = "󰑋  Toggle Region Recording", cmd = fs.shell_quote(sibling_or_path("kaze-record")) .. " --region", needs = { "wf-recorder", "ffprobe", "slurp", "flock" } },
     { label = "󰖔  Toggle Night Light", cmd = fs.shell_quote(sibling_or_path("kaze-night")), needs = { "hyprsunset" } },
     { label = "󰅶  Toggle Caffeine",    cmd = fs.shell_quote(sibling_or_path("kaze-inhibit")), needs = { "systemd-inhibit" } },
+    {
+        label = "󰦥  System Doctor",
+        cmd = fs.shell_quote(sibling_or_path("kaze-footclient")) .. " -N -H -a kaze-tui -T "
+            .. fs.shell_quote("Kaze Doctor") .. " " .. fs.shell_quote(sibling_or_path("kaze-doctor")),
+        check = function() return kaze_tool_exists("kaze-doctor") end,
+    },
     { label = "󰑓  Reload Shell",       cmd = fs.shell_quote(sibling_or_path("kaze-sync")) .. " --reload" },
     { label = "󰐥  Power Menu",         cmd = fs.shell_quote(sibling_or_path("kaze-power")) },
 }
 
 local function available(item)
+    if item.check and not item.check() then
+        return false
+    end
     for _, bin in ipairs(item.needs or {}) do
         if not cmd_exists(bin) then return false end
     end

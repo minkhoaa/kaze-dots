@@ -1,0 +1,430 @@
+#!/usr/bin/env lua
+
+local function setup_path()
+    local home = os.getenv("HOME") or ""
+    local xdg_data = os.getenv("XDG_DATA_HOME")
+    if not xdg_data or xdg_data == "" then
+        xdg_data = home .. "/.local/share"
+    end
+    local paths = {}
+    local script = arg and arg[0] or ""
+    local q = "'" .. script:gsub("'", "'\\''") .. "'"
+    local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+    local resolved = p and p:read("*l") or nil
+    if p then
+        p:close()
+    end
+    local base = (resolved or script):match("^(.*)/[^/]+$")
+    if base then
+        local repo_lua = base .. "/../lua"
+        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+        if f then
+            f:close()
+            paths[#paths + 1] = repo_lua .. "/?.lua"
+            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+        end
+    end
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
+    paths[#paths + 1] = package.path
+    package.path = table.concat(paths, ";")
+end
+
+setup_path()
+
+local config = require("kaze.config")
+local fs = require("kaze.fs")
+local state = require("kaze.state")
+
+local function usage(out)
+    out:write("Usage: kaze-doctor [--offline] [--profile minimal|full] [-h|--help]\n")
+end
+
+local offline = false
+local cli_profile = nil
+do
+    local i = 1
+    while i <= #arg do
+        local a = arg[i]
+        if a == "--offline" then
+            offline = true
+        elseif a == "--profile" then
+            i = i + 1
+            cli_profile = arg[i]
+            if not cli_profile or cli_profile == "" then
+                io.stderr:write("kaze-doctor: --profile requires minimal or full\n")
+                usage(io.stderr)
+                os.exit(2)
+            end
+        elseif a:sub(1, 10) == "--profile=" then
+            cli_profile = a:sub(11)
+        elseif a == "-h" or a == "--help" then
+            usage(io.stdout)
+            os.exit(0)
+        else
+            io.stderr:write(string.format("kaze-doctor: unknown option '%s'\n", tostring(a)))
+            usage(io.stderr)
+            os.exit(2)
+        end
+        i = i + 1
+    end
+end
+
+if cli_profile and cli_profile ~= "minimal" and cli_profile ~= "full" then
+    io.stderr:write(string.format("kaze-doctor: invalid profile '%s' (expected minimal or full)\n", cli_profile))
+    os.exit(2)
+end
+
+local ok_Count, warn_Count, fail_Count = 0, 0, 0
+local function report_ok(msg)
+    ok_Count = ok_Count + 1
+    io.stdout:write("[OK]   " .. msg .. "\n")
+end
+local function report_warn(msg)
+    warn_Count = warn_Count + 1
+    io.stdout:write("[WARN] " .. msg .. "\n")
+end
+local function report_fail(msg)
+    fail_Count = fail_Count + 1
+    io.stdout:write("[FAIL] " .. msg .. "\n")
+end
+
+local function cmd_exists(bin)
+    local ok = os.execute("command -v " .. fs.shell_quote(bin) .. " >/dev/null 2>&1")
+    return ok == true or ok == 0
+end
+
+local function is_executable_file(path)
+    local ok = os.execute("[ -x " .. fs.shell_quote(path) .. " ] && [ ! -d " .. fs.shell_quote(path) .. " ]")
+    return ok == true or ok == 0
+end
+
+local function peek_raw_state_profile(path)
+    if not fs.file_exists(path) then
+        return nil
+    end
+    local chunk = loadfile(path, "t", {})
+    if not chunk then
+        return nil
+    end
+    local ok, tbl = pcall(chunk)
+    if ok and type(tbl) == "table" and type(tbl.profile) == "string" and tbl.profile ~= "" then
+        return tbl.profile
+    end
+    return nil
+end
+
+local cfg = config.load({ strict = false })
+local raw_state_profile = peek_raw_state_profile(state.path())
+local profile = cli_profile or cfg.profile or raw_state_profile or "minimal"
+if profile ~= "minimal" and profile ~= "full" then
+    report_fail(string.format("profile: invalid configured profile '%s' (expected minimal or full)", tostring(profile)))
+    profile = "minimal"
+else
+    report_ok(string.format("profile: %s (layout=%s, theme=%s)", profile, tostring(cfg.layout), tostring(cfg.theme)))
+end
+
+-- 1. Required binaries in PATH for active profile
+local MINIMAL_BINS = {
+    "hyprland", "hyprctl", "hypridle", "hyprlock",
+    "waybar", "swaybg", "fuzzel", "fnott", "notify-send",
+    "foot", "footclient", "wl-copy", "wl-paste", "cliphist",
+    "grim", "slurp", "wpctl", "brightnessctl", "playerctl",
+    "lua", "busctl", "systemctl", "flock",
+}
+
+local FULL_EXTRA_BINS = {
+    "swappy", "wf-recorder", "ffprobe", "hyprpicker",
+    "hyprsunset", "matugen", "yazi", "fcitx5",
+}
+
+local missing_minimal = {}
+for _, bin in ipairs(MINIMAL_BINS) do
+    if not cmd_exists(bin) then
+        missing_minimal[#missing_minimal + 1] = bin
+    end
+end
+if #missing_minimal == 0 then
+    report_ok(string.format("binaries (minimal): all %d core binaries found in PATH", #MINIMAL_BINS))
+else
+    report_fail("binaries (minimal): missing in PATH: " .. table.concat(missing_minimal, ", "))
+end
+
+local enable_polkit = (cfg.polkit == true) or (cfg.polkit ~= false and profile == "full")
+local enable_fcitx5 = (cfg.fcitx5 == true) or (cfg.fcitx5 ~= false and profile == "full")
+
+if profile == "full" then
+    local missing_full = {}
+    for _, bin in ipairs(FULL_EXTRA_BINS) do
+        if not cmd_exists(bin) then
+            missing_full[#missing_full + 1] = bin
+        end
+    end
+    local polkit_override = os.getenv("KAZE_POLKIT_AGENT")
+    local polkit_default = "/usr/lib/mate-polkit/polkit-mate-authentication-agent-1"
+    local polkit_ok
+    if polkit_override and polkit_override ~= "" then
+        polkit_ok = is_executable_file(polkit_override)
+    else
+        polkit_ok = is_executable_file(polkit_default) or cmd_exists("polkit-mate-authentication-agent-1")
+    end
+    if not polkit_ok then
+        missing_full[#missing_full + 1] = polkit_override or polkit_default
+    end
+    if #missing_full == 0 then
+        report_ok("binaries (full): all full-profile tools and mate-polkit agent found")
+    else
+        report_fail("binaries (full): missing: " .. table.concat(missing_full, ", "))
+    end
+end
+
+-- 2. Symlink integrity across XDG_CONFIG_HOME, XDG_DATA_HOME, and ~/.local/bin
+do
+    local config_home = fs.config_dir()
+    local data_home = fs.data_dir()
+    local bin_home = fs.home() .. "/.local/bin"
+    local q = fs.shell_quote
+
+    -- Pure POSIX sh loop: requires zero external binaries in PATH.
+    local scan_script = string.format([[
+for p in %s/hypr/*.lua %s/hypr/hypridle.conf \
+         %s/systemd/user/kaze-* \
+         %s/systemd/user/fnott.service.d/*.conf \
+         %s/systemd/user/foot-server.service.d/*.conf \
+         %s/systemd/user/foot-server.socket.d/*.conf \
+         %s/kaze-dots/lua/kaze \
+         %s/dbus-1/services/org.freedesktop.Notifications.service \
+         %s/kaze-*; do
+    if [ -L "$p" ] && [ ! -e "$p" ]; then
+        printf 'BROKEN\t%%s\n' "$p"
+    elif [ -L "$p" ]; then
+        printf 'VALID\t%%s\n' "$p"
+    fi
+done
+]],
+        q(config_home), q(config_home),
+        q(config_home),
+        q(config_home),
+        q(config_home),
+        q(config_home),
+        q(data_home),
+        q(data_home),
+        q(bin_home)
+    )
+    local p = io.popen(scan_script)
+    local scan_out = p and p:read("*a") or ""
+    if p then p:close() end
+
+    local broken = {}
+    local valid_count = 0
+    for kind, path in scan_out:gmatch("(%u+)\t([^\n]+)") do
+        if kind == "BROKEN" then
+            broken[#broken + 1] = path
+        elseif kind == "VALID" then
+            valid_count = valid_count + 1
+        end
+    end
+
+    local required_links = {
+        data_home .. "/kaze-dots/lua/kaze",
+        config_home .. "/hypr/hyprland.lua",
+        config_home .. "/systemd/user/kaze-session.target",
+        bin_home .. "/kaze-sync",
+    }
+    if profile == "full" then
+        required_links[#required_links + 1] = config_home .. "/systemd/user/kaze-polkit.service"
+        required_links[#required_links + 1] = config_home .. "/systemd/user/kaze-fcitx5.service"
+    end
+
+    local missing_links = {}
+    for _, req in ipairs(required_links) do
+        local ok_link = os.execute("[ -L " .. q(req) .. " ] && [ -e " .. q(req) .. " ]")
+        if not (ok_link == true or ok_link == 0) then
+            missing_links[#missing_links + 1] = req
+        end
+    end
+
+    if #broken > 0 then
+        report_fail("symlinks: broken symlink(s): " .. table.concat(broken, ", "))
+    elseif #missing_links == 0 then
+        report_ok(string.format("symlinks: %d deployed symlinks verified with zero broken links", valid_count))
+    elseif offline then
+        report_warn("symlinks: dotfiles not yet applied to $HOME (zero broken symlinks)")
+    else
+        report_fail("symlinks: missing deployed symlink(s): " .. table.concat(missing_links, ", "))
+    end
+end
+
+-- 3. UTF-8 locale check
+do
+    local lc_all = os.getenv("LC_ALL")
+    local lc_ctype = os.getenv("LC_CTYPE")
+    local lang = os.getenv("LANG")
+    local effective = (lc_all and lc_all ~= "" and lc_all)
+        or (lc_ctype and lc_ctype ~= "" and lc_ctype)
+        or (lang and lang ~= "" and lang)
+        or "C"
+    if effective:lower():find("utf%-?8") then
+        report_ok("locale: UTF-8 active (" .. effective .. ")")
+    elseif offline then
+        report_warn("locale: effective locale '" .. effective .. "' is not UTF-8 (recommend *.UTF-8)")
+    else
+        report_fail("locale: effective locale '" .. effective .. "' is not UTF-8")
+    end
+end
+
+-- 4. Live session checks (when not --offline and HYPRLAND_INSTANCE_SIGNATURE is non-empty)
+local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
+if offline then
+    report_ok("session: skipped live compositor/systemd/D-Bus checks (--offline)")
+elseif not hypr_sig or hypr_sig == "" then
+    report_warn("session: HYPRLAND_INSTANCE_SIGNATURE not set; skipped live session checks")
+else
+    -- 4a. hyprctl configerrors
+    local err_proc = io.popen("hyprctl configerrors 2>&1")
+    local err_out = err_proc and err_proc:read("*a") or nil
+    local err_ok = err_proc and err_proc:close()
+    if (err_ok == true or err_ok == 0) and err_out and not err_out:find("%S") then
+        report_ok("hyprctl: configerrors is empty")
+    else
+        local trimmed = (err_out or "hyprctl failed"):gsub("^%s+", ""):gsub("%s+$", "")
+        report_fail("hyprctl: configerrors non-empty or failed: " .. trimmed)
+    end
+
+    -- 4b. systemctl --user show-environment
+    local env_out = fs.capture("systemctl --user show-environment 2>/dev/null")
+    if not env_out then
+        report_fail("systemd-env: failed to read systemctl --user show-environment")
+    else
+        local sys_env = {}
+        for k, v in env_out:gmatch("([%w_]+)=([^\r\n]*)") do
+            sys_env[k] = v
+        end
+        local wl_disp = os.getenv("WAYLAND_DISPLAY") or ""
+        local mismatches = {}
+        if wl_disp == "" or sys_env.WAYLAND_DISPLAY ~= wl_disp then
+            mismatches[#mismatches + 1] = string.format("WAYLAND_DISPLAY (systemd=%q, env=%q)", tostring(sys_env.WAYLAND_DISPLAY), wl_disp)
+        end
+        if sys_env.HYPRLAND_INSTANCE_SIGNATURE ~= hypr_sig then
+            mismatches[#mismatches + 1] = string.format("HYPRLAND_INSTANCE_SIGNATURE (systemd=%q, env=%q)", tostring(sys_env.HYPRLAND_INSTANCE_SIGNATURE), hypr_sig)
+        end
+        if sys_env.XDG_CURRENT_DESKTOP ~= "Hyprland" then
+            mismatches[#mismatches + 1] = string.format("XDG_CURRENT_DESKTOP (got %q, expected \"Hyprland\")", tostring(sys_env.XDG_CURRENT_DESKTOP))
+        end
+        if #mismatches == 0 then
+            report_ok("systemd-env: WAYLAND_DISPLAY, HYPRLAND_INSTANCE_SIGNATURE, and XDG_CURRENT_DESKTOP=Hyprland match")
+        else
+            report_fail("systemd-env: mismatch: " .. table.concat(mismatches, "; "))
+        end
+    end
+
+    -- 4c. Passive portal check via busctl --user --activatable (NEVER activate portals)
+    local act_out = fs.capture("busctl --user --activatable 2>/dev/null")
+    if not act_out then
+        report_fail("portals: busctl --user --activatable failed")
+    else
+        local names = {}
+        for line in act_out:gmatch("[^\r\n]+") do
+            local name = line:match("^%s*(%S+)")
+            if name then
+                names[name] = true
+            end
+        end
+        local required_portals = {
+            "org.freedesktop.portal.Desktop",
+            "org.freedesktop.impl.portal.desktop.hyprland",
+            "org.freedesktop.impl.portal.desktop.gtk",
+        }
+        local missing_portals = {}
+        for _, p_name in ipairs(required_portals) do
+            if not names[p_name] then
+                missing_portals[#missing_portals + 1] = p_name
+            end
+        end
+        if #missing_portals == 0 then
+            report_ok("portals: Desktop, hyprland, and gtk activatable on user bus (passive check)")
+        else
+            report_fail("portals: missing activatable service(s): " .. table.concat(missing_portals, ", "))
+        end
+    end
+
+    -- 4d. PipeWire / WirePlumber active check
+    local missing_audio = {}
+    for _, unit in ipairs({ "pipewire.service", "wireplumber.service" }) do
+        local ok_u = os.execute("systemctl --user is-active --quiet " .. fs.shell_quote(unit) .. " >/dev/null 2>&1")
+        if not (ok_u == true or ok_u == 0) then
+            missing_audio[#missing_audio + 1] = unit
+        end
+    end
+    if #missing_audio == 0 then
+        report_ok("audio: pipewire.service and wireplumber.service active")
+    else
+        report_fail("audio: inactive user service(s): " .. table.concat(missing_audio, ", "))
+    end
+
+    -- 4e. Singleton core daemon PIDs
+    local expected_daemons = {
+        { name = "waybar",   count = 1 },
+        { name = "swaybg",   count = 1 },
+        { name = "foot",     count = 1 },
+        { name = "fnott",    count = 1 },
+        { name = "hypridle", count = 1 },
+        { name = "wl-paste", count = 2 },
+    }
+    if enable_polkit then
+        expected_daemons[#expected_daemons + 1] = {
+            name = "polkit-mate-authentication-agent-1",
+            comm_prefix = "polkit-mate-aut",
+            count = 1,
+        }
+    end
+    if enable_fcitx5 then
+        expected_daemons[#expected_daemons + 1] = { name = "fcitx5", count = 1 }
+    end
+
+    local ps_out = fs.capture('uid=$(id -u 2>/dev/null || /usr/bin/id -u); (ps -u "$uid" -o pid=,comm=,args= || /usr/bin/ps -u "$uid" -o pid=,comm=,args=) 2>/dev/null')
+    if not ps_out then
+        report_fail("daemons: could not query user processes via ps")
+    else
+        local counts = {}
+        for _, d in ipairs(expected_daemons) do
+            counts[d.name] = 0
+        end
+        for line in ps_out:gmatch("[^\r\n]+") do
+            local pid, comm, args_str = line:match("^%s*(%d+)%s+(%S+)%s*(.*)$")
+            if pid then
+                local argv0 = args_str:match("^(%S+)") or comm
+                local argv0_base = argv0:match("([^/]+)$") or argv0
+                for _, d in ipairs(expected_daemons) do
+                    if comm == d.name or argv0_base == d.name or (d.comm_prefix and comm == d.comm_prefix) then
+                        counts[d.name] = counts[d.name] + 1
+                    end
+                end
+            end
+        end
+        local daemon_issues = {}
+        for _, d in ipairs(expected_daemons) do
+            local got = counts[d.name]
+            if got ~= d.count then
+                daemon_issues[#daemon_issues + 1] = string.format("%s (expected %d, got %d)", d.name, d.count, got)
+            end
+        end
+        if #daemon_issues == 0 then
+            report_ok(string.format("daemons (%s): all core singleton/watcher PID counts match", profile))
+        else
+            report_fail("daemons: PID count mismatch: " .. table.concat(daemon_issues, ", "))
+        end
+    end
+end
+
+-- 5. Informational footer on opt-in user integrations
+io.stdout:write("\nOpt-in user integrations (user-managed, not auto-enabled by Kaze):\n")
+io.stdout:write("  - Secret Service keyring: gnome-keyring or keepassxc\n")
+io.stdout:write("  - Bluetooth media keys:   mpris-proxy (bluez-utils)\n")
+io.stdout:write("  - USB automounting:       udisks2 / udiskie\n")
+io.stdout:write(string.format("\nDoctor summary: %d OK, %d WARN, %d FAIL\n", ok_Count, warn_Count, fail_Count))
+
+if fail_Count > 0 then
+    os.exit(1)
+end
+os.exit(0)

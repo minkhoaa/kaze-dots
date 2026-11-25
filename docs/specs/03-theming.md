@@ -23,13 +23,16 @@ Every palette is a pure Lua table of **uppercase/lowercase 6-digit hex strings w
 }
 ```
 
-### Required Helper Functions in `lua/kaze/themes.lua`
-- `themes.get(name)` → returns validated palette table or errors with available names.
-- `themes.list()` → ordered list `{ "kaze", "lavender", "tokyonight", "carbon" }`.
+### Required Helper Functions in `lua/kaze/themes.lua` & `lua/kaze/color.lua`
+- `themes.get(name, overrides, dynamic_palette)` → returns validated palette table (supports `"dynamic"` when supplied a 11-token `dynamic_palette` table) or errors with available names.
+- `themes.list()` → ordered built-in presets `{ "kaze", "lavender", "tokyonight", "carbon" }`.
+- `themes.list_selectable(include_dynamic)` → appends `"dynamic"` when `matugen` is installed or active.
 - `themes.hex(c)` → `"#" .. c` (for CSS, `hyprlock`).
 - `themes.hex_alpha(c, aa)` → `c .. aa` (for `fuzzel` `RRGGBBAA` and `fnott` `RRGGBBAA`).
 - `themes.hypr_rgba(c, aa)` → `"rgba(" .. c .. aa .. ")"` (for Hyprland border/bg colors).
 - `themes.validate(t)` → asserts all 11 semantic keys match `^[0-9a-fA-F]{6}$`.
+- `color.build_dynamic_palette(raw_colors)` → pure-Lua parser + WCAG 2.1 contrast clamper (zero I/O): enforces dark-first surface ordering (`bg < bg_alt < surface`), `fg`/`fg_muted` contrast `≥ 4.5:1` against `bg` and `bg_alt`, `accent_fg` contrast `≥ 4.5:1` against `accent`, and `border`/`ok`/`warn`/`danger` contrast `≥ 3.0:1` against `bg` and `bg_alt`.
+- External toolkit isolation: `kaze-sync` never writes or overwrites GTK3, GTK4, Qt6ct, btop, or Neovim theme files. When `sync_prefer_dark = true` in `user.lua` (and `gsettings` + `dconf` are present), `transaction.lua` sets `org.gnome.desktop.interface color-scheme` to `'prefer-dark'` and records `prev_color_scheme` for rollback.
 
 ## 2. Built-in Theme Presets
 

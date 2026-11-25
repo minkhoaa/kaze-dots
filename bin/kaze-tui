@@ -1,5 +1,7 @@
 #!/usr/bin/env lua
 
+local script_dir
+
 local function setup_path()
     local home = os.getenv("HOME") or ""
     local xdg_data = os.getenv("XDG_DATA_HOME")
@@ -9,14 +11,14 @@ local function setup_path()
     local paths = {}
     local script = arg and arg[0] or ""
     local q = "'" .. script:gsub("'", "'\\''") .. "'"
-    local p = io.popen("readlink -f " .. q .. " 2>/dev/null")
+    local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
     local resolved = p and p:read("*l") or nil
     if p then
         p:close()
     end
-    local base = (resolved or script):match("^(.*)/[^/]+$")
-    if base then
-        local repo_lua = base .. "/../lua"
+    script_dir = (resolved or script):match("^(.*)/[^/]+$")
+    if script_dir then
+        local repo_lua = script_dir .. "/../lua"
         local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
         if f then
             f:close()
@@ -33,12 +35,9 @@ end
 setup_path()
 
 local fs = require("kaze.fs")
+local power_profile = require("kaze.power_profile")
 
 local TOOLS = {
-    wifi = {
-        title = "Network (nmtui)",
-        candidates = { "nmtui" },
-    },
     bluetooth = {
         title = "Bluetooth (bluetui)",
         candidates = { "bluetui", "bluetoothctl" },
@@ -56,6 +55,13 @@ local TOOLS = {
 local function cmd_exists(bin)
     local ok = os.execute("command -v " .. fs.shell_quote(bin) .. " >/dev/null 2>&1")
     return ok == true or ok == 0
+end
+
+local function sibling_or_path(bin)
+    if script_dir and fs.file_exists(script_dir .. "/" .. bin) then
+        return script_dir .. "/" .. bin
+    end
+    return bin
 end
 
 local function read_cmd(cmd)
@@ -117,17 +123,54 @@ end
 
 local mode = arg[1]
 if mode == "-h" or mode == "--help" then
-    io.stdout:write("Usage: kaze-tui <wifi|bluetooth|audio|sysmon>\n")
+    io.stdout:write("Usage: kaze-tui <wifi|bluetooth|audio|sysmon|power-profile>\n")
     os.exit(0)
 end
 
-local entry = TOOLS[mode]
-if not entry then
-    io.stderr:write(string.format("kaze-tui: invalid mode '%s' (expected: wifi, bluetooth, audio, sysmon)\n", tostring(mode or "")))
-    os.exit(1)
+if #arg > 1 then
+    io.stderr:write("kaze-tui: too many arguments\n")
+    os.exit(2)
 end
 
-local existing_addr, is_active = find_existing_tui(entry.title)
+if mode == "power-profile" then
+    local ok, err = power_profile.menu()
+    if not ok then
+        io.stderr:write("kaze-tui: " .. tostring(err) .. "\n")
+        os.exit(1)
+    end
+    os.exit(0)
+end
+
+local title, tool_bin
+if mode == "wifi" then
+    tool_bin, title = power_profile.wifi_tool()
+    if not tool_bin then
+        io.stderr:write("kaze-tui: none of [nmtui, impala] available in PATH\n")
+        os.exit(1)
+    end
+else
+    local entry = TOOLS[mode]
+    if not entry then
+        io.stderr:write(string.format(
+            "kaze-tui: invalid mode '%s' (expected: wifi, bluetooth, audio, sysmon, power-profile)\n",
+            tostring(mode or "")
+        ))
+        os.exit(1)
+    end
+    title = entry.title
+    for _, cand in ipairs(entry.candidates) do
+        if cmd_exists(cand) then
+            tool_bin = cand
+            break
+        end
+    end
+    if not tool_bin then
+        io.stderr:write(string.format("kaze-tui: none of [%s] found in PATH\n", table.concat(entry.candidates, ", ")))
+        os.exit(1)
+    end
+end
+
+local existing_addr, is_active = find_existing_tui(title)
 if existing_addr then
     local win_arg = "'address:0x" .. existing_addr .. "'"
     if is_active then
@@ -138,20 +181,13 @@ if existing_addr then
     os.exit(0)
 end
 
-local tool_bin
-for _, cand in ipairs(entry.candidates) do
-    if cmd_exists(cand) then
-        tool_bin = cand
-        break
-    end
-end
-
-if not tool_bin then
-    io.stderr:write(string.format("kaze-tui: none of [%s] found in PATH\n", table.concat(entry.candidates, ", ")))
-    os.exit(1)
-end
-
-local cmd = string.format("kaze-footclient -N -a kaze-tui -T %s %s", fs.shell_quote(entry.title), fs.shell_quote(tool_bin))
+local footclient_bin = sibling_or_path("kaze-footclient")
+local cmd = string.format(
+    "%s -N -a kaze-tui -T %s %s",
+    fs.shell_quote(footclient_bin),
+    fs.shell_quote(title),
+    fs.shell_quote(tool_bin)
+)
 if not os.execute(cmd) then
     io.stderr:write("kaze-tui: could not open a window on the Kaze Foot server\n")
     os.exit(1)

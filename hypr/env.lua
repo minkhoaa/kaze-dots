@@ -30,3 +30,7 @@ if ctype ~= os.getenv("LC_CTYPE") then hl.env("LC_CTYPE", ctype) end
 hl.env("XCURSOR_THEME", cfg.cursor_theme)
 hl.env("XCURSOR_SIZE", tostring(cfg.cursor_size))
 hl.env("TERMINAL", cfg.terminal)
+
+if cfg.fcitx5 == true or (cfg.fcitx5 ~= false and cfg.profile == "full") then
+    hl.env("XMODIFIERS", "@im=fcitx")
+end

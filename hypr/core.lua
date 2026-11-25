@@ -46,6 +46,7 @@ hl.config({
 
     input = {
         kb_layout = cfg.kb_layout or "us",
+        accel_profile = cfg.accel_profile or "flat",
         numlock_by_default = false,
         repeat_delay = 240,
         repeat_rate = 35,
@@ -69,6 +70,14 @@ hl.config({
         background_color = themes.hypr_rgb(theme.bg),
     },
 })
+
+if cfg.workspace_swipe ~= false then
+    hl.gesture({
+        fingers = 3,
+        direction = "horizontal",
+        action = "workspace",
+    })
+end
 
 hl.curve("snappy", { type = "bezier", points = { { 0.08, 0.9 }, { 0.15, 1.0 } } })
 hl.curve("fastOut", { type = "bezier", points = { { 0.2, 0.0 }, { 0.0, 1.0 } } })

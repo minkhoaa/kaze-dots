@@ -44,6 +44,12 @@ function M.render_environment(cfg, theme, previous)
         local lang, all, ctype = fs.utf8_locale()
         base = base .. entry("LANG", lang) .. entry("LC_ALL", all) .. entry("LC_CTYPE", ctype)
     end
+    if not previous then
+        local sid = os.getenv("XDG_SESSION_ID")
+        if sid and sid:match("^[%w_-]+$") then
+            base = base .. entry("KAZE_SESSION_ID", sid)
+        end
+    end
 
     local wallpaper = cfg.wallpaper_expanded
     if type(wallpaper) ~= "string" or wallpaper == "" or not fs.file_exists(wallpaper) then
@@ -51,13 +57,23 @@ function M.render_environment(cfg, theme, previous)
     end
     local cursor_size = type(cfg.cursor_size) == "number" and math.tointeger(cfg.cursor_size)
     assert(cursor_size and cursor_size > 0, "cursor_size must be a positive integer")
-    return base .. table.concat({
+    local profile = cfg.profile == "full" and "full" or "minimal"
+    local enable_polkit = (cfg.polkit == true or (cfg.polkit ~= false and profile == "full")) and "1" or "0"
+    local enable_fcitx5 = (cfg.fcitx5 == true or (cfg.fcitx5 ~= false and profile == "full")) and "1" or "0"
+    local tail = {
         entry("XCURSOR_THEME", cfg.cursor_theme),
         entry("XCURSOR_SIZE", tostring(cursor_size)),
         entry("KAZE_WALLPAPER", wallpaper),
         entry("KAZE_WALLPAPER_COLOR", "#" .. theme.bg),
         entry("KAZE_NIGHT_TEMP", tostring(cfg.night_temp)),
-    })
+        entry("KAZE_PROFILE", profile),
+        entry("KAZE_ENABLE_POLKIT", enable_polkit),
+        entry("KAZE_ENABLE_FCITX5", enable_fcitx5),
+    }
+    if enable_fcitx5 == "1" then
+        tail[#tail + 1] = entry("XMODIFIERS", "@im=fcitx")
+    end
+    return base .. table.concat(tail)
 end
 
 function M.read_appearance(contents)
@@ -68,6 +84,8 @@ function M.read_appearance(contents)
         has_image = wallpaper ~= "",
         cursor_theme = assert(read_entry(contents, "XCURSOR_THEME"), "session.env has no cursor theme"),
         cursor_size = assert(read_entry(contents, "XCURSOR_SIZE"), "session.env has no cursor size"),
+        enable_polkit = (read_entry(contents, "KAZE_ENABLE_POLKIT") or "0") == "1",
+        enable_fcitx5 = (read_entry(contents, "KAZE_ENABLE_FCITX5") or "0") == "1",
     }
 end
 

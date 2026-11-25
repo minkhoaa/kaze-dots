@@ -11,8 +11,8 @@ Heavy QML/Qt and GPU-backed Wayland shells routinely consume `90–350 MiB` PSS 
   - `sidebar` *(default)* — sleek `42px` vertical left rail with full vertical workspace height & matched frame geometry
   - `islands` — floating top pill islands with crisp frosted glass blur
   - `slim` — flat `28px` ultra-minimal top bar for compact displays
-- **4 built-in themes** (`kaze`, `lavender`, `tokyonight`, `carbon`) synced atomically to Hyprland, Waybar, Foot, Fuzzel, Fnott, and Hyprlock
-- **Zero polling scripts**: 100% native C++ Waybar modules + Hyprland IPC + on-demand floating TUIs (`nmtui`, `bluetui`, `wiremix`, `btop`)
+- **4 built-in themes** (`kaze`, `lavender`, `tokyonight`, `carbon`) plus an optional **`dynamic`** wallpaper palette (`matugen` + WCAG 2.1 contrast clamping), synced atomically to Hyprland, Waybar, Foot, Fuzzel, Fnott, and Hyprlock
+- **Zero polling scripts**: 100% native C++ Waybar modules + RT-signal indicators + Hyprland IPC + on-demand floating TUIs (`nmtui`/`impala`, `bluetui`, `wiremix`, `btop`)
 
 ## Project Documentation
 
@@ -32,17 +32,17 @@ Read these documents in order before implementing or modifying code:
 ## Quick Start (Arch Linux)
 
 ```bash
-# 1. Install official Arch [extra] dependencies (0 AUR packages)
-./scripts/install-packages.sh
-
-# 2. Back up existing configs, create ~/.config/kaze/user.lua (if absent),
-#    symlink kaze-dots, and generate all daemon configs
-./scripts/apply.sh
+# 1. Install official Arch [core]/[extra] packages + apply symlinks (0 AUR packages)
+#    Profiles: "minimal" (default core shell) or "full" (+ capture/matugen/yazi/mate-polkit/fcitx5-bamboo)
+./scripts/install.sh --profile minimal
+# or:
+./scripts/install.sh --profile full
 ```
 
 - **Start a new Hyprland login** after applying. `kaze-session.target` owns the native daemons and uses Arch's packaged Foot service/socket. Kaze expects one graphical session per user manager; do not run another bar, notification daemon or Foot server alongside it.
 - **Customize**: Edit `~/.config/kaze/user.lua` (seeded from [templates/user.lua.example](templates/user.lua.example), never overwritten) and run `kaze-sync --reload` from the active session. Wallpaper and cursor settings update live; the services keep the login's locale, with a UTF-8 fallback only when needed.
-- **Switch Layouts / Themes live**: Run `kaze-layout [sidebar|islands|slim|--menu]` or `kaze-theme [kaze|lavender|tokyonight|carbon|--menu]`. New Kaze terminal windows pick up the new palette without restarting the Foot server or touching open shells. `$TERMINAL` (`kaze-footclient` by default) waits for its command unless the caller passes `-N`.
+- **Switch Layouts / Themes / Wallpapers live**: Run `kaze-layout [sidebar|islands|slim|--menu]`, `kaze-theme [kaze|lavender|tokyonight|carbon|dynamic|--menu]`, or `kaze-wall [<path>|--random|--menu|--preview]`. Press `Super + /` (`kaze-keys`) to search all shortcuts. New Kaze terminal windows pick up the new palette without restarting the Foot server or touching open shells. `$TERMINAL` (`kaze-footclient` by default) waits for its command unless the caller passes `-N`.
+- **Profiles, Polkit & Vietnamese IME (`full`)**: `minimal` relies on terminal authentication (`sudo`/`pkttyagent`); `full` runs `mate-polkit` and `fcitx5` (`fcitx5-bamboo`) under `kaze-session.target` without overwriting an existing `~/.config/fcitx5/profile`. Wayland apps use native `text-input-v3`; `XMODIFIERS=@im=fcitx` is exported for XWayland/XIM without setting global `GTK_IM_MODULE` or `QT_IM_MODULE` (pass per-app env overrides only for legacy X11 toolkits if needed; `fcitx5-configtool` is an optional on-demand GUI to switch Telex/VNI). Run `kaze-doctor` to check binaries, symlinks, portals, audio, and singleton daemons. Secret Service (`gnome-keyring`/`keepassxc`), Bluetooth media keys (`mpris-proxy`), and USB automounting (`udisks2`) remain user-managed opt-ins.
 - **Clipboard / screenshots**: `Super+V` opens session history; `kaze-clipboard wipe` clears it. The default history holds at most 100 items of ≤ 2 MiB each. Tagged sensitive content is excluded; passwords from apps that don't mark them can still be stored. `Print` copies the screen, `Super+Shift+S` copies a selected region, and `kaze-screenshot region --save` saves to `Pictures/Screenshots` (using the XDG Pictures location if set).
 - **Optional capture / session tools**: Install `swappy` (plus `otf-font-awesome` for its tools), `hyprpicker`, `wf-recorder` (with `ffprobe` from FFmpeg), or `hyprsunset` as needed. The command palette hides actions with missing backends. `kaze-record [--region]` toggles recording to `Videos/Recordings`; `kaze-night` toggles Night Light; `kaze-inhibit` temporarily suppresses automatic idle actions for at most two hours. The latter uses systemd already, with no extra package. These are off at login.
 - **Screen Off**: Use `Ctrl+Alt+Delete` → **Screen Off** to turn off the displays without suspending or immediately locking the session. Press a key or move the mouse to turn the displays back on. Use `Super+L` to lock now; the 300s idle lock and 420s display-off timers still apply. Kaze does not change system-wide sleep or lid policy. To also block systemd suspend requests, an administrator can set `[Sleep]` with `AllowSuspend=no` in `/etc/systemd/sleep.conf.d/90-no-suspend.conf` (see `systemd-sleep.conf(5)`); the installer does not apply this setting.

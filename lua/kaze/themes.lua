@@ -126,6 +126,14 @@ function M.list()
     return out
 end
 
+function M.list_selectable(include_dynamic)
+    local out = M.list()
+    if include_dynamic then
+        out[#out + 1] = "dynamic"
+    end
+    return out
+end
+
 function M.validate(t)
     assert(type(t) == "table", "theme must be a table")
     for _, key in ipairs(REQUIRED_KEYS) do
@@ -145,12 +153,23 @@ function M.validate(t)
     return t
 end
 
-function M.get(name, overrides)
-    local preset = PRESETS[name]
-    if not preset then
-        error(string.format("unknown theme '%s' (available: %s)", tostring(name), table.concat(ORDER, ", ")))
+function M.get(name, overrides, dynamic_palette)
+    local theme
+    if name == "dynamic" then
+        if type(dynamic_palette) ~= "table" then
+            error("dynamic theme requires a valid dynamic_palette table")
+        end
+        M.validate(dynamic_palette)
+        theme = copy_table(dynamic_palette)
+        theme.name = "dynamic"
+        theme.label = "Dynamic (Wallpaper)"
+    else
+        local preset = PRESETS[name]
+        if not preset then
+            error(string.format("unknown theme '%s' (available: %s, dynamic)", tostring(name), table.concat(ORDER, ", ")))
+        end
+        theme = copy_table(preset)
     end
-    local theme = copy_table(preset)
     if type(overrides) == "table" then
         for k, v in pairs(overrides) do
             if type(v) == "table" then
@@ -160,6 +179,7 @@ function M.get(name, overrides)
             end
         end
     end
+    theme.name = name
     if theme.term == nil then
         theme.term = derive_ansi(theme)
     end

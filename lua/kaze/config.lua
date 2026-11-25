@@ -71,6 +71,14 @@ local function load_lua_table(path)
     return res
 end
 
+function M.user_overrides(opts)
+    opts = opts or {}
+    local home = opts.home or fs.home()
+    local config_dir = opts.config_dir or fs.config_dir(home)
+    local user_path = opts.user_path or (config_dir .. "/kaze/user.lua")
+    return load_lua_table(user_path)
+end
+
 function M.load(opts)
     opts = opts or {}
     local strict = opts.strict ~= false
@@ -103,6 +111,21 @@ function M.load(opts)
     )
     cfg.layout = layout_spec.name
     cfg.wallpaper_expanded = fs.expand_home(cfg.wallpaper, home)
+
+    local profile = cfg.profile
+    if profile == nil then
+        profile = defaults.profile or "minimal"
+    end
+    if profile ~= "minimal" and profile ~= "full" then
+        local msg = string.format("unknown profile '%s' (available: minimal, full)", tostring(profile))
+        if strict then
+            error(msg, 0)
+        end
+        io.stderr:write("kaze warning: " .. msg .. "; falling back to 'minimal'\n")
+        profile = "minimal"
+    end
+    cfg.profile = profile
+
     local temp = type(cfg.night_temp) == "number" and math.tointeger(cfg.night_temp)
     if not temp or temp < 1000 or temp > 6500 then
         local msg = "night_temp must be an integer between 1000 and 6500 K"
@@ -113,7 +136,7 @@ function M.load(opts)
     cfg.night_temp = temp
 
     local theme_name = cfg.theme or defaults.theme
-    local ok_theme, theme = pcall(themes.get, theme_name, cfg.theme_overrides)
+    local ok_theme, theme = pcall(themes.get, theme_name, cfg.theme_overrides, cfg.dynamic_palette)
     if not ok_theme then
         if strict then
             error(theme)

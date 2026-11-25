@@ -5,18 +5,27 @@
 -- will pin them and override state.lua).
 
 return {
-    -- layout = "sidebar", -- "sidebar" | "islands" | "slim"
-    -- theme = "kaze",     -- "kaze" | "lavender" | "tokyonight" | "carbon"
+    -- profile = "minimal", -- "minimal" | "full" (normally persisted via install.sh / kaze-sync --set-profile)
+    -- layout = "sidebar",  -- "sidebar" | "islands" | "slim"
+    -- theme = "kaze",      -- "kaze" | "lavender" | "tokyonight" | "carbon" | "dynamic"
 
     -- font = "JetBrainsMono Nerd Font",
     -- terminal = "kaze-footclient",
     -- browser = "firefox",
     -- files = "kaze-footclient -e yazi",
     -- wallpaper = "~/Pictures/Wallpapers/wallpaper.png",
+    -- wallpaper_dir = "~/Pictures/Wallpapers",
 
     -- kb_layout = "us",
+    -- accel_profile = "flat", -- "flat" | "adaptive"
+    -- workspace_swipe = true, -- 3-finger horizontal touchpad workspace gesture
     -- cursor_theme = "Adwaita",
     -- cursor_size = 24,
+    -- sync_prefer_dark = false, -- sync org.gnome.desktop.interface color-scheme = 'prefer-dark' on reload
+
+    -- Optional per-service overrides (default: enabled in "full", disabled in "minimal"):
+    -- polkit = true,
+    -- fcitx5 = true,
 
     -- vol_step = 5,
     -- vol_max = 1.5,

@@ -7,4 +7,4 @@ After=graphical-session-pre.target graphical-session.target
 DefaultDependencies=no
 Conflicts=shutdown.target
 Before=shutdown.target
-Wants=kaze-waybar.service kaze-wallpaper.service fnott.service foot-server.service kaze-hypridle.service kaze-clipboard@text.service kaze-clipboard@image.service
+Wants=kaze-waybar.service kaze-wallpaper.service fnott.service foot-server.service kaze-hypridle.service kaze-clipboard@text.service kaze-clipboard@image.service kaze-polkit.service kaze-fcitx5.service

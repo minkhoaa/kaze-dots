@@ -37,6 +37,7 @@ setup_path()
 local config = require("kaze.config")
 local fs = require("kaze.fs")
 local themes = require("kaze.themes")
+local transaction = require("kaze.transaction")
 
 local function cmd_exists(bin)
     local ok = os.execute("command -v " .. fs.shell_quote(bin) .. " >/dev/null 2>&1")
@@ -50,8 +51,10 @@ local function sibling_or_path(bin)
     return bin
 end
 
-local function usage()
-    io.stdout:write("Usage: kaze-theme [--quiet] [kaze|lavender|tokyonight|carbon|--menu|--current|-h|--help]\n")
+local function usage(output)
+    (output or io.stdout):write(
+        "Usage: kaze-theme [--quiet] [kaze|lavender|tokyonight|carbon|dynamic|--menu|--current|-h|--help]\n"
+    )
 end
 
 local function pick_from_menu(current_theme)
@@ -65,11 +68,12 @@ local function pick_from_menu(current_theme)
         os.exit(1)
     end
 
+    local include_dynamic = cmd_exists("matugen") or current_theme == "dynamic"
     local lines = {}
-    for _, name in ipairs(themes.list()) do
-        local t = themes.get(name)
+    for _, name in ipairs(themes.list_selectable(include_dynamic)) do
+        local label = (name == "dynamic") and "Dynamic (Wallpaper)" or themes.get(name).label
         local marker = (name == current_theme) and " (active)" or ""
-        lines[#lines + 1] = string.format("%s  —  %s%s", name, t.label, marker)
+        lines[#lines + 1] = string.format("%s  —  %s%s", name, label, marker)
     end
 
     local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
@@ -101,13 +105,13 @@ for i = 1, #arg do
     if a == "-q" or a == "--quiet" then
         quiet = true
     elseif a == "-h" or a == "--help" then
-        usage()
+        usage(io.stdout)
         os.exit(0)
     elseif mode == nil then
         mode = a
     else
         io.stderr:write("kaze-theme: too many arguments\n")
-        usage()
+        usage(io.stderr)
         os.exit(2)
     end
 end
@@ -125,20 +129,44 @@ if not target or target == "--menu" then
     end
 elseif target:sub(1, 1) == "-" then
     io.stderr:write(string.format("kaze-theme: unknown option '%s'\n", target))
-    usage()
+    usage(io.stderr)
     os.exit(2)
 end
 
-local ok_theme, theme = pcall(themes.get, target)
-if not ok_theme then
-    io.stderr:write(string.format("kaze-theme: %s\n", tostring(theme)))
-    os.exit(1)
-end
-
 local sync_bin = sibling_or_path("kaze-sync")
-if not os.execute(fs.shell_quote(sync_bin) .. " --set-theme " .. fs.shell_quote(theme.name)) then
-    io.stderr:write("kaze-theme: switch failed\n")
-    os.exit(1)
+local label
+
+if target == "dynamic" then
+    if config.user_overrides().theme ~= nil then
+        io.stderr:write("kaze-theme: theme is pinned by user.lua\n")
+        os.exit(1)
+    end
+    if not cmd_exists("matugen") then
+        io.stderr:write("kaze-theme: matugen not found in PATH\n")
+        os.exit(1)
+    end
+    local cur_cfg = config.load({ strict = false })
+    local ok_wall, wall_err = transaction.validate_wallpaper(cur_cfg.wallpaper_expanded)
+    if not ok_wall then
+        io.stderr:write("kaze-theme: " .. tostring(wall_err) .. "\n")
+        os.exit(1)
+    end
+    if not os.execute(fs.shell_quote(sync_bin) .. " --set-dynamic-theme") then
+        io.stderr:write("kaze-theme: dynamic theme switch failed\n")
+        os.exit(1)
+    end
+    label = "Dynamic (Wallpaper)"
+else
+    local ok_theme, theme = pcall(themes.get, target)
+    if not ok_theme then
+        io.stderr:write(string.format("kaze-theme: %s\n", tostring(theme)))
+        os.exit(1)
+    end
+    if not os.execute(fs.shell_quote(sync_bin) .. " --set-theme " .. fs.shell_quote(theme.name)) then
+        io.stderr:write("kaze-theme: switch failed\n")
+        os.exit(1)
+    end
+    label = theme.label
 end
 
 local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
@@ -147,6 +175,6 @@ if not quiet and ((hypr_sig and hypr_sig ~= "") or (wl_disp and wl_disp ~= "")) 
     os.execute(string.format(
         "notify-send -a kaze-theme -t 1800 -u low -h string:x-canonical-private-synchronous:kaze-switch %s %s >/dev/null 2>&1 || true",
         fs.shell_quote("Theme switched"),
-        fs.shell_quote("Active: " .. theme.label)
+        fs.shell_quote("Active: " .. label)
     ))
 end

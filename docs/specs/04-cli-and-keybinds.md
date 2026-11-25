@@ -4,21 +4,32 @@
 
 All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `chmod +x`, and follow strict POSIX exit codes (`0` success, non-zero + `stderr` error message on failure).
 
-### `kaze-sync [--reload] [--check]`
+### `kaze-sync [--reload | --check | --session-start | --set-layout NAME | --set-theme NAME | --set-dynamic-theme | --set-wallpaper PATH | --set-profile NAME]`
 - Reads resolved config (`defaults` + `state.lua` + `user.lua` + active `layout`).
 - Generates all target configs atomically via `fs.write_atomic()`.
 - `--check`: Dry-run validation only (verifies theme/layout/emitters without writing `~/.config/*` or reloading daemons).
-- `--reload`: Stage and validate, then reload the active Kaze session. Restart Waybar and Fnott; restart swaybg only if the effective wallpaper (image or solid color) changes, and apply any new cursor setting. Foot is not restarted. On failure restore generated files, `session.env`, and the previous runtime appearance. With no powered outputs use service/PID health instead of requiring a mapped layer. Startup uses `--session-start` with safe preset fallbacks and no live reload.
+- `--reload` / `--set-*`: Stage and validate, then reload the active Kaze session. Restart Waybar and Fnott; pre-map a transient `swaybg` candidate before restarting `kaze-wallpaper.service` for zero-flash image transitions, apply any new cursor setting, and start/stop optional `full` profile services (`kaze-polkit.service`, `kaze-fcitx5.service`) when profile flags change. Foot is not restarted. On failure restore generated files, `session.env`, and the previous runtime appearance. With no powered outputs use service/PID health instead of requiring a mapped layer. Startup uses `--session-start` with safe preset fallbacks and no live reload.
 
 ### `kaze-layout [--quiet] [sidebar|islands|slim|--menu|--current]`
 - No args or `--menu`: Opens `fuzzel --dmenu -p "Layout > "` listing all layouts with `(active)` marker on the current one.
 - `<name>`: Validates, delegates the serialized switch to `kaze-sync`, then sends a confirmation notification (suppressed with `--quiet`). State is committed only after the switch succeeds.
 - `--current`: Prints active layout name to `stdout`.
 
-### `kaze-theme [--quiet] [kaze|lavender|tokyonight|carbon|--menu|--current]`
-- No args or `--menu`: Opens `fuzzel --dmenu -p "Theme > "` listing all themes with `(active)` marker.
-- `<name>`: Validates, delegates the serialized switch to `kaze-sync`, then sends a confirmation notification (suppressed with `--quiet`). State is committed only after the switch succeeds.
+### `kaze-theme [--quiet] [kaze|lavender|tokyonight|carbon|dynamic|--menu|--current]`
+- No args or `--menu`: Opens `fuzzel --dmenu -p "Theme > "` listing all themes (including `dynamic` when `matugen` is installed or active) with `(active)` marker.
+- `<name>`: Validates (`dynamic` extracts colors via `matugen` and WCAG-clamps tokens before calling `kaze-sync --set-dynamic-theme`), delegates the serialized switch to `kaze-sync`, then sends a confirmation notification (suppressed with `--quiet`). State is committed only after the switch succeeds.
 - `--current`: Prints active theme name to `stdout`.
+
+### `kaze-wall [--quiet] [<path> | --random | --menu | --preview | --current]`
+- Validates image magic bytes (PNG/JPEG/WebP/GIF/BMP/SVG), rejects pinned `user.lua` `wallpaper` overrides with exit `1`, serializes switches under `wall.lock` + `sync.lock`, updates `dynamic_palette` automatically when `theme == "dynamic"`, and transitions `swaybg` without flashing black.
+- `--random` picks a different image from `cfg.wallpaper_dir` when ≥ 2 images exist; `--menu` lists relative paths in `fuzzel --dmenu`; `--preview` opens `yazi` in `kaze-footclient`.
+
+### `kaze-keys [--list]`
+- Shares `lua/kaze/keybinds_data.lua` with `hypr/keybinds.lua` (single pure-Lua source of truth with zero compositor IPC needed to list shortcuts).
+- `--list` prints `[Group]  Chord  —  Description` rows; no args opens `fuzzel --dmenu -p "Keys > "` (bound to `Super + /`, Esc-safe).
+
+### `kaze-doctor [--offline] [--profile minimal|full]`
+- Verifies required `PATH` binaries for the active profile (`minimal` never fails on absent `full` packages), deployed XDG symlink integrity (including systemd user units and drop-ins), UTF-8 locale, empty `hyprctl configerrors`, matching `systemd --user` Wayland activation vars, passive `busctl --user --activatable` portal check (never waking portals), active PipeWire/WirePlumber, and singleton daemon PID counts. Prints informational guidance on user-managed opt-ins (`gnome-keyring`/`keepassxc`, `mpris-proxy`, `udisks2`).
 
 ### `kaze-menu`
 - Opens a flat command palette in `fuzzel` (toggles closed if `fuzzel` is already running). Entries without their backend binary are hidden:
@@ -67,13 +78,14 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 - Night Light runs `hyprsunset` at `night_temp` (default `4500` K, `1000..6500`). Run `kaze-sync --reload` after editing the setting and turn Night Light off/on to use it.
 - Caffeine uses logind's `idle` inhibitor, honored by hypridle. It stops on demand, on logout, or after two hours, releasing the inhibitor without disabling manual lock or changing sleep/lid policy.
 
-### `kaze-tui <wifi|bluetooth|audio|sysmon>`
+### `kaze-tui <wifi|bluetooth|audio|sysmon|power-profile>`
 - Launches a centered floating `kaze-footclient` window (`-a kaze-tui`, matched by Hyprland `window_rule` `^kaze-tui$`):
-  - `wifi` → `nmtui`
-  - `bluetooth` → `bluetui`
+  - `wifi` → `impala` when standalone `iwd.service` is active and `NetworkManager.service` is inactive; otherwise `nmtui`
+  - `bluetooth` → `bluetui` (falls back to `bluetoothctl`)
   - `audio` → `wiremix` (falls back to `pulsemixer` or `alsamixer` if absent)
-  - `sysmon` → `btop`
-- If an `kaze-tui` window for the same tool is already focused/open, cleanly spawns or toggles without hanging.
+  - `sysmon` → `btop` (falls back to `htop` or `top`)
+  - `power-profile` → Fuzzel selector communicating directly with an active D-Bus PowerProfiles daemon (`org.freedesktop.UPower.PowerProfiles` / `net.hadess.PowerProfiles`) via `busctl --system --auto-start=no` (zero Python; automatically hidden when absent or when `tlp.service` is active)
+- If a `kaze-tui` window for the same tool is already focused/open, cleanly focuses or closes it without hanging.
 
 ### `kaze-osd <vol-up|vol-down|vol-mute|mic-mute|bright-up|bright-down>`
 - Executes the exact hardware command (`wpctl` or `brightnessctl`), reads the updated percentage/mute state, and fires a synchronous replacing notification to `fnott`:
@@ -94,6 +106,7 @@ All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `ch
 |---|---|---|
 | `Super + Space` / `Super + D` | Toggle App Launcher (`fuzzel`) | — |
 | `Super + Shift + Space` | Open `kaze-menu` | — |
+| `Super + /` | Search Keyboard Shortcuts (`kaze-keys`) | — |
 | `Super + Shift + L` | Quick Layout Switcher (`kaze-layout --menu`) | — |
 | `Super + Shift + T` | Quick Theme Switcher (`kaze-theme --menu`) | — |
 | `Super + Return` / `Super + T` | Open Terminal (`kaze-footclient`) | — |
