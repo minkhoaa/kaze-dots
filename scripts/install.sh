@@ -6,10 +6,11 @@ PROFILE="minimal"
 DRY_RUN=false
 SKIP_PACKAGES=false
 AUTO_YES=false
+REBOOT="auto"
 
 usage() {
     cat <<EOF
-Usage: $0 [--profile minimal|full] [--dry-run] [--skip-packages] [--yes]
+Usage: $0 [--profile minimal|full] [--dry-run] [--skip-packages] [--yes] [--reboot|--no-reboot]
 
 Installs official Arch Linux [core]/[extra] packages for the chosen Kaze profile
 (zero AUR dependencies), applies symlinks via scripts/apply.sh, persists the
@@ -20,6 +21,8 @@ Options:
   --dry-run, --check        Print installation plan without writing any files
   --skip-packages           Skip pacman package installation and apply dotfiles only
   --yes, -y                 Non-interactive mode (--noconfirm for pacman, --yes for apply.sh)
+  --reboot                  Reboot automatically after installation completes
+  --no-reboot               Do not prompt to reboot after installation completes
   -h, --help                Show this help message
 EOF
 }
@@ -48,6 +51,14 @@ while (( $# > 0 )); do
             ;;
         --yes|-y)
             AUTO_YES=true
+            shift
+            ;;
+        --reboot)
+            REBOOT="yes"
+            shift
+            ;;
+        --no-reboot)
+            REBOOT="no"
             shift
             ;;
         -h|--help)
@@ -149,10 +160,26 @@ if [[ "$DRY_RUN" == true ]]; then
     echo "  CONFIG_HOME=$CONFIG_HOME"
     echo "  DATA_HOME=$DATA_HOME"
     echo "  STATE_FILE=$CONFIG_HOME/kaze/state.lua (profile=$PROFILE, preserving user.lua)"
+    if [[ "$REBOOT" == "yes" ]]; then
+        echo "Post-install: sudo systemctl reboot"
+    fi
     if [[ "$PROFILE" == "full" ]]; then
         echo "Note: fcitx5-configtool is an optional on-demand Qt GUI if you want a GUI to switch Bamboo between Telex and VNI."
     fi
     exit 0
+fi
+
+if [[ "$AUTO_YES" == false ]] && [[ -t 0 ]]; then
+    read -r -p "Install kaze-dots (profile: $PROFILE) into $HOME? [Y/n] " reply
+    case "$reply" in
+        ""|[yY]|[yY][eE][sS])
+            APPLY_FLAGS=(--yes)
+            ;;
+        *)
+            echo "Aborted."
+            exit 1
+            ;;
+    esac
 fi
 
 if [[ "$SKIP_PACKAGES" == false ]]; then
@@ -234,3 +261,16 @@ if [[ "$PROFILE" == "full" ]]; then
     echo "Note: fcitx5-configtool is an optional on-demand Qt GUI if you want a GUI to switch Bamboo between Telex and VNI."
 fi
 echo "Installed kaze-dots profile: $PROFILE"
+
+if [[ "$REBOOT" == "yes" ]]; then
+    echo "Rebooting into Kaze Hyprland..."
+    exec sudo systemctl reboot
+elif [[ "$REBOOT" == "auto" ]] && [[ "$AUTO_YES" == false ]] && [[ "$SKIP_PACKAGES" == false ]] && [[ -t 0 ]]; then
+    read -r -p "Reboot now to enter Kaze Hyprland? [Y/n] " reboot_reply
+    case "$reboot_reply" in
+        ""|[yY]|[yY][eE][sS])
+            echo "Rebooting into Kaze Hyprland..."
+            exec sudo systemctl reboot
+            ;;
+    esac
+fi
