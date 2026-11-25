@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared host-side plumbing; callers use strict mode and own all launched VMs.
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VMDIR="${KAZE_VM_DIR:-/home/khoa/.local/share/shell-bench-vm}"
+VMDIR="${KAZE_VM_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/shell-bench-vm}"
 
 ssh_guest() {
     ssh -i "$VMDIR/bench_id_ed25519" -p 22222 -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \

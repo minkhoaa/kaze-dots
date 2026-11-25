@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VMDIR="${KAZE_VM_DIR:-/home/khoa/.local/share/shell-bench-vm}"
+VMDIR="${KAZE_VM_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/shell-bench-vm}"
 HEADLESS=false
 QMP=false
 

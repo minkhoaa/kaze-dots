@@ -4,9 +4,9 @@
 
 All runtime testing, layout verification, screenshot capture, and RAM/CPU benchmarking MUST run exclusively inside the isolated Arch Linux KVM VM (`shell-bench-vm`):
 
-- **VM Directory**: `/home/khoa/.local/share/shell-bench-vm/`
+- **VM Directory**: `~/.local/share/shell-bench-vm/`
 - **Disk**: `arch-bench.qcow2` (copy-on-write overlay on clean Arch base)
-- **SSH**: `bench@127.0.0.1:22222` using `/home/khoa/.local/share/shell-bench-vm/bench_id_ed25519` (passwordless `sudo` inside VM only)
+- **SSH**: `bench@127.0.0.1:22222` using `~/.local/share/shell-bench-vm/bench_id_ed25519` (passwordless `sudo` inside VM only)
 - **Display**: Single unified VirGL 3D GPU `-vga none -device virtio-vga-gl,xres=1920,yres=1080`
 - **Host GPU Pinning**:
   - Headless automated tests: `-display egl-headless,rendernode=/dev/dri/renderD128`
