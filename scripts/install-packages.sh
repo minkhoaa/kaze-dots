@@ -34,6 +34,10 @@ PACKAGES=(
     dconf
     libnotify
     foot
+    zsh
+    zsh-autosuggestions
+    zsh-syntax-highlighting
+    zsh-completions
     wl-clipboard
     xdg-utils
     wireplumber

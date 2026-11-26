@@ -11,7 +11,7 @@ for arg in "$@"; do
             ;;
         -h|--help)
             echo "Usage: $0 [--yes]"
-            echo "Backs up existing configs, writes a reversible rollback.sh, symlinks Hyprland/Foot/systemd/CLI files, and seeds editable Noctalia config."
+            echo "Backs up existing configs, writes a reversible rollback.sh, symlinks Hyprland/Foot/Zsh/Starship/systemd/CLI files, and seeds editable Noctalia config."
             exit 0
             ;;
         *)
@@ -133,6 +133,10 @@ for f in hyprland.lua env.lua core.lua rules.lua execs.lua keybinds.lua; do
 done
 
 backup_and_link "$REPO_DIR/config/foot/foot.ini" "$CONFIG_HOME/foot/foot.ini"
+backup_and_link "$REPO_DIR/config/starship/starship.toml" "$CONFIG_HOME/starship.toml"
+backup_and_link "$REPO_DIR/config/zsh/zshrc" "$HOME/.zshrc"
+backup_and_link "$REPO_DIR/config/zsh/zprofile" "$HOME/.zprofile"
+backup_and_link "$REPO_DIR/config/zsh/conf.d" "$CONFIG_HOME/zsh/conf.d"
 
 # Ensure Foot's included Noctalia theme file exists before Noctalia runs its first template pass.
 FOOT_THEME="$CONFIG_HOME/foot/themes/noctalia"

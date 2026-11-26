@@ -105,7 +105,7 @@ end
 -- 1. Required binaries in PATH for active profile
 local MINIMAL_BINS = {
     "hyprland", "hyprctl", "noctalia", "notify-send",
-    "foot", "footclient", "wl-copy", "wl-paste",
+    "foot", "footclient", "zsh", "wl-copy", "wl-paste",
     "wpctl", "brightnessctl", "playerctl",
     "lua", "busctl", "systemctl", "flock",
 }
@@ -113,6 +113,7 @@ local MINIMAL_BINS = {
 local FULL_EXTRA_BINS = {
     "slurp", "wf-recorder", "ffprobe", "hyprpicker",
     "yazi", "imv", "zathura", "gnome-keyring-daemon", "fcitx5",
+    "fzf", "zoxide", "eza", "bat", "rg", "fd", "starship",
 }
 
 local missing_minimal = {}
@@ -153,6 +154,10 @@ do
     local scan_script = string.format([[
 for p in %s/hypr/*.lua \
          %s/foot/foot.ini \
+         %s/starship.toml \
+         %s/.zshrc \
+         %s/.zprofile \
+         %s/zsh/conf.d \
          %s/systemd/user/kaze-* \
          %s/systemd/user/foot-server.service.d/*.conf \
          %s/systemd/user/foot-server.socket.d/*.conf \
@@ -166,6 +171,10 @@ for p in %s/hypr/*.lua \
 done
 ]],
         q(config_home),
+        q(config_home),
+        q(config_home),
+        q(fs.home()),
+        q(fs.home()),
         q(config_home),
         q(config_home),
         q(config_home),
@@ -191,6 +200,10 @@ done
         data_home .. "/kaze-dots/lua/kaze",
         config_home .. "/hypr/hyprland.lua",
         config_home .. "/foot/foot.ini",
+        config_home .. "/starship.toml",
+        fs.home() .. "/.zshrc",
+        fs.home() .. "/.zprofile",
+        config_home .. "/zsh/conf.d",
         config_home .. "/systemd/user/kaze-session.target",
         config_home .. "/systemd/user/kaze-noctalia.service",
         bin_home .. "/kaze-session",
@@ -244,6 +257,29 @@ do
         end
     elseif offline then
         report_warn("foot: skipped foot.ini validation (not present or foot unavailable)")
+    end
+
+    local zshrc = fs.home() .. "/.zshrc"
+    local zprofile = fs.home() .. "/.zprofile"
+    local conf_d = fs.config_dir() .. "/zsh/conf.d"
+    local q = fs.shell_quote
+    if cmd_exists("zsh") and fs.file_exists(zshrc) and fs.file_exists(zprofile) then
+        local check_cmd = string.format([[
+ok=0
+for f in %s %s %s/*.zsh; do
+    [ -e "$f" ] || continue
+    zsh -n "$f" >/dev/null 2>&1 || ok=1
+done
+exit "$ok"
+]], q(zshrc), q(zprofile), q(conf_d))
+        local ok_zsh = os.execute(check_cmd)
+        if ok_zsh == true or ok_zsh == 0 then
+            report_ok("zsh: ~/.zshrc, ~/.zprofile, and conf.d/*.zsh validated cleanly")
+        else
+            report_fail("zsh: ~/.zshrc, ~/.zprofile, or conf.d/*.zsh failed syntax check")
+        end
+    elseif offline then
+        report_warn("zsh: skipped ~/.zshrc, ~/.zprofile, and conf.d/*.zsh validation (not present or zsh unavailable)")
     end
 end
 

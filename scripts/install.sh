@@ -90,6 +90,10 @@ MINIMAL_PACKAGES=(
     dconf
     libnotify
     foot
+    zsh
+    zsh-autosuggestions
+    zsh-syntax-highlighting
+    zsh-completions
     wl-clipboard
     xdg-utils
     wireplumber
@@ -119,6 +123,13 @@ FULL_EXTRA_PACKAGES=(
     fcitx5-gtk
     noto-fonts
     noto-fonts-emoji
+    fzf
+    zoxide
+    eza
+    bat
+    ripgrep
+    fd
+    starship
 )
 
 PACKAGES=("${MINIMAL_PACKAGES[@]}")
@@ -149,6 +160,9 @@ if [[ "$DRY_RUN" == true ]]; then
     echo "  CONFIG_HOME=$CONFIG_HOME"
     echo "  DATA_HOME=$DATA_HOME"
     echo "  PROFILE_FILE=$CONFIG_HOME/kaze/profile (profile=$PROFILE, preserving hypr/user.lua)"
+    if [[ "$SKIP_PACKAGES" == false ]]; then
+        echo "Default shell: chsh -s /usr/bin/zsh ${USER:-$(id -un)} (if not already zsh)"
+    fi
     if [[ "$REBOOT" == "yes" ]]; then
         echo "Post-install: sudo systemctl reboot"
     fi
@@ -222,6 +236,17 @@ fi
 if [[ "$PROFILE" == "full" ]]; then
     echo "Note: fcitx5-configtool is an optional on-demand Qt GUI if you want a GUI to switch Bamboo between Telex and VNI."
 fi
+
+if [[ "$SKIP_PACKAGES" == false ]] && command -v zsh >/dev/null 2>&1; then
+    ZSH_BIN="$(command -v zsh)"
+    TARGET_USER="${USER:-$(id -un)}"
+    CURRENT_SHELL="$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f7 || true)"
+    if [[ "$CURRENT_SHELL" != "$ZSH_BIN" ]]; then
+        echo "Setting default login shell to $ZSH_BIN for $TARGET_USER..."
+        sudo chsh -s "$ZSH_BIN" "$TARGET_USER"
+    fi
+fi
+
 echo "Installed kaze-dots profile: $PROFILE"
 
 if [[ "$REBOOT" == "yes" ]]; then

@@ -1,0 +1,30 @@
+# kaze-dots Zsh login profile (~/.zprofile)
+# Put login-only personal/machine overrides in ~/.config/zsh/zprofile.local
+
+typeset -U path PATH
+if [[ -d "$HOME/.local/bin" ]]; then
+    path=("$HOME/.local/bin" $path)
+fi
+export PATH
+
+if [[ -z "${EDITOR:-}" ]]; then
+    if (( $+commands[nvim] )); then
+        export EDITOR="nvim"
+    elif (( $+commands[vim] )); then
+        export EDITOR="vim"
+    else
+        export EDITOR="nano"
+    fi
+fi
+export VISUAL="${VISUAL:-$EDITOR}"
+export PAGER="${PAGER:-less}"
+
+if [[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/zprofile.local" ]]; then
+    source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/zprofile.local"
+fi
+
+# Auto-start Hyprland on TTY1 via start-hyprland watchdog when no display manager is used
+if [[ -z "${WAYLAND_DISPLAY:-}" && "${XDG_VTNR:-}" == "1" ]] && (( $+commands[start-hyprland] )); then
+    export XDG_CURRENT_DESKTOP=Hyprland
+    exec start-hyprland -- -c "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua"
+fi

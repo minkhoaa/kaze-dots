@@ -1,0 +1,41 @@
+# kaze-dots interactive Zsh configuration (~/.zshrc)
+# Put personal/machine-specific overrides in ~/.config/zsh/user.zsh
+
+[[ -o interactive ]] || return
+
+# Ensure user scripts are in PATH even for non-login shells
+typeset -U path PATH fpath FPATH
+if [[ -d "$HOME/.local/bin" ]]; then
+    path=("$HOME/.local/bin" $path)
+fi
+
+# XDG directories for config, completion cache, and history state
+: "${XDG_CONFIG_HOME:=$HOME/.config}"
+: "${XDG_CACHE_HOME:=$HOME/.cache}"
+: "${XDG_STATE_HOME:=$HOME/.local/state}"
+mkdir -p "$XDG_CACHE_HOME/zsh" "$XDG_STATE_HOME/zsh"
+
+# Load modular config snippets in lexical order
+_kaze_conf_dir="$XDG_CONFIG_HOME/zsh/conf.d"
+if [[ ! -d "$_kaze_conf_dir" ]]; then
+    _kaze_self="${${(%):-%x}:A:h}"
+    [[ -d "$_kaze_self/conf.d" ]] && _kaze_conf_dir="$_kaze_self/conf.d"
+    unset _kaze_self
+fi
+if [[ -d "$_kaze_conf_dir" ]]; then
+    for _kaze_mod in "$_kaze_conf_dir"/*.zsh(Non); do
+        [[ -r "$_kaze_mod" ]] && source "$_kaze_mod"
+    done
+    unset _kaze_mod
+fi
+unset _kaze_conf_dir
+
+# Per-user / per-machine overrides (never overwritten or symlinked by kaze-dots)
+if [[ -r "$XDG_CONFIG_HOME/zsh/user.zsh" ]]; then
+    source "$XDG_CONFIG_HOME/zsh/user.zsh"
+fi
+
+# zsh-syntax-highlighting must be sourced strictly last
+if [[ -r /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
+    source /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+fi

@@ -156,6 +156,36 @@ test("native configs: config/noctalia/config.toml and config/foot/foot.ini valid
     local foot_src = assert(fs.read_file(repo_dir .. "/config/foot/foot.ini"))
     assert_contains(foot_src, "include=~/.config/foot/themes/noctalia\n", "foot includes Noctalia theme")
 
+    local zshrc_src = assert(fs.read_file(repo_dir .. "/config/zsh/zshrc"))
+    assert_contains(zshrc_src, "$XDG_CONFIG_HOME/zsh/conf.d", "zshrc loads conf.d modules")
+    assert_contains(zshrc_src, "$XDG_CONFIG_HOME/zsh/user.zsh", "zshrc supports user.zsh overrides")
+    assert_contains(zshrc_src, "zsh-syntax-highlighting.zsh", "zshrc loads syntax-highlighting when present")
+    local user_pos = assert(zshrc_src:find("user.zsh", 1, true))
+    local hl_pos = assert(zshrc_src:find("zsh-syntax-highlighting.zsh", 1, true))
+    assert_true(user_pos < hl_pos, "zsh-syntax-highlighting must be sourced strictly after user.zsh")
+
+    local zprof_src = assert(fs.read_file(repo_dir .. "/config/zsh/zprofile"))
+    assert_contains(zprof_src, "EDITOR=", "zprofile sets default EDITOR")
+    assert_contains(zprof_src, "zprofile.local", "zprofile supports zprofile.local")
+    assert_contains(zprof_src, "exec start-hyprland -- -c", "zprofile launches Hyprland via start-hyprland")
+
+    for _, mod in ipairs({ "10-options.zsh", "20-completion.zsh", "30-keybinds.zsh", "40-tools.zsh", "50-aliases.zsh", "60-prompt.zsh" }) do
+        assert_true(fs.file_exists(repo_dir .. "/config/zsh/conf.d/" .. mod), "missing zsh module: " .. mod)
+    end
+    local tools_src = assert(fs.read_file(repo_dir .. "/config/zsh/conf.d/40-tools.zsh"))
+    assert_contains(tools_src, "zsh-autosuggestions.zsh", "40-tools.zsh loads autosuggestions when present")
+    for _, cmd in ipairs({ "fzf", "zoxide", "bat", "yazi" }) do
+        assert_contains(tools_src, "$+commands[" .. cmd .. "]", "40-tools.zsh guards " .. cmd)
+    end
+    local prompt_src = assert(fs.read_file(repo_dir .. "/config/zsh/conf.d/60-prompt.zsh"))
+    assert_contains(prompt_src, "$+commands[starship]", "60-prompt.zsh guards starship")
+    assert_contains(prompt_src, "vcs_info", "60-prompt.zsh provides native vcs_info fallback")
+
+    local starship_src = assert(fs.read_file(repo_dir .. "/config/starship/starship.toml"))
+    assert_contains(starship_src, "add_newline = false\n", "starship single-line config")
+    assert_contains(starship_src, "❯", "starship character symbol")
+    assert_true(not starship_src:find("#[0-9a-fA-F][0-9a-fA-F]"), "starship.toml must use ANSI colors only, not hex")
+
     local tmp = make_tmp_dir()
     if cmd_exists("noctalia") then
         local val_out = assert(fs.capture("noctalia config validate " .. fs.shell_quote(repo_dir .. "/config/noctalia/config.toml") .. " 2>&1"))
@@ -168,6 +198,19 @@ test("native configs: config/noctalia/config.toml and config/foot/foot.ini valid
         local ok_foot = os.execute("foot --check-config --config " .. fs.shell_quote(tmp .. "/foot.ini") .. " >/dev/null 2>&1")
         assert_true(ok_foot == true or ok_foot == 0, "foot --check-config must succeed")
     end
+    if cmd_exists("zsh") then
+        local zsh_files = {
+            repo_dir .. "/config/zsh/zshrc",
+            repo_dir .. "/config/zsh/zprofile",
+        }
+        for _, mod in ipairs({ "10-options.zsh", "20-completion.zsh", "30-keybinds.zsh", "40-tools.zsh", "50-aliases.zsh", "60-prompt.zsh" }) do
+            zsh_files[#zsh_files + 1] = repo_dir .. "/config/zsh/conf.d/" .. mod
+        end
+        for _, zf in ipairs(zsh_files) do
+            local ok_zsh = os.execute("zsh -n " .. fs.shell_quote(zf) .. " >/dev/null 2>&1")
+            assert_true(ok_zsh == true or ok_zsh == 0, "zsh -n must pass on " .. zf)
+        end
+    end
     rm_rf(tmp)
 end)
 
@@ -179,11 +222,21 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         local unit = cfg .. "/systemd/user/kaze-noctalia.service"
         local noc_cfg = cfg .. "/noctalia/config.toml"
         local foot = cfg .. "/foot/foot.ini"
+        local starship = cfg .. "/starship.toml"
+        local zshrc = tmp .. "/.zshrc"
+        local user_zsh = cfg .. "/zsh/user.zsh"
+        local zprof_local = cfg .. "/zsh/zprofile.local"
+        local custom_conf = cfg .. "/zsh/conf.d/99-custom.zsh"
         local user_lua = cfg .. "/hypr/user.lua"
 
         fs.write_atomic(user_lua, "return {} -- original hypr user settings\n")
         fs.write_atomic(unit, "original unit\n")
         fs.write_atomic(noc_cfg, "# pre-existing user noctalia config\n")
+        fs.write_atomic(starship, "# pre-existing user starship config\n")
+        fs.write_atomic(zshrc, "# pre-existing user zshrc\n")
+        fs.write_atomic(user_zsh, "# user-owned zsh overrides\n")
+        fs.write_atomic(zprof_local, "# user-owned zprofile overrides\n")
+        fs.write_atomic(custom_conf, "# pre-existing user conf.d snippet\n")
         fs.mkdir_p(fs.dirname(foot))
         assert(os.execute("ln -s -- /nonexistent/fixture " .. q(foot)))
 
@@ -196,6 +249,8 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         local first = assert(fs.read_file(last)):gsub("\n$", "")
         assert_contains(assert(fs.read_file(noc_cfg)), "offline_mode = true\n")
         assert_true(fs.file_exists(cfg .. "/foot/themes/noctalia"), "seeds empty Foot Noctalia theme")
+        assert_eq(fs.read_file(user_zsh), "# user-owned zsh overrides\n")
+        assert_eq(fs.read_file(zprof_local), "# user-owned zprofile overrides\n")
 
         -- Simulate user customizing Noctalia via Settings GUI between applies
         fs.write_atomic(noc_cfg, assert(fs.read_file(noc_cfg)) .. "# user GUI tweak\n")
@@ -203,12 +258,18 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         local second = assert(fs.read_file(last)):gsub("\n$", "")
         assert_true(first ~= second)
         assert_contains(assert(fs.read_file(noc_cfg)), "# user GUI tweak\n", "reapply preserves user Noctalia GUI edits")
+        assert_eq(fs.read_file(user_zsh), "# user-owned zsh overrides\n")
+        assert_eq(fs.read_file(zprof_local), "# user-owned zprofile overrides\n")
 
         local manifest = assert(fs.read_file(second .. "/installed.list"))
         assert_contains(manifest, tmp .. "/.local/bin/kaze-session\n")
         assert_contains(manifest, cfg .. "/systemd/user/kaze-noctalia.service\n")
         assert_contains(manifest, cfg .. "/foot/foot.ini\n")
+        assert_contains(manifest, cfg .. "/starship.toml\n")
         assert_contains(manifest, cfg .. "/noctalia/config.toml\n")
+        assert_contains(manifest, tmp .. "/.zshrc\n")
+        assert_contains(manifest, tmp .. "/.zprofile\n")
+        assert_contains(manifest, cfg .. "/zsh/conf.d\n")
 
         local function rollback(dir)
             return os.execute(env .. " " .. q(dir .. "/rollback.sh") .. " --yes >/dev/null 2>&1")
@@ -217,10 +278,15 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         assert(rollback(second))
         assert_eq(fs.read_file(unit), "original unit\n")
         assert_eq(fs.read_file(noc_cfg), "# pre-existing user noctalia config\n")
+        assert_eq(fs.read_file(starship), "# pre-existing user starship config\n")
+        assert_eq(fs.read_file(zshrc), "# pre-existing user zshrc\n")
+        assert_eq(fs.read_file(custom_conf), "# pre-existing user conf.d snippet\n")
+        assert_eq(fs.read_file(user_zsh), "# user-owned zsh overrides\n")
+        assert_eq(fs.read_file(zprof_local), "# user-owned zprofile overrides\n")
         assert_eq(fs.capture("readlink -- " .. q(foot)), "/nonexistent/fixture\n")
         assert_eq(fs.read_file(user_lua), "return {} -- original hypr user settings\n")
         assert_true(not fs.file_exists(last), "rollback unregisters active backup")
-        for _, path in ipairs({ tmp .. "/.local/bin/kaze-session", data .. "/kaze-dots/lua/kaze", cfg .. "/foot/themes/noctalia" }) do
+        for _, path in ipairs({ tmp .. "/.local/bin/kaze-session", tmp .. "/.zprofile", data .. "/kaze-dots/lua/kaze", cfg .. "/foot/themes/noctalia" }) do
             assert(os.execute("test ! -e " .. q(path) .. " && test ! -L " .. q(path)))
         end
         assert_true(not rollback(second), "a second rollback cannot delete restored files")

@@ -1,0 +1,67 @@
+# kaze-dots Starship prompt: minimal single-line config using ANSI color names
+# Adapts automatically to Noctalia's dark/light Foot terminal palette.
+"$schema" = 'https://starship.rs/config-schema.json'
+
+add_newline = false
+command_timeout = 500
+
+format = "$directory$git_branch$git_status$cmd_duration$character"
+
+[directory]
+style = "bold blue"
+truncation_length = 3
+truncation_symbol = "…/"
+
+[git_branch]
+symbol = ""
+format = "[$branch(:$remote_branch)]($style) "
+style = "magenta"
+
+[git_status]
+format = "([$all_status$ahead_behind]($style) )"
+style = "cyan"
+conflicted = "="
+ahead = "⇡${count}"
+behind = "⇣${count}"
+diverged = "⇕⇡${ahead_count}⇣${behind_count}"
+untracked = "?"
+stashed = "*"
+modified = "!"
+staged = "+"
+renamed = "»"
+deleted = "✘"
+
+[cmd_duration]
+min_time = 2_000
+format = "[$duration]($style) "
+style = "yellow"
+
+[character]
+success_symbol = "[❯](green)"
+error_symbol = "[❯](red)"
+vimcmd_symbol = "[❮](bright-black)"
+
+# Disable slow or noisy cloud/container/orchestration modules
+[aws]
+disabled = true
+
+[azure]
+disabled = true
+
+[gcloud]
+disabled = true
+
+[kubernetes]
+disabled = true
+
+[docker_context]
+disabled = true
+
+[openstack]
+disabled = true
+
+[terraform]
+disabled = true
+
+[helm]
+disabled = true

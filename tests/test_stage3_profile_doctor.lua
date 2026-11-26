@@ -52,6 +52,9 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             assert_contains(min_out, "  noctalia\n", "minimal includes noctalia")
             assert_contains(min_out, "  hyprland\n", "minimal includes hyprland")
             assert_contains(min_out, "  foot\n", "minimal includes foot")
+            assert_contains(min_out, "  zsh\n", "minimal includes zsh")
+            assert_contains(min_out, "  zsh-autosuggestions\n", "minimal includes zsh-autosuggestions")
+            assert_contains(min_out, "  zsh-syntax-highlighting\n", "minimal includes zsh-syntax-highlighting")
             assert_contains(min_out, "0 AUR", "zero AUR")
 
             local function has_word(text, word)
@@ -64,7 +67,11 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
 
             local full_out, full_ok = read_all(env .. " " .. installer .. " --profile full --dry-run --yes 2>&1")
             assert_true(full_ok, "full --dry-run exit 0")
-            for _, pkg in ipairs({ "noctalia", "slurp", "wf-recorder", "ffmpeg", "hyprpicker", "yazi", "fcitx5", "fcitx5-bamboo" }) do
+            for _, pkg in ipairs({
+                "noctalia", "slurp", "wf-recorder", "ffmpeg", "hyprpicker",
+                "yazi", "fcitx5", "fcitx5-bamboo",
+                "fzf", "zoxide", "eza", "bat", "ripgrep", "fd", "starship",
+            }) do
                 assert_contains(full_out, "  " .. pkg .. "\n", "full includes " .. pkg)
             end
             for _, removed in ipairs({ "waybar", "swaybg", "fuzzel", "fnott", "hypridle", "hyprlock", "cliphist", "hyprsunset", "matugen", "mate-polkit", "grim", "swappy" }) do
@@ -90,8 +97,12 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             fs.mkdir_p(runtime)
 
             local user_lua = cfg .. "/hypr/user.lua"
+            local user_zsh = cfg .. "/zsh/user.zsh"
+            local zprof_local = cfg .. "/zsh/zprofile.local"
             local prof_file = cfg .. "/kaze/profile"
             fs.write_atomic(user_lua, "return { browser = 'firefox' } -- user marker\n")
+            fs.write_atomic(user_zsh, "# user zsh marker\n")
+            fs.write_atomic(zprof_local, "# user zprofile marker\n")
             fs.write_atomic(cfg .. "/noctalia/config.toml", "# pre-existing user noctalia\n")
 
             local env = string.format(
@@ -103,11 +114,17 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             local out, ok = read_all(env .. " " .. installer .. " --profile full --skip-packages --yes 2>&1")
             assert_true(ok, "install.sh failed: " .. out)
             assert_eq(fs.read_file(user_lua), "return { browser = 'firefox' } -- user marker\n")
+            assert_eq(fs.read_file(user_zsh), "# user zsh marker\n")
+            assert_eq(fs.read_file(zprof_local), "# user zprofile marker\n")
 
             for _, link_path in ipairs({
                 cfg .. "/systemd/user/kaze-noctalia.service",
                 cfg .. "/systemd/user/kaze-fcitx5.service",
                 cfg .. "/foot/foot.ini",
+                cfg .. "/starship.toml",
+                home .. "/.zshrc",
+                home .. "/.zprofile",
+                cfg .. "/zsh/conf.d",
                 home .. "/.local/bin/kaze-doctor",
                 data .. "/kaze-dots/lua/kaze",
             }) do
@@ -120,11 +137,17 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             local rb_out, rb_ok = read_all(env .. " " .. q(backup_dir .. "/rollback.sh") .. " --yes 2>&1")
             assert_true(rb_ok, "rollback failed: " .. rb_out)
             assert_eq(fs.read_file(user_lua), "return { browser = 'firefox' } -- user marker\n")
+            assert_eq(fs.read_file(user_zsh), "# user zsh marker\n")
+            assert_eq(fs.read_file(zprof_local), "# user zprofile marker\n")
             assert_eq(fs.read_file(cfg .. "/noctalia/config.toml"), "# pre-existing user noctalia\n")
             for _, gone in ipairs({
                 cfg .. "/systemd/user/kaze-noctalia.service",
                 cfg .. "/systemd/user/kaze-fcitx5.service",
                 cfg .. "/foot/foot.ini",
+                cfg .. "/starship.toml",
+                home .. "/.zshrc",
+                home .. "/.zprofile",
+                cfg .. "/zsh/conf.d",
                 home .. "/.local/bin/kaze-doctor",
                 prof_file,
                 cfg .. "/kaze/last-backup",
@@ -151,6 +174,12 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             }) do
                 write_stub(stub_bin, b, "exit 0")
             end
+            write_stub(stub_bin, "zsh", [[
+if [ "${1:-}" = "-n" ] && [ -n "${2:-}" ]; then
+    printf '%s\n' "$2" >> "$HOME/zsh-checked"
+fi
+exit 0
+]])
 
             local base_env = string.format(
                 "HOME=%s XDG_CONFIG_HOME=%s XDG_DATA_HOME=%s XDG_CACHE_HOME=%s XDG_RUNTIME_DIR=%s LANG=en_US.UTF-8 LC_ALL='' PATH=%s",
@@ -195,7 +224,28 @@ if [ "${DUP_NOC:-0}" = 1 ]; then printf '  199 noctalia /usr/bin/noctalia\n'; fi
             assert_true(live_ok, "live minimal doctor should pass:\n" .. live_out)
             assert_contains(live_out, "[OK]   noctalia: config.toml validated cleanly")
             assert_contains(live_out, "[OK]   foot: foot.ini validated cleanly")
+            assert_contains(live_out, "[OK]   zsh: ~/.zshrc, ~/.zprofile, and conf.d/*.zsh validated cleanly")
             assert_contains(live_out, "[OK]   daemons (minimal):")
+            local checked_zsh = assert(fs.read_file(home .. "/zsh-checked"))
+            assert_contains(checked_zsh, home .. "/.zshrc\n")
+            assert_contains(checked_zsh, home .. "/.zprofile\n")
+            assert_contains(checked_zsh, cfg .. "/zsh/conf.d/10-options.zsh\n")
+            assert_contains(checked_zsh, cfg .. "/zsh/conf.d/60-prompt.zsh\n")
+
+            local full_miss_out, full_miss_ok = read_all(base_env .. " " .. doctor .. " --offline --profile full 2>&1")
+            assert_true(not full_miss_ok, "full offline doctor must fail when full binaries are missing")
+            assert_contains(full_miss_out, "fzf, zoxide, eza, bat, rg, fd, starship")
+
+            for _, b in ipairs({
+                "slurp", "wf-recorder", "ffprobe", "hyprpicker",
+                "yazi", "imv", "zathura", "gnome-keyring-daemon", "fcitx5",
+                "fzf", "zoxide", "eza", "bat", "rg", "fd", "starship",
+            }) do
+                write_stub(stub_bin, b, "exit 0")
+            end
+            local full_ok_out, full_ok = read_all(base_env .. " " .. doctor .. " --offline --profile full 2>&1")
+            assert_true(full_ok, "full offline doctor pass with all binaries:\n" .. full_ok_out)
+            assert_contains(full_ok_out, "[OK]   binaries (full): all full-profile tools found")
 
             local dup_out, dup_ok = read_all(live_env .. " DUP_NOC=1 " .. doctor .. " 2>&1")
             assert_true(not dup_ok, "duplicate noctalia PID must fail doctor")
