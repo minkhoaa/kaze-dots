@@ -130,6 +130,7 @@ FULL_EXTRA_PACKAGES=(
     ripgrep
     fd
     starship
+    wl-mirror
 )
 
 PACKAGES=("${MINIMAL_PACKAGES[@]}")

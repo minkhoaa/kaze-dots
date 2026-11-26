@@ -102,6 +102,21 @@ hl.window_rule({
     move = "(monitor_w*0.98-window_w) (monitor_h*0.97-window_h)",
 })
 
+hl.window_rule({
+    name = "kaze-share-preview",
+    match = {
+        class = "^at\\.yrlf\\.wl_mirror$",
+        title = "^(kaze-share-preview|wl-mirror.*kaze-share)",
+    },
+    float = true,
+    pin = true,
+    opaque = true,
+    no_blur = true,
+    keep_aspect_ratio = true,
+    size = "(monitor_w*0.28) (monitor_h*0.28)",
+    move = "(monitor_w*0.98-window_w) (monitor_h*0.97-window_h)",
+})
+
 -- Disable Hyprland layer animations on Noctalia surfaces so Noctalia's internal
 -- animations never double-animate or tear.
 hl.layer_rule({

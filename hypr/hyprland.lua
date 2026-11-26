@@ -21,6 +21,7 @@ for _, mod in ipairs({
     "kaze.fs",
     "kaze.json",
     "kaze.popups",
+    "kaze.display",
     "kaze.keybinds_data",
     "noctalia",
     "env",

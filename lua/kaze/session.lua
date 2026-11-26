@@ -108,6 +108,12 @@ function M.stop()
     local owns = owns_environment()
     if owns == nil then return nil, "cannot read systemd's activation environment" end
     if not owns then return true end
+    local display_cli = fs.home() .. "/.local/bin/kaze-display"
+    if fs.file_exists(display_cli) then
+        os.execute(fs.shell_quote(display_cli) .. " cleanup >/dev/null 2>&1 || true")
+    elseif fs.command_exists("kaze-display") then
+        os.execute("kaze-display cleanup >/dev/null 2>&1 || true")
+    end
     -- Finish the MP4 while the compositor still exists.
     local recorder = "kaze-record.service"
     local status = fs.capture(ctl .. "show -p ActiveState --value " .. recorder)

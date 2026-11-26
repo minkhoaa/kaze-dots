@@ -1,12 +1,42 @@
 local ctx = require("kaze._ctx")
+local display = require("kaze.display")
 local fs = require("kaze.fs")
 
-local cli = fs.shell_quote(fs.home() .. "/.local/bin/kaze-session")
+local bin_dir = fs.home() .. "/.local/bin/"
+local cli = fs.shell_quote(bin_dir .. "kaze-session")
+local display_cli = fs.shell_quote(bin_dir .. "kaze-display")
 local signature = os.getenv("HYPRLAND_INSTANCE_SIGNATURE") or ""
+local started_at = os.time()
+local last_added_at = nil
 
 hl.on("hyprland.start", function()
     local cfg = ctx.cfg
+    started_at = os.time()
     hl.exec_cmd(cli .. " start && hyprctl setcursor " .. fs.shell_quote(cfg.cursor_theme) .. " " .. tostring(cfg.cursor_size))
+end)
+
+hl.on("monitor.added", function(mon)
+    local name = mon and mon.name
+    local now = os.time()
+    local cfg = ctx.cfg or {}
+    if display.should_ignore_hotplug(name, {
+        now = now,
+        started_at = started_at,
+        last_event_at = last_added_at,
+        enabled = cfg.display_hotplug_menu ~= false,
+    }) then
+        return
+    end
+    last_added_at = now
+    hl.exec_cmd(display_cli .. " --hotplug " .. fs.shell_quote(name))
+end)
+
+hl.on("monitor.removed", function(mon)
+    local name = mon and mon.name
+    if not name or name == "" or display.is_virtual_monitor(name) then
+        return
+    end
+    hl.exec_cmd(display_cli .. " --on-disconnect " .. fs.shell_quote(name))
 end)
 
 hl.on("hyprland.shutdown", function()

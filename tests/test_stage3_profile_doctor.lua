@@ -70,7 +70,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             for _, pkg in ipairs({
                 "noctalia", "slurp", "wf-recorder", "ffmpeg", "hyprpicker",
                 "yazi", "fcitx5", "fcitx5-bamboo",
-                "fzf", "zoxide", "eza", "bat", "ripgrep", "fd", "starship",
+                "fzf", "zoxide", "eza", "bat", "ripgrep", "fd", "starship", "wl-mirror",
             }) do
                 assert_contains(full_out, "  " .. pkg .. "\n", "full includes " .. pkg)
             end
@@ -234,12 +234,12 @@ if [ "${DUP_NOC:-0}" = 1 ]; then printf '  199 noctalia /usr/bin/noctalia\n'; fi
 
             local full_miss_out, full_miss_ok = read_all(base_env .. " " .. doctor .. " --offline --profile full 2>&1")
             assert_true(not full_miss_ok, "full offline doctor must fail when full binaries are missing")
-            assert_contains(full_miss_out, "fzf, zoxide, eza, bat, rg, fd, starship")
+            assert_contains(full_miss_out, "fzf, zoxide, eza, bat, rg, fd, starship, wl-mirror")
 
             for _, b in ipairs({
                 "slurp", "wf-recorder", "ffprobe", "hyprpicker",
                 "yazi", "imv", "zathura", "gnome-keyring-daemon", "fcitx5",
-                "fzf", "zoxide", "eza", "bat", "rg", "fd", "starship",
+                "fzf", "zoxide", "eza", "bat", "rg", "fd", "starship", "wl-mirror",
             }) do
                 write_stub(stub_bin, b, "exit 0")
             end
@@ -255,18 +255,338 @@ if [ "${DUP_NOC:-0}" = 1 ]; then printf '  199 noctalia /usr/bin/noctalia\n'; fi
         if not ok_test then error(err_test, 0) end
     end)
 
-    test("kaze-display: monitor parser, role selection, layout plans, and CLI execution", function()
+    test("kaze-display: monitor/workspace parsers, hl.monitor planner, safety rules, and CLI workflows", function()
         local display = require("kaze.display")
+        local json = require("kaze.json")
+
         local mons = display.parse_monitors([[
 [
-  {"name":"eDP-1","description":"Built-in Panel","width":1920,"height":1080,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":true},
-  {"name":"HDMI-A-1","description":"External 4K","width":2560,"height":1440,"refreshRate":144.0,"scale":1.0,"disabled":false,"focused":false}
+  {"id":0,"name":"eDP-1","description":"Built-in Panel","width":1920,"height":1080,"x":0,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":true,"mirrorOf":"none","activeWorkspace":{"id":1,"name":"1"},"hardwareDetails":{"backend":"drm"}},
+  {"id":1,"name":"HDMI-A-1","description":"External 4K","width":2560,"height":1440,"x":1920,"y":0,"refreshRate":144.0,"scale":1.0,"disabled":false,"focused":false,"mirrorOf":"none","activeWorkspace":{"id":3,"name":"3"},"hardwareDetails":{"backend":"drm"}},
+  {"id":2,"name":"kaze-share","description":"Headless","width":1920,"height":1080,"x":9999,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":false,"mirrorOf":"none","activeWorkspace":{"id":9,"name":"9"},"hardwareDetails":{"backend":"headless"}},
+  {"id":3,"name":"HEADLESS-2","description":"Other Headless","width":1280,"height":720,"x":12000,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":false,"mirrorOf":"none","hardwareDetails":{"backend":"headless"}}
 ]
 ]])
-        assert_eq(#mons, 2)
+        assert_eq(#mons, 4)
+        local internal, externals, virtuals = display.pick_roles(mons)
+        assert_eq(internal.name, "eDP-1")
+        assert_eq(#externals, 1)
+        assert_eq(externals[1].name, "HDMI-A-1")
+        assert_eq(#virtuals, 2)
+        assert_true(display.is_virtual_monitor("kaze-share"))
+        assert_true(display.is_virtual_monitor("HEADLESS-1"))
+        assert_true(not display.is_virtual_monitor("HDMI-A-1"))
+
+        -- Workspace parser, clean workspace selector, and formatter
+        local wss = display.parse_workspaces(
+            '[{"id":-99,"name":"special:scratch","monitor":"eDP-1","windows":1},{"id":1,"name":"1","monitor":"eDP-1","windows":2},{"id":2,"name":"2","monitor":"HDMI-A-1","windows":1}]',
+            '[{"address":"0x1","class":"firefox","workspace":{"id":1}},{"address":"0x2","class":"foot","workspace":{"id":1}},{"address":"0x3","class":"firefox","workspace":{"id":1}},{"address":"0x4","class":"mpv","workspace":{"id":2}}]'
+        )
+        assert_eq(#wss, 2)
+        assert_eq(wss[1].id, 1)
+        assert_eq(#wss[1].apps, 2)
+        assert_eq(display.format_workspace_entry(wss[1]), "WS 1  [firefox, foot]  (on eDP-1)")
+        assert_eq(display.format_workspace_entry({ id = 9, windows = 0, apps = {} }), "WS 9  [new empty workspace]")
+        local clean_ws = display.pick_clean_workspace_id(wss)
+        assert_true(clean_ws ~= 1 and clean_ws ~= 2, "clean ws must avoid active workspaces")
+
+        -- Planner generates valid Lua hl.monitor(...) calls for every mode
+        local function assert_valid_lua_plan(p)
+            assert_true(type(p.eval_cmds) == "table" and #p.eval_cmds >= 1)
+            for _, expr in ipairs(p.eval_cmds) do
+                assert_true(load(expr) ~= nil, "invalid Lua expr: " .. expr)
+            end
+        end
+
         local p_ext = assert(display.plan("extend-right", mons))
-        assert_eq(p_ext.rules[1], "eDP-1,preferred,0x0,1")
-        assert_eq(p_ext.rules[2], "HDMI-A-1,preferred,auto-right,1")
+        assert_valid_lua_plan(p_ext)
+        assert_eq(p_ext.needs_reload, false)
+        assert_contains(p_ext.eval_cmds[1], 'output = "eDP-1"')
+        assert_contains(p_ext.eval_cmds[1], 'position = "0x0"')
+        assert_contains(p_ext.eval_cmds[2], 'output = "HDMI-A-1"')
+        assert_contains(p_ext.eval_cmds[2], 'position = "auto-right"')
+
+        for _, mode_name in ipairs({ "extend-left", "extend-up", "external", "internal", "auto", "present", "mirror-scaled" }) do
+            local p = assert(display.plan(mode_name, mons))
+            assert_valid_lua_plan(p)
+        end
+
+        local p_int = assert(display.plan("internal", mons))
+        assert_contains(p_int.eval_cmds[2], "disabled = true")
+        local p_mir = assert(display.plan("mirror", mons))
+        assert_valid_lua_plan(p_mir)
+        assert_contains(p_mir.eval_cmds[2], 'mirror = "eDP-1"')
+        assert_true(not p_mir.eval_cmds[2]:find("kaze-share", 1, true), "mirror must never target kaze-share")
+
+        local p_vs = assert(display.plan("virtual-share", { mons[1] }))
+        assert_valid_lua_plan(p_vs)
+        assert_contains(p_vs.eval_cmds[1], 'output = "eDP-1"')
+        assert_contains(p_vs.eval_cmds[1], 'position = "0x0"')
+        assert_contains(p_vs.eval_cmds[2], 'output = "kaze-share"')
+        assert_contains(p_vs.eval_cmds[2], 'mode = "1920x1080@60"')
+        assert_contains(p_vs.eval_cmds[2], 'position = "9999x0"')
+
+        -- Reload required when exiting mirror mode
+        local mirrored_mons = display.parse_monitors([[
+[
+  {"name":"eDP-1","width":1920,"height":1080,"scale":1.0,"disabled":false,"mirrorOf":"none"},
+  {"name":"HDMI-A-1","width":1920,"height":1080,"scale":1.0,"disabled":false,"mirrorOf":"eDP-1"}
+]
+]])
+        local p_unmirror = assert(display.plan("extend-right", mirrored_mons))
+        assert_eq(p_unmirror.needs_reload, true, "exiting active mirror requires hyprctl reload")
+
+        -- 5 safety rules
+        assert_true(display.should_ignore_hotplug("kaze-share", { now = 100, started_at = 0 }))
+        assert_true(display.should_ignore_hotplug("HEADLESS-1", { now = 100, started_at = 0 }))
+        assert_true(display.should_ignore_hotplug("HDMI-A-1", { now = 100, started_at = 0, enabled = false }))
+        assert_true(display.should_ignore_hotplug("HDMI-A-1", { now = 100, started_at = 0, locked = true }))
+        assert_true(display.should_ignore_hotplug("HDMI-A-1", { now = 103, started_at = 100 }))
+        assert_true(display.should_ignore_hotplug("HDMI-A-1", { now = 110, started_at = 100, last_event_at = 109.5 }))
+        assert_true(not display.should_ignore_hotplug("HDMI-A-1", { now = 110, started_at = 100, last_event_at = 108 }))
+
+        assert_true(display.should_restore_dnd({ dnd_managed = true, dnd_was_active = false }))
+        assert_true(not display.should_restore_dnd({ dnd_managed = true, dnd_was_active = true }))
+        assert_true(not display.should_restore_dnd({ dnd_managed = false, dnd_was_active = false }))
+
+        local rec_ignored = display.plan_disconnect_recovery("kaze-share", mons, { external_monitor = "HDMI-A-1" })
+        assert_eq(rec_ignored.ignored, true)
+
+        local ext_only_mons = display.parse_monitors([[
+[
+  {"name":"eDP-1","width":1920,"height":1080,"scale":1.0,"disabled":true},
+  {"name":"HDMI-A-1","width":2560,"height":1440,"scale":1.0,"disabled":false}
+]
+]])
+        local rec_black = display.plan_disconnect_recovery("HDMI-A-1", ext_only_mons, {
+            mode = "external",
+            external_monitor = "HDMI-A-1",
+        })
+        assert_eq(rec_black.recover_internal, true)
+        assert_contains(rec_black.eval_cmds[1], 'output = "eDP-1"')
+        assert_contains(rec_black.eval_cmds[1], 'position = "0x0"')
+
+        -- CLI integration tests with stubs
+        local tmp = make_tmp_dir()
+        local ok_cli, err_cli = pcall(function()
+            local stub_bin = tmp .. "/bin"
+            local home, cfg, data, cache, runtime = tmp .. "/home", tmp .. "/cfg", tmp .. "/data", tmp .. "/cache", tmp .. "/runtime"
+            for _, d in ipairs({ stub_bin, home, cfg, data, cache, runtime }) do fs.mkdir_p(d) end
+            for _, b in ipairs({ "lua", "readlink", "nohup", "rm", "mkdir", "kill", "cat", "id", "install", "sleep" }) do
+                link_host_bin(stub_bin, b)
+            end
+            write_stub(stub_bin, "wl-mirror", [[
+printf '%s\n' "$*" >> "$HOME/wlmirror-calls"
+trap 'kill "${child:-0}" 2>/dev/null || true; exit 0' TERM
+sleep 30 &
+child=$!
+wait "$child"
+]])
+            write_stub(stub_bin, "notify-send", "exit 0")
+            write_stub(stub_bin, "loginctl", [[
+if [ "${2:-}" = "s1" ] && [ "${3:-}" = "-p" ] && [ "${4:-}" = "LockedHint" ]; then
+    printf '%s\n' "${TEST_LOCKED:-no}"
+fi
+]])
+            write_stub(stub_bin, "noctalia", [[
+if [ "$1" = "msg" ] && [ "$2" = "notification-dnd-status" ]; then
+    printf '%s\n' "${TEST_DND:-off}"
+    exit 0
+fi
+printf '%s\n' "$*" >> "$HOME/noc-calls"
+]])
+            write_stub(stub_bin, "hyprctl", [[
+if [ "$1" = "-j" ] && [ "$2" = "monitors" ]; then
+    cat "$HOME/mock-monitors.json"
+elif [ "$1" = "-j" ] && [ "$2" = "workspaces" ]; then
+    cat "$HOME/mock-workspaces.json"
+elif [ "$1" = "-j" ] && [ "$2" = "clients" ]; then
+    cat "$HOME/mock-clients.json"
+elif [ "$1" = "-j" ] && [ "$2" = "activewindow" ]; then
+    cat "$HOME/mock-activewindow.json"
+elif [ "$1" = "-j" ] && [ "$2" = "layers" ]; then
+    if [ -n "${TEST_LAYERS:-}" ]; then
+        printf '%s\n' "$TEST_LAYERS"
+    else
+        printf '{}\n'
+    fi
+else
+    printf '%s\n' "$*" >> "$HOME/hypr-calls"
+fi
+]])
+            fs.write_atomic(home .. "/mock-monitors.json", [[
+[
+  {"id":0,"name":"eDP-1","width":1920,"height":1080,"x":0,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":true,"mirrorOf":"none","activeWorkspace":{"id":1,"name":"1"}},
+  {"id":1,"name":"HDMI-A-1","width":2560,"height":1440,"x":1920,"y":0,"refreshRate":144.0,"scale":1.0,"disabled":false,"focused":false,"mirrorOf":"none","activeWorkspace":{"id":2,"name":"2"}}
+]
+]])
+            fs.write_atomic(home .. "/mock-workspaces.json", '[{"id":1,"name":"1","monitor":"eDP-1","windows":1},{"id":3,"name":"3","monitor":"eDP-1","windows":1}]')
+            fs.write_atomic(home .. "/mock-clients.json", '[{"address":"0xabc","class":"firefox","workspace":{"id":3}}]')
+            fs.write_atomic(home .. "/mock-activewindow.json", '{"address":"0xdef","monitor":0,"workspace":{"id":1}}')
+
+            local cli_env = string.format(
+                "HOME=%s XDG_CONFIG_HOME=%s XDG_DATA_HOME=%s XDG_CACHE_HOME=%s XDG_RUNTIME_DIR=%s XDG_SESSION_ID=s1 PATH=%s",
+                q(home), q(cfg), q(data), q(cache), q(runtime), q(stub_bin)
+            )
+            local kdisplay = q(repo_dir .. "/bin/kaze-display")
+
+            -- 1. --hotplug ignored silently when locked (loginctl or Noctalia lock layer), opens dmenu when unlocked
+            local _, lock_ok = read_all(cli_env .. " TEST_LOCKED=yes " .. kdisplay .. " --hotplug HDMI-A-1 2>&1")
+            assert_true(lock_ok, "--hotplug should exit 0 silently when locked")
+            assert_true(not fs.file_exists(home .. "/noc-calls"), "locked hotplug must not invoke noctalia dmenu")
+
+            local _, layer_lock_ok = read_all(cli_env .. ' TEST_LAYERS=\'{"eDP-1":{"levels":{"3":[{"namespace":"noctalia-lockscreen"}]}}}\' ' .. kdisplay .. " --hotplug HDMI-A-1 2>&1")
+            assert_true(layer_lock_ok, "--hotplug should exit 0 silently on Noctalia lock layer")
+            assert_true(not fs.file_exists(home .. "/noc-calls"), "lock-layer hotplug must not invoke noctalia dmenu")
+
+            local _, unlock_ok = read_all(cli_env .. " " .. kdisplay .. " --hotplug HDMI-A-1 2>&1")
+            assert_true(unlock_ok, "unlocked --hotplug with empty dmenu choice exits 0")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "dmenu -p Display >")
+            fs.write_atomic(home .. "/noc-calls", "")
+
+            -- 2. present + stop-present conditional DND restore
+            local p_out, p_ok = read_all(cli_env .. " TEST_DND=off " .. kdisplay .. " present 3 2>&1")
+            assert_true(p_ok, "present 3 failed: " .. p_out)
+            local noc_log = assert(fs.read_file(home .. "/noc-calls"))
+            assert_contains(noc_log, "msg bar-hide default HDMI-A-1\n")
+            assert_contains(noc_log, "msg notification-dnd-set on\n")
+            local hypr_log = assert(fs.read_file(home .. "/hypr-calls"))
+            assert_contains(hypr_log, 'workspace.move({ workspace = "3", monitor = "HDMI-A-1" })')
+            local st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
+            assert_eq(st.mode, "present")
+            assert_eq(st.dnd_managed, true)
+            assert_eq(st.dnd_was_active, false)
+
+            fs.write_atomic(home .. "/noc-calls", "")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " stop-present >/dev/null 2>&1"))
+            local stop_noc = assert(fs.read_file(home .. "/noc-calls"))
+            assert_contains(stop_noc, "msg bar-show default HDMI-A-1\n")
+            assert_contains(stop_noc, "msg notification-dnd-set off\n")
+
+            -- 3. present when user already had DND on must NOT disable DND on stop-present
+            fs.write_atomic(home .. "/noc-calls", "")
+            assert_true(os.execute(cli_env .. " TEST_DND=on " .. kdisplay .. " present 3 >/dev/null 2>&1"))
+            fs.write_atomic(home .. "/noc-calls", "")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " stop-present >/dev/null 2>&1"))
+            local keep_noc = assert(fs.read_file(home .. "/noc-calls"))
+            assert_true(not keep_noc:find("notification-dnd-set off", 1, true), "must preserve pre-existing user DND")
+
+            -- 4. virtual-share + toggle-preview + toggle-window-share + stop-virtual ordering
+            fs.write_atomic(home .. "/hypr-calls", "")
+            fs.write_atomic(home .. "/noc-calls", "")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " virtual-share 9 >/dev/null 2>&1"))
+            local vs_log = assert(fs.read_file(home .. "/hypr-calls"))
+            assert_contains(vs_log, "output create headless kaze-share\n")
+            local p_pin = assert(vs_log:find('output = "eDP-1"', 1, true))
+            local p_ks = assert(vs_log:find('output = "kaze-share"', 1, true))
+            assert_true(p_pin < p_ks, "primary must be pinned at 0x0 before configuring kaze-share")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg bar-hide default kaze-share\n")
+            local vs_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
+            assert_eq(vs_st.bar_hidden_monitors, nil, "virtual-share must not record kaze-share in bar_hidden_monitors")
+
+            fs.write_atomic(home .. "/mock-monitors.json", [[
+[
+  {"id":0,"name":"eDP-1","width":1920,"height":1080,"x":0,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":true,"activeWorkspace":{"id":1,"name":"1"}},
+  {"id":2,"name":"kaze-share","width":1920,"height":1080,"x":9999,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":false,"activeWorkspace":{"id":9,"name":"9"},"hardwareDetails":{"backend":"headless"}}
+]
+]])
+            fs.write_atomic(home .. "/mock-workspaces.json", '[{"id":1,"name":"1","monitor":"eDP-1","windows":1},{"id":9,"name":"9","monitor":"kaze-share","windows":1}]')
+            fs.write_atomic(home .. "/mock-clients.json", '[{"address":"0xshare1","class":"foot","monitor":2,"workspace":{"id":9}}]')
+
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " toggle-preview >/dev/null 2>&1"))
+            os.execute("sleep 0.05")
+            local prev_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
+            assert_true(type(prev_st.preview_pid) == "number" and prev_st.preview_pid > 0, "toggle-preview starts wl-mirror")
+            assert_contains(assert(fs.read_file(home .. "/wlmirror-calls")), "--title kaze-share-preview kaze-share\n")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " toggle-preview >/dev/null 2>&1"))
+            local closed_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
+            assert_eq(closed_st.preview_pid, nil, "second toggle-preview closes preview")
+
+            fs.write_atomic(home .. "/hypr-calls", "")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " toggle-window-share >/dev/null 2>&1"))
+            assert_contains(assert(fs.read_file(home .. "/hypr-calls")), 'window.move({ workspace = "9", silent = true })')
+
+            fs.write_atomic(home .. "/hypr-calls", "")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " stop-virtual >/dev/null 2>&1"))
+            local sv_log = assert(fs.read_file(home .. "/hypr-calls"))
+            local p_win_back = assert(sv_log:find("hl.get_windows()", 1, true))
+            local p_silent_move = assert(sv_log:find("silent = true", 1, true))
+            local p_ws_back = assert(sv_log:find('workspace.move({ workspace = "9", monitor = "eDP-1" })', 1, true))
+            local p_remove = assert(sv_log:find("output remove kaze-share", 1, true))
+            assert_true(p_win_back < p_remove and p_silent_move < p_remove and p_ws_back < p_remove, "windows and workspaces must move back before output remove")
+
+            -- 5. --on-disconnect recovers disabled eDP-1 and cleans up presentation + DND
+            fs.write_atomic(home .. "/mock-monitors.json", [[
+[
+  {"id":0,"name":"eDP-1","width":1920,"height":1080,"x":0,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":true,"mirrorOf":"none","activeWorkspace":{"id":1,"name":"1"}},
+  {"id":1,"name":"HDMI-A-1","width":2560,"height":1440,"x":1920,"y":0,"refreshRate":144.0,"scale":1.0,"disabled":false,"focused":false,"mirrorOf":"none","activeWorkspace":{"id":2,"name":"2"}}
+]
+]])
+            fs.write_atomic(home .. "/noc-calls", "")
+            assert_true(os.execute(cli_env .. " TEST_DND=off " .. kdisplay .. " present 3 >/dev/null 2>&1"))
+            fs.write_atomic(home .. "/mock-monitors.json", '[{"id":0,"name":"eDP-1","width":1920,"height":1080,"scale":1.0,"disabled":true}]')
+            fs.write_atomic(home .. "/hypr-calls", "")
+            fs.write_atomic(home .. "/noc-calls", "")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " --on-disconnect HDMI-A-1 >/dev/null 2>&1"))
+            local disc_hypr = assert(fs.read_file(home .. "/hypr-calls"))
+            assert_contains(disc_hypr, 'output = "eDP-1"')
+            assert_contains(disc_hypr, 'position = "0x0"')
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg notification-dnd-set off\n")
+
+            -- 6. cleanup clears display-state.json and tears down active virtual-share
+            fs.write_atomic(home .. "/mock-monitors.json", [[
+[
+  {"id":0,"name":"eDP-1","width":1920,"height":1080,"x":0,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":true,"activeWorkspace":{"id":1,"name":"1"}},
+  {"id":2,"name":"kaze-share","width":1920,"height":1080,"x":9999,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":false,"activeWorkspace":{"id":9,"name":"9"},"hardwareDetails":{"backend":"headless"}}
+]
+]])
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " virtual-share 9 >/dev/null 2>&1"))
+            assert_true(fs.file_exists(runtime .. "/kaze/display-state.json"))
+            fs.write_atomic(home .. "/hypr-calls", "")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " cleanup >/dev/null 2>&1"))
+            assert_true(not fs.file_exists(runtime .. "/kaze/display-state.json"), "cleanup must remove state file")
+            assert_contains(assert(fs.read_file(home .. "/hypr-calls")), "output remove kaze-share\n")
+        end)
+        rm_rf(tmp)
+        if not ok_cli then error(err_cli, 0) end
+
+        -- Hyprland execs.lua hotplug & disconnect event handler test
+        local hooks, execs = {}, {}
+        local fake_now = 1000
+        local prev_hl, prev_ctx, prev_time = rawget(_G, "hl"), package.loaded["kaze._ctx"], os.time
+        local ok_exec, err_exec = pcall(function()
+            os.time = function() return fake_now end
+            package.loaded["kaze._ctx"] = { cfg = { cursor_theme = "Adwaita", cursor_size = 24, display_hotplug_menu = true } }
+            rawset(_G, "hl", {
+                on = function(ev, fn) hooks[ev] = fn end,
+                exec_cmd = function(cmd) execs[#execs + 1] = cmd end,
+            })
+            dofile(repo_dir .. "/hypr/execs.lua")
+            hooks["hyprland.start"]()
+            assert_eq(#execs, 1)
+
+            hooks["monitor.added"]({ name = "kaze-share" })
+            hooks["monitor.added"]({ name = "HDMI-A-1" }) -- < 5s startup grace
+            assert_eq(#execs, 1)
+
+            fake_now = 1006
+            hooks["monitor.added"]({ name = "HDMI-A-1" })
+            assert_eq(#execs, 2)
+            assert_contains(execs[2], "kaze-display' --hotplug 'HDMI-A-1'")
+
+            hooks["monitor.added"]({ name = "DP-1" }) -- < 1s debounce
+            assert_eq(#execs, 2)
+
+            hooks["monitor.removed"]({ name = "kaze-share" })
+            assert_eq(#execs, 2)
+            hooks["monitor.removed"]({ name = "HDMI-A-1" })
+            assert_eq(#execs, 3)
+            assert_contains(execs[3], "kaze-display' --on-disconnect 'HDMI-A-1'")
+        end)
+        os.time = prev_time
+        rawset(_G, "hl", prev_hl)
+        package.loaded["kaze._ctx"] = prev_ctx
+        if not ok_exec then error(err_exec, 0) end
     end)
 end
 

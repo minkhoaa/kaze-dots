@@ -16,6 +16,7 @@ local DEFAULTS = {
     kb_layout = "us",
     accel_profile = "flat",
     workspace_swipe = true,
+    display_hotplug_menu = true,
     smart_gaps = false,
     fcitx5 = nil,
     gaps_in = 4,

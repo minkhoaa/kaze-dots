@@ -4,6 +4,7 @@ set -euo pipefail
 VMDIR="${KAZE_VM_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/shell-bench-vm}"
 HEADLESS=false
 QMP=false
+DUAL_MONITOR=false
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -15,6 +16,10 @@ while [ "$#" -gt 0 ]; do
             QMP=true
             shift
             ;;
+        --dual-monitor)
+            DUAL_MONITOR=true
+            shift
+            ;;
         --vm-dir)
             if [ "$#" -lt 2 ]; then
                 echo "launch-vm.sh: --vm-dir requires a path" >&2
@@ -24,8 +29,8 @@ while [ "$#" -gt 0 ]; do
             shift 2
             ;;
         -h|--help)
-            echo "Usage: $0 [--headless] [--vm-dir <path>] [--qmp]"
-            echo "Launches the isolated Arch KVM VM pinned to Intel iGPU (no seed.iso, single virtio-vga-gl 1920x1080)."
+            echo "Usage: $0 [--headless] [--dual-monitor] [--vm-dir <path>] [--qmp]"
+            echo "Launches the isolated Arch KVM VM pinned to Intel iGPU (no seed.iso, virtio-vga-gl 1920x1080)."
             exit 0
             ;;
         *)
@@ -85,6 +90,11 @@ if [ -d "$VMDIR/share" ]; then
     SHARE_ARGS=(-virtfs "local,path=$VMDIR/share,mount_tag=hostshare,security_model=mapped-xattr,readonly=on")
 fi
 
+VGA_SPEC="virtio-vga-gl,xres=1920,yres=1080"
+if [ "$DUAL_MONITOR" = true ]; then
+    VGA_SPEC="virtio-vga-gl,xres=1920,yres=1080,max_outputs=2"
+fi
+
 QEMU_ARGS=(
     -name shell-bench-vm
     -machine q35,accel=kvm
@@ -96,7 +106,7 @@ QEMU_ARGS=(
     -drive file="$VMDIR/arch-bench.qcow2",if=none,id=hd0,format=qcow2,discard=unmap
     -device virtio-blk-pci,drive=hd0,bootindex=1
     -vga none
-    -device virtio-vga-gl,xres=1920,yres=1080
+    -device "$VGA_SPEC"
     "${DISPLAY_ARGS[@]}"
     -device qemu-xhci
     -device usb-tablet

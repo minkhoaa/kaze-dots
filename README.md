@@ -52,7 +52,7 @@ Install packages, set Zsh as default login shell, and apply configs (backs up ex
 
 ```sh
 ./scripts/install.sh --profile minimal   # core setup (24 packages)
-./scripts/install.sh --profile full      # adds recording, color picker, yazi, imv, zathura, fcitx5, starship, and CLI tools
+./scripts/install.sh --profile full      # adds recording, color picker, wl-mirror, yazi, imv, zathura, fcitx5, starship, and CLI tools
 ```
 
 Apply dotfiles only (if packages are already installed):
@@ -87,7 +87,8 @@ Press `Super + /` anytime to search the full list (`kaze-keys`).
 | `Super + Shift + W` | Wallpaper picker |
 | `Super + V` | Clipboard history |
 | `Super + /` | Search keybinds |
-| `Super + Shift + P` | Display layout menu |
+| `Super + Shift + P` | Display / Present / Virtual Share menu |
+| `Super + Alt + P` | Push/pull focused window to `kaze-share` |
 | `Ctrl + Shift + Esc` | Floating `btop` |
 | `Print` / `Super + Shift + S` / `Super + Shift + Alt + S` | Full / Region / Annotate screenshot |
 | `Super + Shift + C` | Pick color (`hyprpicker`) |

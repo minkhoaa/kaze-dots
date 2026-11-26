@@ -352,6 +352,9 @@ test("rules: Noctalia layer no_anim, Settings float, smart_gaps, and TUI drawer 
     for _, r in ipairs(wins) do if r.name then by_name[r.name] = r end end
     assert_true(by_name["noctalia-settings"] ~= nil and by_name["noctalia-settings"].float == true)
     assert_true(by_name["kaze-tui-drawer"] ~= nil and by_name["kaze-tui-drawer"].float == true)
+    assert_true(by_name["kaze-share-preview"] ~= nil and by_name["kaze-share-preview"].float == true and by_name["kaze-share-preview"].pin == true)
+    assert_eq(by_name["kaze-share-preview"].keep_aspect_ratio, true)
+    assert_eq(by_name["kaze-share-preview"].match.class, "^at\\.yrlf\\.wl_mirror$")
     assert_eq(by_name["state-border-pinned"].border_color, "rgb(f7768e)")
     assert_eq(by_name["state-border-fullscreen"].border_color, "rgb(9ece6a)")
     assert_true(#ws_rules >= 3, "smart_gaps + special workspace rules")

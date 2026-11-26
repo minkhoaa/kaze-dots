@@ -166,6 +166,14 @@ function M.build(cfg)
         },
         {
             group = "System",
+            chord = "SUPER + ALT + P",
+            display = "Super + Alt + P",
+            desc = "Push/pull window to Virtual Share",
+            kind = "exec",
+            cmd = "kaze-display toggle-window-share",
+        },
+        {
+            group = "System",
             chord = "CTRL + SUPER + ALT + R",
             display = "Ctrl + Super + Alt + R",
             desc = "Reload Noctalia and Hyprland",

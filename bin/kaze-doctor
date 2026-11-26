@@ -114,6 +114,7 @@ local FULL_EXTRA_BINS = {
     "slurp", "wf-recorder", "ffprobe", "hyprpicker",
     "yazi", "imv", "zathura", "gnome-keyring-daemon", "fcitx5",
     "fzf", "zoxide", "eza", "bat", "rg", "fd", "starship",
+    "wl-mirror",
 }
 
 local missing_minimal = {}
