@@ -31,7 +31,7 @@ SESSION = PORTALS | {
 SESSION_COMMS = PORTAL_COMMS | {"fcitx5", "at-spi-bus-laun", "at-spi2-registr", "gvfsd", "gvfsd-fuse"}
 UNIT_STARTING = "7d4958e842da4a758f6c1cdc7b36dcc5"  # systemd SD_MESSAGE_UNIT_STARTING
 OUTSIDE = {
-    "Hyprland", "Xwayland", "pipewire", "pipewire-pulse", "wireplumber",
+    "Hyprland", "start-hyprland", "Xwayland", "pipewire", "pipewire-pulse", "wireplumber",
     "systemd", "(sd-pam)", "dbus-broker", "dbus-broker-lau", "sshd-session", "sshd-auth",
 }
 BUDGET_GROUPS = {"shell", "session"}
