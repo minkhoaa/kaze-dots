@@ -34,3 +34,12 @@ hl.env("TERMINAL", cfg.terminal)
 if cfg.fcitx5 == true or (cfg.fcitx5 ~= false and cfg.profile == "full") then
     hl.env("XMODIFIERS", "@im=fcitx")
 end
+
+if type(cfg.drm_devices) == "string" and cfg.drm_devices ~= "" then
+    hl.env("AQ_DRM_DEVICES", cfg.drm_devices)
+end
+
+if cfg.prefer_mesa_egl == true then
+    hl.env("__EGL_VENDOR_LIBRARY_FILENAMES", "/usr/share/glvnd/egl_vendor.d/50_mesa.json")
+end
+

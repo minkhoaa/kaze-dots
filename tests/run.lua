@@ -211,6 +211,9 @@ test("native configs: config/noctalia/config.toml and config/foot/foot.ini valid
             assert_true(ok_zsh == true or ok_zsh == 0, "zsh -n must pass on " .. zf)
         end
     end
+    local xdph_src = assert(fs.read_file(repo_dir .. "/config/hypr/xdph.conf"))
+    assert_contains(xdph_src, "max_fps = 60\n", "xdph.conf caps screencopy framerate at 60 FPS")
+    assert_contains(xdph_src, "allow_token_by_default = true\n", "xdph.conf enables restore tokens by default")
     rm_rf(tmp)
 end)
 
@@ -263,6 +266,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
 
         local manifest = assert(fs.read_file(second .. "/installed.list"))
         assert_contains(manifest, tmp .. "/.local/bin/kaze-session\n")
+        assert_contains(manifest, cfg .. "/hypr/xdph.conf\n")
         assert_contains(manifest, cfg .. "/systemd/user/kaze-noctalia.service\n")
         assert_contains(manifest, cfg .. "/foot/foot.ini\n")
         assert_contains(manifest, cfg .. "/starship.toml\n")
@@ -325,6 +329,13 @@ exit "${CLIENT_STATUS:-0}"
         assert_contains(env_text, 'XCURSOR_THEME="Adwaita"\n')
         assert_contains(env_text, 'KAZE_PROFILE="minimal"\n')
         assert_contains(env_text, 'KAZE_ENABLE_FCITX5="0"\n')
+
+        local hybrid_cfg = hypr_user.defaults()
+        hybrid_cfg.drm_devices = "/dev/dri/card1"
+        hybrid_cfg.prefer_mesa_egl = true
+        local hybrid_env = session.render_environment(hybrid_cfg)
+        assert_contains(hybrid_env, 'AQ_DRM_DEVICES="/dev/dri/card1"\n')
+        assert_contains(hybrid_env, '__EGL_VENDOR_LIBRARY_FILENAMES="/usr/share/glvnd/egl_vendor.d/50_mesa.json"\n')
     end)
 end)
 

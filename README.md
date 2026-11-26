@@ -87,8 +87,9 @@ Press `Super + /` anytime to search the full list (`kaze-keys`).
 | `Super + Shift + W` | Wallpaper picker |
 | `Super + V` | Clipboard history |
 | `Super + /` | Search keybinds |
-| `Super + Shift + P` | Display / Present / Virtual Share menu |
-| `Super + Alt + P` | Push/pull focused window to `kaze-share` |
+| `Super + Shift + P` | Display / Present Workspace / Virtual Share (Meet/Discord 1080p) menu |
+| `Ctrl + Super + P` | Toggle control presented workspace on laptop |
+| `Super + Alt + P` | Push/pull focused window to shared workspace |
 | `Ctrl + Shift + Esc` | Floating `btop` |
 | `Print` / `Super + Shift + S` / `Super + Shift + Alt + S` | Full / Region / Annotate screenshot |
 | `Super + Shift + C` | Pick color (`hyprpicker`) |

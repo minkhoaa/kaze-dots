@@ -13,6 +13,9 @@ return {
     -- files = "yazi",
     -- smart_gaps = false,
     -- display_hotplug_menu = true,
+    -- Hybrid Intel/AMD + NVIDIA laptops running Hyprland on iGPU:
+    -- drm_devices = "/dev/dri/card1",
+    -- prefer_mesa_egl = true, -- prevents Chrome WebRTC EglDmaBuf from probing NVIDIA EGL
     -- fcitx5 = false,
     -- monitors = {
     --     { output = "eDP-1", mode = "1920x1080@60", position = "0x0", scale = 1 },

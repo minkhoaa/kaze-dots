@@ -57,6 +57,12 @@ function M.render_environment(cfg, previous)
     if enable_fcitx5 == "1" then
         tail[#tail + 1] = entry("XMODIFIERS", "@im=fcitx")
     end
+    if type(cfg.drm_devices) == "string" and cfg.drm_devices ~= "" then
+        tail[#tail + 1] = entry("AQ_DRM_DEVICES", cfg.drm_devices)
+    end
+    if cfg.prefer_mesa_egl == true then
+        tail[#tail + 1] = entry("__EGL_VENDOR_LIBRARY_FILENAMES", "/usr/share/glvnd/egl_vendor.d/50_mesa.json")
+    end
     return base .. table.concat(tail)
 end
 

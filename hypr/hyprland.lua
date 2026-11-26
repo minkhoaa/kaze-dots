@@ -55,6 +55,9 @@ if type(monitors) == "table" and #monitors > 0 then
         }
         if mon.disabled == true then
             spec.disabled = true
+        else
+            spec.disabled = false
+            spec.mirror = ""
         end
         for _, k in ipairs({ "mirror", "bitdepth", "transform", "vrr", "cm", "sdrbrightness", "sdrsaturation", "reserved", "reserved_area" }) do
             if mon[k] ~= nil then
@@ -77,6 +80,16 @@ require("core")
 require("rules")
 require("execs")
 require("keybinds")
+
+local xdg_runtime = os.getenv("XDG_RUNTIME_DIR")
+if xdg_runtime and xdg_runtime:sub(1, 1) == "/" then
+    local rt_monitors = xdg_runtime .. "/kaze/monitors.lua"
+    local f = io.open(rt_monitors, "r")
+    if f then
+        f:close()
+        pcall(dofile, rt_monitors)
+    end
+end
 
 -- Apply Noctalia built-in Hyprland color template when present.
 -- Keeping require("noctalia") here ensures Noctalia's template apply script

@@ -90,8 +90,10 @@ if [ -d "$VMDIR/share" ]; then
     SHARE_ARGS=(-virtfs "local,path=$VMDIR/share,mount_tag=hostshare,security_model=mapped-xattr,readonly=on")
 fi
 
+SMP_CORES=4
 VGA_SPEC="virtio-vga-gl,xres=1920,yres=1080"
 if [ "$DUAL_MONITOR" = true ]; then
+    SMP_CORES=6
     VGA_SPEC="virtio-vga-gl,xres=1920,yres=1080,max_outputs=2"
 fi
 
@@ -99,7 +101,7 @@ QEMU_ARGS=(
     -name shell-bench-vm
     -machine q35,accel=kvm
     -cpu host
-    -smp 4
+    -smp "$SMP_CORES"
     -m 6144
     -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd
     -drive if=pflash,format=raw,file="$VMDIR/OVMF_VARS.fd"
@@ -130,5 +132,8 @@ if [ "$HEADLESS" = true ]; then
 else
     echo "Launching shell-bench-vm (Intel iGPU VirGL 3D, 1920x1080)..."
     echo "Tip: Press Ctrl+Alt+G to capture/release SUPER keys inside the QEMU window."
+    if [ "$DUAL_MONITOR" = true ]; then
+        echo "Tip: Run ./scripts/watch-vm-monitor.sh in another host terminal to plug HDMI (Virtual-2) and view it live."
+    fi
     exec qemu-system-x86_64 "${QEMU_ARGS[@]}"
 fi

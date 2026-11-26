@@ -51,15 +51,17 @@ Commands:
   extend-up                  Extend external monitor above primary
   mirror                     Native Hyprland mirror
   mirror-scaled              Extend + fullscreen wl-mirror on external monitor
-  external                   External monitor only
-  internal                   Internal monitor only
+  stop-mirror                Stop mirror and return to extended layout
+  external                   External monitor only (disable laptop screen)
+  internal                   Laptop monitor only (disable external screen)
   auto                       Reset physical monitors to auto
   present [ws_id]            Present workspace on external monitor (hides bar, sets DND)
+  toggle-control             Mirror presented workspace on laptop for direct control
   stop-present               Stop presentation and restore bar/DND
   virtual-share [ws_id]      Create 1080p kaze-share headless output at 9999x0
   switch-share [ws_id]       Switch workspace shown on kaze-share
-  toggle-preview             Toggle floating wl-mirror preview of kaze-share
-  toggle-window-share        Push/pull focused window to/from kaze-share
+  toggle-preview             Toggle floating wl-mirror preview of kaze-share / present
+  toggle-window-share        Push/pull focused window to/from shared workspace
   stop-virtual               Move windows back and remove kaze-share
   cleanup                    Full safe teardown on session logout
   -h, --help                 Show this help message
@@ -91,6 +93,63 @@ local function state_file_path()
     return rdir .. "/display-state.json"
 end
 
+local function monitors_lua_path()
+    local rdir = fs.private_runtime_dir()
+    if not rdir then
+        return nil
+    end
+    return rdir .. "/monitors.lua"
+end
+
+local function save_runtime_monitors(cmds, state)
+    local path = monitors_lua_path()
+    if not path then return end
+    local lines = {}
+    local has_share = false
+    for _, expr in ipairs(cmds or {}) do
+        lines[#lines + 1] = expr
+        if expr:find('output = "kaze-share"', 1, true) then
+            has_share = true
+        end
+    end
+    if type(state) == "table" and state.virtual_monitor == "kaze-share" and not has_share then
+        lines[#lines + 1] = 'hl.monitor({ output = "kaze-share", mode = "1920x1080@60", position = "9999x0", scale = 1, disabled = false, mirror = "" })'
+    end
+    if #lines == 0 then
+        os.remove(path)
+        return
+    end
+    pcall(fs.write_atomic, path, table.concat(lines, "\n") .. "\n")
+end
+
+local function clear_runtime_monitors(keep_virtual_share)
+    local path = monitors_lua_path()
+    if not path then return end
+    if keep_virtual_share then
+        pcall(fs.write_atomic, path, 'hl.monitor({ output = "kaze-share", mode = "1920x1080@60", position = "9999x0", scale = 1, disabled = false, mirror = "" })\n')
+    else
+        os.remove(path)
+    end
+end
+
+local function strip_virtual_share_runtime_monitor()
+    local path = monitors_lua_path()
+    if not path then return end
+    local raw = fs.read_file(path)
+    if not raw then return end
+    local kept = {}
+    for line in raw:gmatch("[^\n]+") do
+        if not line:find('output = "kaze-share"', 1, true) then
+            kept[#kept + 1] = line
+        end
+    end
+    if #kept == 0 then
+        os.remove(path)
+    else
+        pcall(fs.write_atomic, path, table.concat(kept, "\n") .. "\n")
+    end
+end
+
 local function load_state()
     local path = state_file_path()
     if not path then return {} end
@@ -103,10 +162,76 @@ local function load_state()
     return {}
 end
 
+local function is_persistent_workspace_id(ws_id, cfg)
+    local n = tonumber(ws_id)
+    if not n or n < 1 or math.floor(n) ~= n then
+        return false
+    end
+    local persist_count = tonumber(cfg and cfg.persistent_workspaces)
+    if persist_count == nil then
+        persist_count = 5
+    end
+    return n <= math.floor(persist_count)
+end
+
+local function format_edge_rule_lines(ws_id, rule_name, target_mon, cfg)
+    if ws_id == nil or tostring(ws_id) == "" then return {} end
+    local ws_str = tostring(ws_id)
+    local persist_part = is_persistent_workspace_id(ws_id, cfg) and ", persistent = true" or ""
+    local lines = {}
+    if type(target_mon) == "string" and target_mon ~= "" then
+        lines[#lines + 1] = string.format(
+            "do local r = hl.workspace_rule({ workspace = %q, monitor = %q, gaps_out = 0, gaps_in = 0%s }); if r and r.set_enabled then r:set_enabled(true) end end",
+            ws_str, target_mon, persist_part
+        )
+    else
+        lines[#lines + 1] = string.format(
+            "do local r = hl.workspace_rule({ workspace = %q, gaps_out = 0, gaps_in = 0%s }); if r and r.set_enabled then r:set_enabled(true) end end",
+            ws_str, persist_part
+        )
+    end
+    lines[#lines + 1] = string.format(
+        "hl.window_rule({ name = %q, match = { workspace = %q }, border_size = 0, rounding = 0, enabled = true })",
+        rule_name, ws_str
+    )
+    return lines
+end
+
+local function sync_runtime_edge_rules(state)
+    local path = monitors_lua_path()
+    if not path then return end
+    local raw = fs.read_file(path) or ""
+    local kept = {}
+    for line in raw:gmatch("[^\n]+") do
+        if line:find("^hl%.monitor%(") then
+            kept[#kept + 1] = line
+        end
+    end
+    if type(state) == "table" then
+        local cfg = hypr_user.load()
+        if state.mode == "present" and not state.control_on_laptop and state.present_workspace and state.external_monitor then
+            for _, l in ipairs(format_edge_rule_lines(state.present_workspace, "kaze-present-edge", state.external_monitor, cfg)) do
+                kept[#kept + 1] = l
+            end
+        end
+        if state.virtual_monitor == "kaze-share" and state.virtual_workspace then
+            for _, l in ipairs(format_edge_rule_lines(state.virtual_workspace, "kaze-share-edge", "kaze-share", cfg)) do
+                kept[#kept + 1] = l
+            end
+        end
+    end
+    if #kept == 0 then
+        os.remove(path)
+    else
+        pcall(fs.write_atomic, path, table.concat(kept, "\n") .. "\n")
+    end
+end
+
 local function save_state(state)
     local path = state_file_path()
     if not path then return end
     pcall(fs.write_atomic, path, json.encode(state))
+    sync_runtime_edge_rules(state)
 end
 
 local function clear_state()
@@ -114,6 +239,7 @@ local function clear_state()
     if path then
         os.remove(path)
     end
+    clear_runtime_monitors(false)
 end
 
 local function hypr_eval(expr)
@@ -121,9 +247,179 @@ local function hypr_eval(expr)
     return ok == true or ok == 0
 end
 
-local function apply_plan(plan)
+local function disable_window_rule(rule_name)
+    if type(rule_name) ~= "string" or rule_name == "" then
+        return
+    end
+    hypr_eval(string.format("hl.window_rule({ name = %q, enabled = false })", rule_name))
+end
+
+local function set_edge_to_edge_workspace(ws_id, rule_name, target_mon)
+    if ws_id == nil or tostring(ws_id) == "" then return end
+    local cfg = hypr_user.load()
+    local ws_str = tostring(ws_id)
+    local persist_part = is_persistent_workspace_id(ws_id, cfg) and ", persistent = true" or ""
+    if type(target_mon) == "string" and target_mon ~= "" then
+        hypr_eval(string.format(
+            "local r = hl.workspace_rule({ workspace = %q, monitor = %q, gaps_out = 0, gaps_in = 0%s }); if r and r.set_enabled then r:set_enabled(true) end",
+            ws_str, target_mon, persist_part
+        ))
+    else
+        hypr_eval(string.format(
+            "local r = hl.workspace_rule({ workspace = %q, gaps_out = 0, gaps_in = 0%s }); if r and r.set_enabled then r:set_enabled(true) end",
+            ws_str, persist_part
+        ))
+    end
+    hypr_eval(string.format(
+        'hl.window_rule({ name = %q, match = { workspace = %q }, border_size = 0, rounding = 0, enabled = true })',
+        rule_name, ws_str
+    ))
+end
+
+-- Disables the temporary per-workspace rule via :set_enabled(false) so smart_gaps (w[tv1])
+-- is never overridden and the workspace is never permanently pinned to a single monitor,
+-- while re-preserving persistent = true for workspaces 1..persistent_workspaces.
+local function restore_workspace_edges(ws_id, rule_name)
+    if ws_id == nil or tostring(ws_id) == "" then return end
+    local cfg = hypr_user.load()
+    local ws_str = tostring(ws_id)
+    if is_persistent_workspace_id(ws_id, cfg) then
+        hypr_eval(string.format(
+            "local r = hl.workspace_rule({ workspace = %q }); if r and r.set_enabled then r:set_enabled(false) end; hl.workspace_rule({ workspace = %q, persistent = true })",
+            ws_str, ws_str
+        ))
+    else
+        hypr_eval(string.format(
+            "local r = hl.workspace_rule({ workspace = %q }); if r and r.set_enabled then r:set_enabled(false) end",
+            ws_str
+        ))
+    end
+    disable_window_rule(rule_name)
+end
+
+local function get_monitors()
+    local raw = fs.capture("hyprctl -j monitors all 2>/dev/null")
+    return display.parse_monitors(raw or "")
+end
+
+local function get_workspaces_and_clients()
+    local ws_raw = fs.capture("hyprctl -j workspaces 2>/dev/null") or "[]"
+    local clients_raw = fs.capture("hyprctl -j clients 2>/dev/null") or "[]"
+    return display.parse_workspaces(ws_raw, clients_raw), ws_raw, clients_raw
+end
+
+local function build_occupied_workspaces(workspaces, extra_ids)
+    local occupied = {}
+    for _, w in ipairs(workspaces or {}) do
+        occupied[#occupied + 1] = w
+    end
+    if type(extra_ids) == "table" then
+        for _, id in pairs(extra_ids) do
+            local n = tonumber(id)
+            if n and n > 0 then
+                occupied[#occupied + 1] = { id = n }
+            end
+        end
+    end
+    return occupied
+end
+
+local function find_monitor_by_name(monitors, name)
+    for _, m in ipairs(monitors or {}) do
+        if m.name == name then
+            return m
+        end
+    end
+    return nil
+end
+
+local function move_workspace_to_monitor(ws_id, target_mon, primary_mon, existing_workspaces)
+    local ws_str = tostring(ws_id)
+    local exists = false
+    for _, w in ipairs(existing_workspaces or {}) do
+        if w.id == tonumber(ws_id) then
+            exists = true
+            break
+        end
+    end
+    if exists then
+        hypr_eval(string.format("hl.dispatch(hl.dsp.workspace.move({ workspace = %q, monitor = %q }))", ws_str, target_mon))
+    end
+    local primary_name = primary_mon and primary_mon.name or target_mon
+    hypr_eval(string.format(
+        "hl.dispatch(hl.dsp.focus({ monitor = %q })); hl.dispatch(hl.dsp.focus({ workspace = %q })); hl.dispatch(hl.dsp.focus({ monitor = %q }))",
+        target_mon, ws_str, primary_name
+    ))
+end
+
+local function evacuate_workspace_to_primary(ws_id, rule_name, from_mon_name, primary_mon, existing_workspaces)
+    if ws_id == nil or tostring(ws_id) == "" then return end
+    restore_workspace_edges(ws_id, rule_name)
+    if not primary_mon or not primary_mon.name or primary_mon.name == "" then
+        return
+    end
+    local ws_num = tonumber(ws_id)
+    local ws_str = tostring(ws_id)
+    local wss = existing_workspaces or get_workspaces_and_clients()
+    for _, w in ipairs(wss) do
+        if w.id == ws_num and (from_mon_name == nil or w.monitor == from_mon_name) and w.monitor ~= primary_mon.name then
+            hypr_eval(string.format(
+                "hl.dispatch(hl.dsp.workspace.move({ workspace = %q, monitor = %q }))",
+                ws_str, primary_mon.name
+            ))
+            break
+        end
+    end
+end
+
+local function ensure_dpms_awake(mon_list)
+    for _, m in ipairs(mon_list or {}) do
+        if not m.virtual and not m.disabled and m.dpms == false then
+            hypr_eval('hl.dispatch(hl.dsp.dpms("on"))')
+            return
+        end
+    end
+end
+
+local function wait_for_monitor_awake(mon_name, max_polls)
+    if type(mon_name) ~= "string" or mon_name == "" then
+        return false
+    end
+    for _ = 1, (max_polls or 6) do
+        os.execute("sleep 0.1")
+        local m = find_monitor_by_name(get_monitors(), mon_name)
+        if m and not m.disabled then
+            return true
+        end
+    end
+    return false
+end
+
+local function reapply_virtual_share_after_reload(state, primary_mon)
+    if type(state) ~= "table" or state.virtual_monitor ~= "kaze-share" then
+        return
+    end
+    hypr_eval('hl.monitor({ output = "kaze-share", mode = "1920x1080@60", position = "9999x0", scale = 1, disabled = false, mirror = "" })')
+    if cmd_exists("noctalia") then
+        os.execute("noctalia msg bar-hide default kaze-share >/dev/null 2>&1 || true")
+    end
+    if state.virtual_workspace then
+        set_edge_to_edge_workspace(state.virtual_workspace, "kaze-share-edge", "kaze-share")
+        local existing_ws = get_workspaces_and_clients()
+        move_workspace_to_monitor(state.virtual_workspace, "kaze-share", primary_mon, existing_ws)
+    end
+end
+
+local function apply_plan(plan, state, primary_mon, persist_mode, cur_monitors)
+    if persist_mode == "auto" then
+        clear_runtime_monitors(type(state) == "table" and state.virtual_monitor == "kaze-share")
+    else
+        save_runtime_monitors(plan.eval_cmds, state)
+    end
+    ensure_dpms_awake(cur_monitors)
     if plan.needs_reload then
         os.execute("hyprctl reload >/dev/null 2>&1")
+        os.execute("sleep 0.15")
     end
     for _, expr in ipairs(plan.eval_cmds or {}) do
         if not hypr_eval(expr) then
@@ -132,10 +428,14 @@ local function apply_plan(plan)
             return false
         end
     end
+    if plan.needs_reload then
+        os.execute("sleep 0.25")
+        reapply_virtual_share_after_reload(state, primary_mon)
+    end
     return true
 end
 
-local function stop_wl_mirror_pid(pid)
+local function is_pid_running(pid, expected_comm)
     local n = tonumber(pid)
     if not n or n <= 0 or math.floor(n) ~= n then
         return false
@@ -144,10 +444,14 @@ local function stop_wl_mirror_pid(pid)
     if not comm then
         return false
     end
-    if comm:gsub("%s+$", "") ~= "wl-mirror" then
+    return comm:gsub("%s+$", "") == expected_comm
+end
+
+local function stop_verified_pid(pid, expected_comm)
+    if not is_pid_running(pid, expected_comm) then
         return false
     end
-    os.execute(string.format("kill -TERM %d >/dev/null 2>&1 || true", n))
+    os.execute(string.format("kill -TERM %d >/dev/null 2>&1 || true", tonumber(pid)))
     return true
 end
 
@@ -245,6 +549,15 @@ local function has_lock_layer(tbl)
 end
 
 local function is_screen_locked()
+    if cmd_exists("hyprctl") then
+        local locked_raw = fs.capture("hyprctl -j locked 2>/dev/null")
+        if locked_raw and locked_raw:find("%S") then
+            local ok, obj = pcall(json.decode, locked_raw)
+            if ok and type(obj) == "table" and obj.locked == true then
+                return true
+            end
+        end
+    end
     if cmd_exists("loginctl") then
         local sid = os.getenv("XDG_SESSION_ID")
         if not sid or not sid:match("^[%w_-]+$") then
@@ -270,62 +583,22 @@ local function is_screen_locked()
     return false
 end
 
-local function get_monitors()
-    local raw = fs.capture("hyprctl -j monitors all 2>/dev/null")
-    return display.parse_monitors(raw or "")
-end
-
-local function get_workspaces_and_clients()
-    local ws_raw = fs.capture("hyprctl -j workspaces 2>/dev/null") or "[]"
-    local clients_raw = fs.capture("hyprctl -j clients 2>/dev/null") or "[]"
-    return display.parse_workspaces(ws_raw, clients_raw), ws_raw, clients_raw
-end
-
-local function find_monitor_by_name(monitors, name)
-    for _, m in ipairs(monitors or {}) do
-        if m.name == name then
-            return m
-        end
-    end
-    return nil
-end
-
-local function move_workspace_to_monitor(ws_id, target_mon, primary_mon, existing_workspaces)
-    local ws_str = tostring(ws_id)
-    local exists = false
-    for _, w in ipairs(existing_workspaces or {}) do
-        if w.id == tonumber(ws_id) then
-            exists = true
-            break
-        end
-    end
-    if exists then
-        hypr_eval(string.format("hl.dispatch(hl.dsp.workspace.move({ workspace = %q, monitor = %q }))", ws_str, target_mon))
-    else
-        hypr_eval(string.format("hl.workspace_rule({ workspace = %q, monitor = %q })", ws_str, target_mon))
-    end
-    local primary_name = primary_mon and primary_mon.name or target_mon
-    hypr_eval(string.format(
-        "hl.dispatch(hl.dsp.focus({ monitor = %q })); hl.dispatch(hl.dsp.focus({ workspace = %q })); hl.dispatch(hl.dsp.focus({ monitor = %q }))",
-        target_mon, ws_str, primary_name
-    ))
-end
-
-local function pick_workspace_via_dmenu(prompt_text)
+local function pick_workspace_via_dmenu(prompt_text, current_ws_id, extra_reserved_ids)
     local workspaces = get_workspaces_and_clients()
-    local clean_id = display.pick_clean_workspace_id(workspaces)
-    local entries = {
-        {
-            label = string.format("󰐕  New clean workspace (WS %d)", clean_id),
-            ws_id = clean_id,
-        },
-    }
-    for _, w in ipairs(workspaces) do
+    local ordered = display.order_workspaces_for_picker(workspaces, current_ws_id)
+    local occupied = build_occupied_workspaces(workspaces, extra_reserved_ids)
+    local clean_id = display.pick_clean_workspace_id(occupied)
+    local entries = {}
+    for _, w in ipairs(ordered) do
         entries[#entries + 1] = {
-            label = display.format_workspace_entry(w),
+            label = display.format_workspace_entry(w, current_ws_id),
             ws_id = w.id,
         }
     end
+    entries[#entries + 1] = {
+        label = string.format("󰐕  New clean workspace (WS %d)", clean_id),
+        ws_id = clean_id,
+    }
     local labels = {}
     local by_label = {}
     for _, e in ipairs(entries) do
@@ -347,15 +620,24 @@ local function pick_workspace_via_dmenu(prompt_text)
 end
 
 local function cleanup_virtual_share(monitors, state)
-    if state.preview_pid then
-        stop_wl_mirror_pid(state.preview_pid)
+    if state.preview_pid and state.preview_target == "kaze-share" then
+        stop_verified_pid(state.preview_pid, "wl-mirror")
         state.preview_pid = nil
+        state.preview_target = nil
+    elseif state.preview_pid and not state.preview_target then
+        stop_verified_pid(state.preview_pid, "wl-mirror")
+        state.preview_pid = nil
+    end
+
+    local internal, externals = display.pick_roles(monitors)
+    local primary = display.pick_primary_enabled(internal, externals)
+
+    if state.virtual_workspace then
+        restore_workspace_edges(state.virtual_workspace, "kaze-share-edge")
     end
 
     local share_mon = find_monitor_by_name(monitors, "kaze-share")
     if share_mon or state.virtual_monitor == "kaze-share" then
-        local internal, externals = display.pick_roles(monitors)
-        local primary = internal or externals[1]
         local primary_ws = (primary and primary.active_workspace) or 1
         local target_ws = tonumber(state.virtual_workspace) or -1
         hypr_eval(string.format([[
@@ -392,6 +674,7 @@ end
     if state.mode == "virtual-share" then
         state.mode = nil
     end
+    strip_virtual_share_runtime_monitor()
 end
 
 -- Parse CLI args
@@ -441,17 +724,25 @@ end
 if cmd == "cleanup" then
     local state = load_state()
     if state.mirror_pid then
-        stop_wl_mirror_pid(state.mirror_pid)
+        stop_verified_pid(state.mirror_pid, "wl-mirror")
         state.mirror_pid = nil
     end
     if state.preview_pid then
-        stop_wl_mirror_pid(state.preview_pid)
+        stop_verified_pid(state.preview_pid, "wl-mirror")
         state.preview_pid = nil
     end
+    state.control_on_laptop = nil
+    state.saved_laptop_workspace = nil
+    state.preview_target = nil
     if cmd_exists("hyprctl") then
         local monitors = get_monitors()
+        if state.present_workspace then
+            restore_workspace_edges(state.present_workspace, "kaze-present-edge")
+        end
         if #monitors > 0 then
             cleanup_virtual_share(monitors, state)
+        elseif state.virtual_workspace then
+            restore_workspace_edges(state.virtual_workspace, "kaze-share-edge")
         end
     end
     restore_bars(state)
@@ -466,6 +757,93 @@ if not cmd_exists("hyprctl") then
 end
 
 local monitors = get_monitors()
+
+if cmd == "--on-disconnect" then
+    local state = load_state()
+    local rec = display.plan_disconnect_recovery(sub_arg, monitors, state)
+    if rec.ignored then
+        os.exit(0)
+    end
+    if rec.cleanup_mirror and state.mirror_pid then
+        stop_verified_pid(state.mirror_pid, "wl-mirror")
+        state.mirror_pid = nil
+    end
+    if rec.clear_present then
+        if state.present_workspace then
+            restore_workspace_edges(state.present_workspace, "kaze-present-edge")
+        end
+        if state.preview_pid and state.preview_target ~= "kaze-share" then
+            stop_verified_pid(state.preview_pid, "wl-mirror")
+            state.preview_pid = nil
+            state.preview_target = nil
+        end
+        state.control_on_laptop = nil
+        state.saved_laptop_workspace = nil
+    end
+    if #rec.eval_cmds > 0 then
+        save_runtime_monitors(rec.eval_cmds, state)
+    elseif rec.ext_affected then
+        clear_runtime_monitors(state.virtual_monitor == "kaze-share")
+    end
+    ensure_dpms_awake(monitors)
+    if rec.needs_reload then
+        os.execute("hyprctl reload >/dev/null 2>&1")
+        os.execute("sleep 0.15")
+    end
+    for _, expr in ipairs(rec.eval_cmds) do
+        hypr_eval(expr)
+    end
+    local d_int, d_exts = display.pick_roles(monitors)
+    local fallback_mon = (rec.internal_name and { name = rec.internal_name })
+        or display.pick_primary_enabled(d_int, d_exts)
+    if rec.recover_internal then
+        os.execute("sleep 0.12")
+        -- Rescue any non-virtual workspaces that Hyprland temporarily migrated onto kaze-share
+        -- when external display disconnected while eDP-1 was disabled (External Only + Virtual Share).
+        if rec.internal_name and state.virtual_monitor == "kaze-share" then
+            local vws = tonumber(state.virtual_workspace) or -1
+            local wss = get_workspaces_and_clients()
+            for _, w in ipairs(wss) do
+                if w.monitor == "kaze-share" and w.id ~= vws then
+                    hypr_eval(string.format(
+                        "hl.dispatch(hl.dsp.workspace.move({ workspace = %q, monitor = %q }))",
+                        tostring(w.id), rec.internal_name
+                    ))
+                end
+            end
+            hypr_eval(string.format("hl.dispatch(hl.dsp.focus({ monitor = %q }))", rec.internal_name))
+        end
+    end
+    if rec.needs_reload then
+        os.execute("sleep 0.25")
+        reapply_virtual_share_after_reload(state, fallback_mon)
+    end
+    if rec.restore_bar then
+        restore_bars(state)
+    end
+    if rec.restore_dnd then
+        restore_dnd_if_managed(state)
+    end
+    if rec.ext_affected or rec.clear_present then
+        state.external_monitor = nil
+        state.present_workspace = nil
+        state.control_on_laptop = nil
+        state.saved_laptop_workspace = nil
+        if state.virtual_monitor == "kaze-share" then
+            state.mode = rec.recover_internal and "internal" or "virtual-share"
+        elseif state.mode ~= "virtual-share" then
+            state.mode = rec.recover_internal and "internal" or nil
+        end
+    end
+    save_state(state)
+    if rec.recover_internal then
+        notify("Display recovered", "External display disconnected; restored " .. tostring(rec.internal_name), "normal")
+    elseif rec.clear_present or rec.cleanup_mirror then
+        notify("Display updated", sub_arg .. " disconnected; presentation state cleaned up", "low")
+    end
+    os.exit(0)
+end
+
 if #monitors == 0 then
     io.stderr:write("kaze-display: no monitors reported by hyprctl\n")
     os.exit(1)
@@ -490,46 +868,9 @@ if cmd == "--hotplug" then
     cmd = "--menu"
 end
 
-if cmd == "--on-disconnect" then
-    local state = load_state()
-    local rec = display.plan_disconnect_recovery(sub_arg, monitors, state)
-    if rec.ignored then
-        os.exit(0)
-    end
-    if rec.cleanup_mirror and state.mirror_pid then
-        stop_wl_mirror_pid(state.mirror_pid)
-        state.mirror_pid = nil
-    end
-    if rec.needs_reload then
-        os.execute("hyprctl reload >/dev/null 2>&1")
-    end
-    for _, expr in ipairs(rec.eval_cmds) do
-        hypr_eval(expr)
-    end
-    if rec.restore_bar then
-        restore_bars(state)
-    end
-    if rec.restore_dnd then
-        restore_dnd_if_managed(state)
-    end
-    if state.external_monitor == sub_arg then
-        state.external_monitor = nil
-        state.present_workspace = nil
-        if state.mode ~= "virtual-share" then
-            state.mode = rec.recover_internal and "internal" or nil
-        end
-    end
-    save_state(state)
-    if rec.recover_internal then
-        notify("Display recovered", "External display disconnected; restored " .. tostring(rec.internal_name), "normal")
-    elseif rec.clear_present or rec.cleanup_mirror then
-        notify("Display updated", sub_arg .. " disconnected; presentation state cleaned up", "low")
-    end
-    os.exit(0)
-end
-
 local state = load_state()
 local internal, externals = display.pick_roles(monitors)
+local primary_phys = display.pick_primary_enabled(internal, externals)
 local target_ext = nil
 if cmd == "--menu" and type(sub_arg) == "string" and sub_arg ~= "" then
     target_ext = find_monitor_by_name(externals, sub_arg)
@@ -545,7 +886,12 @@ local function run_present(ws_arg, ext_mon)
     local ws_id = ws_arg
     local existing_ws = nil
     if not ws_id or ws_id == "" then
-        local picked, wss, perr = pick_workspace_via_dmenu("Present WS > ")
+        local current_ws = (primary_phys and primary_phys.active_workspace) or (internal and internal.active_workspace) or nil
+        local picked, wss, perr = pick_workspace_via_dmenu(
+            "Present WS > ",
+            current_ws,
+            { state.present_workspace, state.virtual_workspace }
+        )
         if picked == nil then
             io.stderr:write("kaze-display: " .. tostring(perr) .. "\n")
             os.exit(1)
@@ -560,23 +906,53 @@ local function run_present(ws_arg, ext_mon)
     end
 
     if state.mirror_pid then
-        stop_wl_mirror_pid(state.mirror_pid)
+        stop_verified_pid(state.mirror_pid, "wl-mirror")
         state.mirror_pid = nil
     end
+    if state.preview_pid and state.preview_target ~= "kaze-share" then
+        stop_verified_pid(state.preview_pid, "wl-mirror")
+        state.preview_pid = nil
+        state.preview_target = nil
+    end
+    local was_mirror = (state.mode == "mirror" or state.control_on_laptop == true)
+    local woke_disabled_output = (ext_mon.disabled == true) or (internal ~= nil and internal.disabled == true)
+    state.control_on_laptop = nil
+    state.saved_laptop_workspace = nil
     local plan, err = display.plan("present", monitors, {
         target = ext_mon.name,
-        was_mirror = state.mode == "mirror",
+        was_mirror = was_mirror,
     })
     if not plan then
         io.stderr:write("kaze-display: " .. tostring(err) .. "\n")
         os.exit(1)
     end
-    if not apply_plan(plan) then
+    if not apply_plan(plan, state, internal or primary_phys, "present", monitors) then
         os.exit(1)
+    end
+    if woke_disabled_output then
+        wait_for_monitor_awake(ext_mon.name, 5)
+    end
+    if state.present_workspace and tostring(state.present_workspace) ~= tostring(ws_id) then
+        evacuate_workspace_to_primary(
+            state.present_workspace,
+            "kaze-present-edge",
+            state.external_monitor or ext_mon.name,
+            internal or primary_phys,
+            existing_ws
+        )
+    end
+    -- If the user explicitly moved the virtual-share workspace onto HDMI, assign a fresh workspace to kaze-share.
+    if state.virtual_monitor == "kaze-share" and state.virtual_workspace and tostring(state.virtual_workspace) == tostring(ws_id) then
+        local replacement_ws = display.pick_clean_workspace_id(build_occupied_workspaces(existing_ws, { ws_id }))
+        restore_workspace_edges(ws_id, "kaze-share-edge")
+        set_edge_to_edge_workspace(replacement_ws, "kaze-share-edge", "kaze-share")
+        move_workspace_to_monitor(replacement_ws, "kaze-share", internal or primary_phys, existing_ws)
+        state.virtual_workspace = replacement_ws
     end
     hide_bar_on(state, ext_mon.name)
     enable_managed_dnd(state)
-    move_workspace_to_monitor(ws_id, ext_mon.name, internal, existing_ws)
+    set_edge_to_edge_workspace(ws_id, "kaze-present-edge", ext_mon.name)
+    move_workspace_to_monitor(ws_id, ext_mon.name, internal or primary_phys, existing_ws)
     state.mode = "present"
     state.external_monitor = ext_mon.name
     state.present_workspace = tonumber(ws_id) or ws_id
@@ -584,34 +960,179 @@ local function run_present(ws_arg, ext_mon)
     notify("Presenting WS " .. tostring(ws_id), "Placed on " .. ext_mon.name .. " (DND on, bar hidden)", "low")
 end
 
-local function run_stop_present()
+local function run_toggle_control()
+    if state.mode ~= "present" or not state.present_workspace then
+        io.stderr:write("kaze-display: toggle-control requires an active HDMI presentation\n")
+        notify("Control toggle skipped", "Start Present Workspace… first", "normal")
+        os.exit(1)
+    end
+    local ext_mon = (state.external_monitor and find_monitor_by_name(externals, state.external_monitor)) or target_ext
+    if not ext_mon or not internal then
+        io.stderr:write("kaze-display: external and internal monitors are required\n")
+        notify("Control toggle skipped", "External monitor not connected", "normal")
+        os.exit(1)
+    end
+
+    local pws = state.present_workspace
+    local pws_str = tostring(pws)
+
+    if not state.control_on_laptop then
+        if state.preview_pid and state.preview_target ~= "kaze-share" then
+            stop_verified_pid(state.preview_pid, "wl-mirror")
+            state.preview_pid = nil
+            state.preview_target = nil
+        end
+        state.saved_laptop_workspace = (internal and internal.active_workspace) or 1
+        restore_workspace_edges(pws, "kaze-present-edge")
+
+        local existing_ws = get_workspaces_and_clients()
+        local exists = false
+        for _, w in ipairs(existing_ws) do
+            if w.id == tonumber(pws) then
+                exists = true
+                break
+            end
+        end
+        if exists then
+            hypr_eval(string.format("hl.dispatch(hl.dsp.workspace.move({ workspace = %q, monitor = %q }))", pws_str, internal.name))
+        end
+        hypr_eval(string.format(
+            "hl.dispatch(hl.dsp.focus({ monitor = %q })); hl.dispatch(hl.dsp.focus({ workspace = %q }))",
+            internal.name, pws_str
+        ))
+
+        local plan, err = display.plan("mirror", monitors, { target = ext_mon.name })
+        if not plan then
+            io.stderr:write("kaze-display: " .. tostring(err) .. "\n")
+            os.exit(1)
+        end
+        if not apply_plan(plan, state, internal, "mirror", monitors) then
+            os.exit(1)
+        end
+        state.control_on_laptop = true
+        save_state(state)
+        notify("Controlling WS " .. pws_str .. " on laptop", "Mirrored to " .. ext_mon.name .. " (Ctrl+Super+P to return)", "low")
+    else
+        local plan, err = display.plan("present", monitors, {
+            target = ext_mon.name,
+            was_mirror = true,
+        })
+        if not plan then
+            io.stderr:write("kaze-display: " .. tostring(err) .. "\n")
+            os.exit(1)
+        end
+        if not apply_plan(plan, state, internal, "present", monitors) then
+            os.exit(1)
+        end
+        hide_bar_on(state, ext_mon.name)
+        local existing_ws = get_workspaces_and_clients()
+        set_edge_to_edge_workspace(pws, "kaze-present-edge", ext_mon.name)
+        move_workspace_to_monitor(pws, ext_mon.name, internal, existing_ws)
+
+        if state.saved_laptop_workspace and tonumber(state.saved_laptop_workspace) ~= tonumber(pws) then
+            hypr_eval(string.format(
+                "hl.dispatch(hl.dsp.focus({ monitor = %q })); hl.dispatch(hl.dsp.focus({ workspace = %q }))",
+                internal.name, tostring(state.saved_laptop_workspace)
+            ))
+        else
+            hypr_eval(string.format("hl.dispatch(hl.dsp.focus({ monitor = %q }))", internal.name))
+        end
+
+        state.control_on_laptop = false
+        state.saved_laptop_workspace = nil
+        save_state(state)
+        notify("Returned WS " .. pws_str .. " to " .. ext_mon.name, "Private laptop mode restored", "low")
+    end
+end
+
+local function run_stop_present(is_mirror_stop)
     if state.mirror_pid then
-        stop_wl_mirror_pid(state.mirror_pid)
+        stop_verified_pid(state.mirror_pid, "wl-mirror")
         state.mirror_pid = nil
     end
+    if state.preview_pid and state.preview_target ~= "kaze-share" then
+        stop_verified_pid(state.preview_pid, "wl-mirror")
+        state.preview_pid = nil
+        state.preview_target = nil
+    end
+
+    local ext_mon = (state.external_monitor and find_monitor_by_name(externals, state.external_monitor)) or target_ext
+    local dest_primary = (internal and not internal.disabled and internal) or primary_phys
+    local ext_mirrored = ext_mon and type(ext_mon.mirror_of) == "string" and ext_mon.mirror_of ~= "" and ext_mon.mirror_of ~= "none"
+    if state.control_on_laptop == true or state.mode == "mirror" or ext_mirrored then
+        if ext_mon then
+            local plan = display.plan("extend-right", monitors, { target = ext_mon.name, was_mirror = true })
+            if plan then
+                apply_plan(plan, state, dest_primary, "extend-right", monitors)
+            end
+        else
+            clear_runtime_monitors(state.virtual_monitor == "kaze-share")
+            os.execute("hyprctl reload >/dev/null 2>&1")
+            os.execute("sleep 0.25")
+            reapply_virtual_share_after_reload(state, dest_primary)
+        end
+        if state.present_workspace then
+            restore_workspace_edges(state.present_workspace, "kaze-present-edge")
+        end
+    elseif state.present_workspace then
+        evacuate_workspace_to_primary(
+            state.present_workspace,
+            "kaze-present-edge",
+            ext_mon and ext_mon.name or state.external_monitor,
+            dest_primary
+        )
+    end
+
+    state.control_on_laptop = nil
+    state.saved_laptop_workspace = nil
     restore_bars(state)
     restore_dnd_if_managed(state)
     state.present_workspace = nil
     if state.mode == "present" or state.mode == "mirror" or state.mode == "mirror-scaled" then
-        state.mode = state.virtual_monitor and "virtual-share" or "extend-right"
+        state.mode = (ext_mon ~= nil) and "extend-right" or (state.virtual_monitor and "virtual-share" or nil)
     end
     save_state(state)
-    notify("Presentation stopped", "Bar and notification settings restored", "low")
+    if is_mirror_stop then
+        notify("Mirror stopped", "Returned to extended display; DND restored", "low")
+    else
+        notify("Presentation stopped", "Bar and notification settings restored", "low")
+    end
 end
 
-local function run_virtual_share(ws_arg)
-    local primary = internal or externals[1]
+local function run_virtual_share(ws_arg, interactive_pick)
+    local primary = primary_phys
     if not primary then
         io.stderr:write("kaze-display: no physical monitor available\n")
         os.exit(1)
     end
-    local existing_ws = get_workspaces_and_clients()
-    local ws_id = ws_arg and tonumber(ws_arg) or ws_arg
-    if not ws_id or ws_id == "" then
-        ws_id = display.pick_clean_workspace_id(existing_ws)
+    local existing_ws = nil
+    local ws_id = nil
+    if ws_arg ~= nil and ws_arg ~= "" then
+        ws_id = tonumber(ws_arg) or ws_arg
+        existing_ws = get_workspaces_and_clients()
+    elseif interactive_pick == true then
+        local current_ws = primary and primary.active_workspace or nil
+        local picked, wss, perr = pick_workspace_via_dmenu(
+            "Virtual Share WS > ",
+            current_ws,
+            { state.present_workspace, state.virtual_workspace }
+        )
+        if picked == nil then
+            io.stderr:write("kaze-display: " .. tostring(perr) .. "\n")
+            os.exit(1)
+        end
+        if picked == "" then
+            os.exit(0)
+        end
+        ws_id = picked
+        existing_ws = wss
+    else
+        existing_ws = get_workspaces_and_clients()
+        ws_id = display.pick_clean_workspace_id(build_occupied_workspaces(existing_ws, { state.present_workspace, state.virtual_workspace }))
     end
 
-    if not find_monitor_by_name(monitors, "kaze-share") then
+    local created_new = not find_monitor_by_name(monitors, "kaze-share")
+    if created_new then
         local ok_create = os.execute("hyprctl output create headless kaze-share >/dev/null 2>&1")
         if not (ok_create == true or ok_create == 0) then
             io.stderr:write("kaze-display: failed to create headless kaze-share output\n")
@@ -620,19 +1141,47 @@ local function run_virtual_share(ws_arg)
         end
     end
 
-    local plan, err = display.plan("virtual-share", monitors, {
-        was_mirror = state.mode == "mirror",
-    })
+    local stealing_present = state.present_workspace and tostring(state.present_workspace) == tostring(ws_id)
+    if stealing_present and state.control_on_laptop == true then
+        local ext_mon = (state.external_monitor and find_monitor_by_name(externals, state.external_monitor)) or target_ext
+        if ext_mon then
+            local unmir = display.plan("extend-right", monitors, { target = ext_mon.name, was_mirror = true })
+            if unmir then
+                apply_plan(unmir, state, primary, "extend-right", monitors)
+            end
+        end
+    end
+
+    state.virtual_monitor = "kaze-share"
+    local plan, err = display.plan("virtual-share", monitors)
     if not plan then
         io.stderr:write("kaze-display: " .. tostring(err) .. "\n")
         os.exit(1)
     end
-    if not apply_plan(plan) then
+    if not apply_plan(plan, state, primary, "virtual-share", monitors) then
         os.exit(1)
+    end
+    if created_new then
+        os.execute("sleep 0.12")
+    end
+    if stealing_present then
+        restore_workspace_edges(state.present_workspace, "kaze-present-edge")
+        state.present_workspace = nil
+        state.control_on_laptop = nil
+        state.saved_laptop_workspace = nil
+        if state.mode == "present" then
+            restore_bars(state)
+            restore_dnd_if_managed(state)
+            state.mode = target_ext and "extend-right" or "virtual-share"
+        end
+    end
+    if state.virtual_workspace and tostring(state.virtual_workspace) ~= tostring(ws_id) then
+        evacuate_workspace_to_primary(state.virtual_workspace, "kaze-share-edge", "kaze-share", primary, existing_ws)
     end
     if cmd_exists("noctalia") then
         os.execute("noctalia msg bar-hide default kaze-share >/dev/null 2>&1 || true")
     end
+    set_edge_to_edge_workspace(ws_id, "kaze-share-edge", "kaze-share")
     move_workspace_to_monitor(ws_id, "kaze-share", primary, existing_ws)
     state.virtual_monitor = "kaze-share"
     state.virtual_workspace = tonumber(ws_id) or ws_id
@@ -640,7 +1189,7 @@ local function run_virtual_share(ws_arg)
         state.mode = "virtual-share"
     end
     save_state(state)
-    notify("Virtual Share ready (WS " .. tostring(ws_id) .. ")", "Share kaze-share in Meet/Discord; Super+Alt+P pushes windows", "low")
+    notify("Virtual Share ready (WS " .. tostring(ws_id) .. ")", "Share Screen → kaze-share in Meet/Discord; Super+Alt+P pushes windows", "low")
 end
 
 local function run_switch_share(ws_arg)
@@ -649,11 +1198,16 @@ local function run_switch_share(ws_arg)
         io.stderr:write("kaze-display: kaze-share is not active\n")
         os.exit(1)
     end
-    local primary = internal or externals[1]
+    local primary = primary_phys
     local ws_id = ws_arg
     local existing_ws = nil
     if not ws_id or ws_id == "" then
-        local picked, wss, perr = pick_workspace_via_dmenu("Virtual Share WS > ")
+        local current_ws = primary and primary.active_workspace or nil
+        local picked, wss, perr = pick_workspace_via_dmenu(
+            "Virtual Share WS > ",
+            current_ws,
+            { state.present_workspace, state.virtual_workspace }
+        )
         if picked == nil then
             io.stderr:write("kaze-display: " .. tostring(perr) .. "\n")
             os.exit(1)
@@ -666,6 +1220,10 @@ local function run_switch_share(ws_arg)
     else
         existing_ws = get_workspaces_and_clients()
     end
+    if state.virtual_workspace and tostring(state.virtual_workspace) ~= tostring(ws_id) then
+        evacuate_workspace_to_primary(state.virtual_workspace, "kaze-share-edge", "kaze-share", primary, existing_ws)
+    end
+    set_edge_to_edge_workspace(ws_id, "kaze-share-edge", "kaze-share")
     move_workspace_to_monitor(ws_id, "kaze-share", primary, existing_ws)
     state.virtual_monitor = "kaze-share"
     state.virtual_workspace = tonumber(ws_id) or ws_id
@@ -674,59 +1232,90 @@ local function run_switch_share(ws_arg)
 end
 
 local function run_toggle_preview()
-    if state.preview_pid and stop_wl_mirror_pid(state.preview_pid) then
+    if state.preview_pid and stop_verified_pid(state.preview_pid, "wl-mirror") then
         state.preview_pid = nil
+        state.preview_target = nil
         save_state(state)
-        notify("Share preview closed", "Closed floating kaze-share preview", "low")
+        notify("Share preview closed", "Closed floating preview window", "low")
         return
     end
     local share_mon = find_monitor_by_name(monitors, "kaze-share")
-    if not share_mon and state.virtual_monitor ~= "kaze-share" then
-        io.stderr:write("kaze-display: kaze-share is not active\n")
+    local preview_target = nil
+    if share_mon or state.virtual_monitor == "kaze-share" then
+        preview_target = "kaze-share"
+    elseif state.mode == "present" and not state.control_on_laptop then
+        local ext_mon = (state.external_monitor and find_monitor_by_name(externals, state.external_monitor)) or target_ext
+        preview_target = ext_mon and ext_mon.name or nil
+    end
+    if not preview_target then
+        io.stderr:write("kaze-display: no active virtual share or HDMI presentation to preview\n")
         os.exit(1)
     end
-    local pid, err = spawn_wl_mirror({ "--title", "kaze-share-preview", "kaze-share" })
+    local pid, err = spawn_wl_mirror({ "--title", "kaze-share-preview", preview_target })
     if not pid then
         io.stderr:write("kaze-display: " .. tostring(err) .. "\n")
         notify("Preview failed", tostring(err), "normal")
         os.exit(1)
     end
     state.preview_pid = pid
+    state.preview_target = preview_target
     save_state(state)
-    notify("Share preview opened", "Floating preview of kaze-share", "low")
+    notify("Share preview opened", "Floating preview of " .. preview_target, "low")
 end
 
 local function run_toggle_window_share()
     local share_mon = find_monitor_by_name(monitors, "kaze-share")
-    if not share_mon then
-        io.stderr:write("kaze-display: kaze-share is not active\n")
-        notify("Virtual Share inactive", "Start Virtual Share from Super+Shift+P first", "normal")
+    local ext_mon = (state.external_monitor and find_monitor_by_name(externals, state.external_monitor)) or target_ext
+    local present_ready = state.mode == "present" and not state.control_on_laptop and state.present_workspace and ext_mon
+
+    if not share_mon and not present_ready then
+        io.stderr:write("kaze-display: no active Virtual Share or HDMI presentation\n")
+        notify("Window share inactive", "Start Present or Virtual Share from Super+Shift+P first", "normal")
         os.exit(1)
     end
-    local primary = internal or externals[1]
+
+    local primary = primary_phys
     local active_raw = fs.capture("hyprctl -j activewindow 2>/dev/null") or "{}"
     local ok_w, win = pcall(json.decode, active_raw)
     if not ok_w or type(win) ~= "table" or not win.address or win.address == "" then
-        notify("Virtual Share", "No focused window to move", "low")
+        notify("Share", "No focused window to move", "low")
         os.exit(0)
     end
-    local share_ws = state.virtual_workspace or share_mon.active_workspace or 9
+
     local primary_ws = (primary and primary.active_workspace) or 1
-    local on_share = (win.monitor == share_mon.id)
-        or (type(win.workspace) == "table" and tonumber(win.workspace.id) == tonumber(share_ws))
-    if on_share then
-        hypr_eval(string.format("hl.dispatch(hl.dsp.window.move({ workspace = %q, silent = true }))", tostring(primary_ws)))
-        if primary then
-            hypr_eval(string.format("hl.dispatch(hl.dsp.focus({ monitor = %q }))", primary.name))
+    local win_ws = type(win.workspace) == "table" and tonumber(win.workspace.id) or nil
+
+    -- If focused window is already on either shared target, pull it back to primary workspace.
+    if share_mon then
+        local share_ws = state.virtual_workspace or share_mon.active_workspace or 9
+        if (share_mon.id ~= nil and win.monitor == share_mon.id) or (win_ws ~= nil and win_ws == tonumber(share_ws)) then
+            hypr_eval(string.format("hl.dispatch(hl.dsp.window.move({ workspace = %q, silent = true }))", tostring(primary_ws)))
+            if primary then
+                hypr_eval(string.format("hl.dispatch(hl.dsp.focus({ monitor = %q }))", primary.name))
+            end
+            notify("Virtual Share", "Pulled window back to WS " .. tostring(primary_ws), "low")
+            return
         end
-        notify("Virtual Share", "Pulled window back to WS " .. tostring(primary_ws), "low")
-    else
-        hypr_eval(string.format("hl.dispatch(hl.dsp.window.move({ workspace = %q, silent = true }))", tostring(share_ws)))
-        if primary then
-            hypr_eval(string.format("hl.dispatch(hl.dsp.focus({ monitor = %q }))", primary.name))
-        end
-        notify("Virtual Share", "Pushed window to WS " .. tostring(share_ws), "low")
     end
+    if present_ready then
+        local pws = state.present_workspace
+        if (ext_mon.id ~= nil and win.monitor == ext_mon.id) or (win_ws ~= nil and win_ws == tonumber(pws)) then
+            hypr_eval(string.format("hl.dispatch(hl.dsp.window.move({ workspace = %q, silent = true }))", tostring(primary_ws)))
+            if primary then
+                hypr_eval(string.format("hl.dispatch(hl.dsp.focus({ monitor = %q }))", primary.name))
+            end
+            notify("Presentation", "Pulled window back to WS " .. tostring(primary_ws), "low")
+            return
+        end
+    end
+
+    local target_ws = share_mon and (state.virtual_workspace or share_mon.active_workspace or 9) or state.present_workspace
+    local mode_label = share_mon and "Virtual Share" or "Presentation"
+    hypr_eval(string.format("hl.dispatch(hl.dsp.window.move({ workspace = %q, silent = true }))", tostring(target_ws)))
+    if primary then
+        hypr_eval(string.format("hl.dispatch(hl.dsp.focus({ monitor = %q }))", primary.name))
+    end
+    notify(mode_label, "Pushed window to WS " .. tostring(target_ws), "low")
 end
 
 local function run_stop_virtual()
@@ -743,21 +1332,93 @@ local function run_standard_mode(mode_name)
     end
 
     if state.mirror_pid then
-        stop_wl_mirror_pid(state.mirror_pid)
+        stop_verified_pid(state.mirror_pid, "wl-mirror")
         state.mirror_pid = nil
     end
+    if state.preview_pid and state.preview_target ~= "kaze-share" then
+        stop_verified_pid(state.preview_pid, "wl-mirror")
+        state.preview_pid = nil
+        state.preview_target = nil
+    end
+
+    local was_mirror = (state.mode == "mirror" or state.control_on_laptop == true)
+    local prev_present_ws = state.present_workspace
+    local prev_ext_name = state.external_monitor or (target_ext and target_ext.name) or nil
+    local woke_disabled = (internal and internal.disabled and mode_name ~= "external")
+        or (target_ext and target_ext.disabled and mode_name ~= "internal")
+    state.control_on_laptop = nil
+    state.saved_laptop_workspace = nil
 
     local plan, err = display.plan(mode_name, monitors, {
         target = target_ext and target_ext.name or nil,
-        was_mirror = state.mode == "mirror",
+        was_mirror = was_mirror,
     })
     if not plan then
         io.stderr:write("kaze-display: " .. tostring(err) .. "\n")
         notify("Display switch skipped", tostring(err), "normal")
         os.exit(1)
     end
-    if not apply_plan(plan) then
-        os.exit(1)
+
+    -- Safety guard for External Only: enable external output first and confirm it woke up
+    -- before disabling the internal panel so both screens can never go black simultaneously.
+    if mode_name == "external" and target_ext and target_ext.disabled then
+        ensure_dpms_awake(monitors)
+        if plan.needs_reload then
+            clear_runtime_monitors(state.virtual_monitor == "kaze-share")
+            os.execute("hyprctl reload >/dev/null 2>&1")
+            os.execute("sleep 0.15")
+        end
+        local enable_cmds = {}
+        local disable_cmds = {}
+        for _, expr in ipairs(plan.eval_cmds) do
+            if expr:find("disabled = true", 1, true) then
+                disable_cmds[#disable_cmds + 1] = expr
+            else
+                enable_cmds[#enable_cmds + 1] = expr
+            end
+        end
+        for _, expr in ipairs(enable_cmds) do
+            hypr_eval(expr)
+        end
+        if not wait_for_monitor_awake(target_ext.name, 6) then
+            if internal then
+                hypr_eval(string.format(
+                    'hl.monitor({ output = %q, mode = "preferred", position = "0x0", scale = 1, disabled = false, mirror = "" })',
+                    internal.name
+                ))
+            end
+            io.stderr:write("kaze-display: external monitor failed to wake; kept laptop panel active\n")
+            notify("External Only aborted", target_ext.name .. " did not wake; kept laptop display on", "critical")
+            os.exit(1)
+        end
+        for _, expr in ipairs(disable_cmds) do
+            hypr_eval(expr)
+        end
+        save_runtime_monitors(plan.eval_cmds, state)
+        if plan.needs_reload then
+            os.execute("sleep 0.25")
+            reapply_virtual_share_after_reload(state, target_ext)
+        end
+    else
+        local post_primary = (mode_name == "external" and target_ext) or internal or primary_phys
+        if not apply_plan(plan, state, post_primary, mode_name, monitors) then
+            os.exit(1)
+        end
+        if woke_disabled then
+            local wake_name = (target_ext and target_ext.disabled and mode_name ~= "internal" and target_ext.name)
+                or (internal and internal.disabled and mode_name ~= "external" and internal.name)
+                or nil
+            if wake_name then
+                wait_for_monitor_awake(wake_name, 5)
+            else
+                os.execute("sleep 0.15")
+            end
+        end
+    end
+
+    if prev_present_ws then
+        local dest_mon = (mode_name == "external" and target_ext) or internal or primary_phys
+        evacuate_workspace_to_primary(prev_present_ws, "kaze-present-edge", prev_ext_name, dest_mon)
     end
 
     if mode_name == "mirror" then
@@ -792,52 +1453,14 @@ local function run_standard_mode(mode_name)
     notify("Display updated", plan.summary, "low")
 end
 
-if cmd == "--menu" then
-    local ext = target_ext
-    local share_active = find_monitor_by_name(monitors, "kaze-share") ~= nil or state.virtual_monitor == "kaze-share"
-    local present_active = (state.mode == "present") and ext ~= nil
-    local has_wl_mirror = cmd_exists("wl-mirror")
-    local entries = {}
-
-    if present_active then
-        entries[#entries + 1] = { label = string.format("󰐨  Switch Presented Workspace (on %s)", ext.name), action = "switch-present" }
-        entries[#entries + 1] = { label = "  Stop Presentation (restore bar & DND)", action = "stop-present" }
-    end
-    if share_active then
-        entries[#entries + 1] = { label = "󰍹  Switch Shared Workspace (on kaze-share)", action = "switch-share" }
-        entries[#entries + 1] = { label = "󰌺  Push/Pull Focused Window (kaze-share)", action = "toggle-window-share" }
-        if has_wl_mirror then
-            entries[#entries + 1] = { label = "󰹑  Toggle Share Preview (wl-mirror)", action = "toggle-preview" }
-        end
-        entries[#entries + 1] = { label = "󰅖  Stop Virtual Share (remove kaze-share)", action = "stop-virtual" }
-    end
-
-    if ext then
-        entries[#entries + 1] = { label = string.format("󰐨  Present Workspace → %s", ext.name), action = "present" }
-        entries[#entries + 1] = { label = string.format("󰍹  Mirror        (%s = %s)", ext.name, internal.name), action = "mirror" }
-        if has_wl_mirror then
-            entries[#entries + 1] = { label = string.format("󰍹  Mirror Scaled via wl-mirror (%s = %s)", ext.name, internal.name), action = "mirror-scaled" }
-        end
-        entries[#entries + 1] = { label = string.format("󰍺  Extend Right  (%s → %s)", internal.name, ext.name), action = "extend-right" }
-        entries[#entries + 1] = { label = string.format("󰍺  Extend Left   (%s ← %s)", ext.name, internal.name), action = "extend-left" }
-        entries[#entries + 1] = { label = string.format("󰍺  Extend Above  (%s ↑ %s)", ext.name, internal.name), action = "extend-up" }
-        entries[#entries + 1] = { label = string.format("󰶐  External Only (%s)", ext.name), action = "external" }
-        entries[#entries + 1] = { label = string.format("󰌢  Internal Only (%s)", internal.name), action = "internal" }
-    end
-
-    if not share_active then
-        entries[#entries + 1] = { label = "󰕧  Virtual Share Workspace (Meet / Discord 1080p)", action = "virtual-share" }
-    end
-    entries[#entries + 1] = { label = "󰑓  Auto Reset All Monitors", action = "auto" }
-
+local function run_dmenu_entries(entries, prompt_text)
     local labels = {}
     local by_label = {}
     for _, e in ipairs(entries) do
         labels[#labels + 1] = e.label
-        by_label[e.label] = e.action
+        by_label[e.label] = { action = e.action, arg = e.arg }
     end
-
-    local choice, dmenu_err = popups.run_dmenu(labels, { prompt = "Display > " })
+    local choice, dmenu_err = popups.run_dmenu(labels, { prompt = prompt_text })
     if not choice then
         io.stderr:write("kaze-display: " .. tostring(dmenu_err) .. "\n")
         os.exit(1)
@@ -845,21 +1468,99 @@ if cmd == "--menu" then
     if choice == "" then
         os.exit(0)
     end
-    local action = by_label[choice]
-    if not action then
+    local picked = by_label[choice]
+    if not picked then
         io.stderr:write(string.format("kaze-display: unrecognized selection '%s'\n", choice))
         os.exit(1)
     end
-    cmd = action
-    sub_arg = nil
+    return picked
 end
 
-if cmd == "present" or cmd == "switch-present" then
+if cmd == "--menu" then
+    local ext = target_ext
+    local share_mon = find_monitor_by_name(monitors, "kaze-share")
+    local share_active = share_mon ~= nil or state.virtual_monitor == "kaze-share"
+    local present_active = (state.mode == "present")
+    local mirror_active = not present_active and (
+        state.mode == "mirror"
+        or state.mode == "mirror-scaled"
+        or (ext ~= nil and type(ext.mirror_of) == "string" and ext.mirror_of ~= "" and ext.mirror_of ~= "none")
+    )
+    local has_wl_mirror = cmd_exists("wl-mirror")
+    local workspaces = get_workspaces_and_clients()
+    local current_ws = (primary_phys and primary_phys.active_workspace)
+        or (internal and internal.active_workspace)
+        or (workspaces[1] and workspaces[1].id)
+        or 1
+    local present_ws = state.present_workspace or (ext and ext.active_workspace) or current_ws
+    local present_ext_name = state.external_monitor or (ext and ext.name) or "external"
+    local share_ws = state.virtual_workspace or (share_mon and share_mon.active_workspace) or 9
+    local entries = {}
+
+    if mirror_active then
+        local mir_mon = state.external_monitor or (ext and ext.name) or "external"
+        entries[#entries + 1] = { label = string.format("󰅖  Stop Mirror (%s)", mir_mon), action = "stop-mirror" }
+    end
+    if present_active then
+        if ext ~= nil then
+            if state.control_on_laptop then
+                entries[#entries + 1] = { label = string.format("󰌢  Back to Private Laptop (return WS %s → %s)", tostring(present_ws), present_ext_name), action = "toggle-control" }
+            else
+                entries[#entries + 1] = { label = string.format("󰍹  Control WS %s on Laptop (Mirror)", tostring(present_ws)), action = "toggle-control" }
+            end
+        end
+        entries[#entries + 1] = { label = string.format("󰅖  Stop Presentation (WS %s)", tostring(present_ws)), action = "stop-present" }
+    end
+    if share_active then
+        entries[#entries + 1] = { label = string.format("󰍹  Switch Virtual Share (WS %s)…", tostring(share_ws)), action = "switch-share" }
+        if has_wl_mirror then
+            entries[#entries + 1] = { label = "󰹑  Toggle Share Preview (kaze-share)", action = "toggle-preview" }
+        end
+        entries[#entries + 1] = { label = string.format("󰅖  Stop Virtual Share (WS %s)", tostring(share_ws)), action = "stop-virtual" }
+    end
+
+    if ext then
+        entries[#entries + 1] = { label = "󰍹  Mirror Full Screen", action = "mirror" }
+        entries[#entries + 1] = { label = "󰐨  Present Workspace…", action = "present" }
+        if not share_active then
+            entries[#entries + 1] = { label = "󰕧  Virtual Share (Meet / Discord 1080p)…", action = "virtual-share-pick" }
+        end
+        entries[#entries + 1] = { label = "󰹑  Extend / Layout…", action = "submenu-extend" }
+    else
+        if not share_active then
+            entries[#entries + 1] = { label = "󰕧  Virtual Share (Meet / Discord 1080p)…", action = "virtual-share-pick" }
+        end
+        entries[#entries + 1] = { label = "󰑓  Auto Reset Monitors", action = "auto" }
+    end
+
+    local picked = run_dmenu_entries(entries, "Display > ")
+    if picked.action == "submenu-extend" then
+        local extend_entries = {
+            { label = string.format("󰍹  Extend Right  (%s → %s)", internal.name, ext.name), action = "extend-right" },
+            { label = string.format("󰍹  Extend Left   (%s ← %s)", ext.name, internal.name), action = "extend-left" },
+            { label = string.format("󰍹  Extend Above  (%s ↑ %s)", ext.name, internal.name), action = "extend-up" },
+            { label = string.format("󰶐  External Only (%s)", ext.name), action = "external" },
+            { label = string.format("󰌢  Laptop Only   (%s)", internal.name), action = "internal" },
+            { label = "󰑓  Auto Reset All Monitors", action = "auto" },
+        }
+        picked = run_dmenu_entries(extend_entries, "Layout > ")
+    end
+    cmd = picked.action
+    sub_arg = picked.arg
+end
+
+if cmd == "present" or cmd == "switch-present" or cmd == "present-current" then
     run_present(sub_arg, target_ext)
+elseif cmd == "toggle-control" then
+    run_toggle_control()
 elseif cmd == "stop-present" then
-    run_stop_present()
-elseif cmd == "virtual-share" then
-    run_virtual_share(sub_arg)
+    run_stop_present(false)
+elseif cmd == "stop-mirror" then
+    run_stop_present(true)
+elseif cmd == "virtual-share" or cmd == "virtual-share-current" then
+    run_virtual_share(sub_arg, false)
+elseif cmd == "virtual-share-pick" then
+    run_virtual_share(nil, true)
 elseif cmd == "switch-share" then
     run_switch_share(sub_arg)
 elseif cmd == "toggle-preview" then

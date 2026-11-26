@@ -154,6 +154,7 @@ do
 
     local scan_script = string.format([[
 for p in %s/hypr/*.lua \
+         %s/hypr/xdph.conf \
          %s/foot/foot.ini \
          %s/starship.toml \
          %s/.zshrc \
@@ -171,6 +172,7 @@ for p in %s/hypr/*.lua \
     fi
 done
 ]],
+        q(config_home),
         q(config_home),
         q(config_home),
         q(config_home),
@@ -200,6 +202,7 @@ done
     local required_links = {
         data_home .. "/kaze-dots/lua/kaze",
         config_home .. "/hypr/hyprland.lua",
+        config_home .. "/hypr/xdph.conf",
         config_home .. "/foot/foot.ini",
         config_home .. "/starship.toml",
         fs.home() .. "/.zshrc",

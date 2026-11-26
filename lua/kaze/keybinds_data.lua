@@ -168,9 +168,17 @@ function M.build(cfg)
             group = "System",
             chord = "SUPER + ALT + P",
             display = "Super + Alt + P",
-            desc = "Push/pull window to Virtual Share",
+            desc = "Push/pull window to shared workspace",
             kind = "exec",
             cmd = "kaze-display toggle-window-share",
+        },
+        {
+            group = "System",
+            chord = "CTRL + SUPER + P",
+            display = "Ctrl + Super + P",
+            desc = "Toggle control presented workspace on laptop",
+            kind = "exec",
+            cmd = "kaze-display toggle-control",
         },
         {
             group = "System",

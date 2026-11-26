@@ -96,6 +96,7 @@ local function register_tests(test, assert_eq, assert_true, assert_contains, rep
         assert_eq(by_chord["CTRL + ALT + R"].cmd, "kaze-record")
         assert_eq(by_chord["SUPER + slash"].cmd, "kaze-keys")
         assert_eq(by_chord["SUPER + ALT + P"].cmd, "kaze-display toggle-window-share")
+        assert_eq(by_chord["CTRL + SUPER + P"].cmd, "kaze-display toggle-control")
         assert_eq(by_chord["SUPER + SHIFT + Z"], nil, "Zen Mode keybind must be removed")
         assert_eq(by_chord["SUPER + SHIFT + L"], nil, "kaze-layout keybind must be removed")
         assert_eq(by_chord["SUPER + SHIFT + SPACE"], nil, "kaze-menu keybind must be removed")

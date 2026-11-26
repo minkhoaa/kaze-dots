@@ -12,6 +12,17 @@ local function scale_num(m)
     return s
 end
 
+local function preserve_mode(m)
+    if type(m) == "table" and not m.disabled and (tonumber(m.width) or 0) > 0 and (tonumber(m.height) or 0) > 0 then
+        local hz = tonumber(m.refresh) or 0
+        if hz > 0 then
+            return string.format("%dx%d@%.2f", math.floor(m.width), math.floor(m.height), hz)
+        end
+        return string.format("%dx%d", math.floor(m.width), math.floor(m.height))
+    end
+    return "preferred"
+end
+
 local function quote_lua(s)
     return string.format("%q", tostring(s))
 end
@@ -32,9 +43,8 @@ local function format_hl_monitor(spec)
         if spec.scale ~= nil then
             parts[#parts + 1] = "scale = " .. tostring(spec.scale)
         end
-        if spec.mirror ~= nil then
-            parts[#parts + 1] = "mirror = " .. quote_lua(spec.mirror)
-        end
+        parts[#parts + 1] = "disabled = false"
+        parts[#parts + 1] = "mirror = " .. quote_lua(spec.mirror or "")
     end
     return "hl.monitor({ " .. table.concat(parts, ", ") .. " })"
 end
@@ -97,6 +107,7 @@ function M.parse_monitors(json_str)
                 refresh = tonumber(m.refreshRate) or 0,
                 scale = tonumber(m.scale) or 1,
                 disabled = m.disabled == true,
+                dpms = m.dpmsStatus ~= false,
                 focused = m.focused == true,
                 mirror_of = mirror_of,
                 active_workspace = active_ws,
@@ -146,6 +157,36 @@ function M.pick_roles(monitors)
         end
     end
     return internal, externals, virtuals
+end
+
+function M.pick_primary_enabled(internal, externals)
+    if type(internal) == "table" and not internal.disabled then
+        return internal
+    end
+    for _, ext in ipairs(externals or {}) do
+        if type(ext) == "table" and not ext.disabled then
+            return ext
+        end
+    end
+    return internal or (externals and externals[1]) or nil
+end
+
+local function has_kaze_share(list)
+    for _, m in ipairs(list or {}) do
+        if type(m) == "table" and m.name == "kaze-share" then
+            return true
+        end
+    end
+    return false
+end
+
+local function kaze_share_monitor_cmd()
+    return format_hl_monitor({
+        output = "kaze-share",
+        mode = "1920x1080@60",
+        position = "9999x0",
+        scale = 1,
+    })
 end
 
 function M.parse_workspaces(ws_json, clients_json)
@@ -225,19 +266,63 @@ function M.pick_clean_workspace_id(workspaces)
     return n
 end
 
-function M.format_workspace_entry(ws)
+function M.format_workspace_entry(ws, current_ws_id)
     local id = tonumber(ws and ws.id) or 0
     local apps = type(ws and ws.apps) == "table" and ws.apps or {}
     local windows = tonumber(ws and ws.windows) or 0
     local mon = type(ws and ws.monitor) == "string" and ws.monitor or ""
+    local cur = current_ws_id ~= nil and tonumber(current_ws_id) or nil
+    local is_current = (cur ~= nil and id == cur)
+    local prefix = is_current and "★ " or ""
+
+    local loc_parts = {}
+    if is_current then
+        loc_parts[#loc_parts + 1] = "current"
+    end
+    if mon ~= "" then
+        loc_parts[#loc_parts + 1] = "on " .. mon
+    end
+    local loc = #loc_parts > 0 and ("  (" .. table.concat(loc_parts, ", ") .. ")") or ""
+
     if #apps > 0 then
-        local loc = mon ~= "" and ("  (on " .. mon .. ")") or ""
-        return string.format("WS %d  [%s]%s", id, table.concat(apps, ", "), loc)
+        return string.format("%sWS %d  [%s]%s", prefix, id, table.concat(apps, ", "), loc)
     elseif windows > 0 then
-        local loc = mon ~= "" and ("  (on " .. mon .. ")") or ""
-        return string.format("WS %d  [%d %s]%s", id, windows, windows == 1 and "window" or "windows", loc)
+        return string.format("%sWS %d  [%d %s]%s", prefix, id, windows, windows == 1 and "window" or "windows", loc)
+    elseif mon ~= "" or is_current then
+        return string.format("%sWS %d  [empty]%s", prefix, id, loc)
     end
     return string.format("WS %d  [new empty workspace]", id)
+end
+
+function M.format_workspace_brief(ws_id, workspaces)
+    local id = tonumber(ws_id) or 0
+    for _, w in ipairs(workspaces or {}) do
+        if tonumber(w and w.id) == id then
+            local apps = type(w.apps) == "table" and w.apps or {}
+            if #apps > 0 then
+                local shown = { apps[1] }
+                if apps[2] then
+                    shown[2] = apps[2]
+                end
+                return string.format("WS %d: %s", id, table.concat(shown, ", "))
+            end
+            break
+        end
+    end
+    return string.format("WS %d", id)
+end
+
+function M.order_workspaces_for_picker(workspaces, _current_ws_id)
+    local ordered = {}
+    for _, w in ipairs(workspaces or {}) do
+        if type(w) == "table" then
+            ordered[#ordered + 1] = w
+        end
+    end
+    table.sort(ordered, function(a, b)
+        return (tonumber(a.id) or 0) < (tonumber(b.id) or 0)
+    end)
+    return ordered
 end
 
 function M.format_monitor(m)
@@ -254,10 +339,11 @@ function M.plan(mode, monitors, opts)
         return nil, "no monitors detected"
     end
     opts = opts or {}
-    local internal, externals = M.pick_roles(monitors)
+    local internal, externals, virtuals = M.pick_roles(monitors)
     if not internal then
         return nil, "no physical monitors detected"
     end
+    local keep_kaze_share = has_kaze_share(virtuals)
 
     local target_ext = externals[1]
     if type(opts.target) == "string" and opts.target ~= "" then
@@ -282,7 +368,14 @@ function M.plan(mode, monitors, opts)
             end
         end
     end
-    local needs_reload = mirror_active and mode ~= "mirror"
+    local needs_reload = mirror_active and mode ~= "mirror" and mode ~= "virtual-share"
+
+    local function with_virtual_share(cmds)
+        if keep_kaze_share then
+            cmds[#cmds + 1] = kaze_share_monitor_cmd()
+        end
+        return cmds
+    end
 
     if mode == "auto" then
         local cmds = {}
@@ -299,7 +392,7 @@ function M.plan(mode, monitors, opts)
             })
         end
         return {
-            eval_cmds = cmds,
+            eval_cmds = with_virtual_share(cmds),
             needs_reload = needs_reload,
             summary = "Reset all monitors to auto",
             target_ext = target_ext and target_ext.name or nil,
@@ -310,7 +403,7 @@ function M.plan(mode, monitors, opts)
         local cmds = {
             format_hl_monitor({
                 output = internal.name,
-                mode = "preferred",
+                mode = preserve_mode(internal),
                 position = "0x0",
                 scale = scale_num(internal),
             }),
@@ -319,7 +412,7 @@ function M.plan(mode, monitors, opts)
             cmds[#cmds + 1] = format_hl_monitor({ output = ext.name, disabled = true })
         end
         return {
-            eval_cmds = cmds,
+            eval_cmds = with_virtual_share(cmds),
             needs_reload = needs_reload,
             summary = "Internal only (" .. internal.name .. ")",
             target_ext = nil,
@@ -327,20 +420,47 @@ function M.plan(mode, monitors, opts)
     end
 
     if mode == "virtual-share" then
-        local cmds = {
-            format_hl_monitor({
-                output = internal.name,
-                mode = "preferred",
+        local enabled_phys = {}
+        local disabled_phys = {}
+        if not internal.disabled then
+            enabled_phys[#enabled_phys + 1] = internal
+        else
+            disabled_phys[#disabled_phys + 1] = internal
+        end
+        for _, ext in ipairs(externals) do
+            if not ext.disabled then
+                enabled_phys[#enabled_phys + 1] = ext
+            else
+                disabled_phys[#disabled_phys + 1] = ext
+            end
+        end
+
+        local cmds = {}
+        if #enabled_phys <= 1 then
+            local primary = M.pick_primary_enabled(internal, externals)
+            cmds[#cmds + 1] = format_hl_monitor({
+                output = primary.name,
+                mode = preserve_mode(primary),
                 position = "0x0",
-                scale = scale_num(internal),
-            }),
-            format_hl_monitor({
-                output = "kaze-share",
-                mode = "1920x1080@60",
-                position = "9999x0",
-                scale = 1,
-            }),
-        }
+                scale = scale_num(primary),
+            })
+        else
+            -- Preserve existing multi-monitor coordinates (e.g. Extend Left / Above where HDMI is at 0x0 and eDP is offset).
+            for _, m in ipairs(enabled_phys) do
+                cmds[#cmds + 1] = format_hl_monitor({
+                    output = m.name,
+                    mode = preserve_mode(m),
+                    position = string.format("%dx%d", math.floor(tonumber(m.x) or 0), math.floor(tonumber(m.y) or 0)),
+                    scale = scale_num(m),
+                })
+            end
+        end
+        cmds[#cmds + 1] = kaze_share_monitor_cmd()
+        for _, m in ipairs(disabled_phys) do
+            if not (#enabled_phys == 0 and m.name == (M.pick_primary_enabled(internal, externals) or {}).name) then
+                cmds[#cmds + 1] = format_hl_monitor({ output = m.name, disabled = true })
+            end
+        end
         return {
             eval_cmds = cmds,
             needs_reload = needs_reload,
@@ -368,14 +488,14 @@ function M.plan(mode, monitors, opts)
         for _, ext in ipairs(ordered_externals()) do
             cmds[#cmds + 1] = format_hl_monitor({
                 output = ext.name,
-                mode = "preferred",
+                mode = preserve_mode(ext),
                 position = "auto",
                 scale = scale_num(ext),
             })
         end
         cmds[#cmds + 1] = format_hl_monitor({ output = internal.name, disabled = true })
         return {
-            eval_cmds = cmds,
+            eval_cmds = with_virtual_share(cmds),
             needs_reload = needs_reload,
             summary = "External only (" .. target_ext.name .. ")",
             target_ext = target_ext.name,
@@ -384,7 +504,7 @@ function M.plan(mode, monitors, opts)
         local cmds = {
             format_hl_monitor({
                 output = internal.name,
-                mode = "preferred",
+                mode = preserve_mode(internal),
                 position = "0x0",
                 scale = scale_num(internal),
             }),
@@ -392,7 +512,7 @@ function M.plan(mode, monitors, opts)
         for _, ext in ipairs(ordered_externals()) do
             cmds[#cmds + 1] = format_hl_monitor({
                 output = ext.name,
-                mode = "preferred",
+                mode = preserve_mode(ext),
                 position = "auto-right",
                 scale = scale_num(ext),
             })
@@ -404,7 +524,7 @@ function M.plan(mode, monitors, opts)
             summary = "Scaled mirror (" .. target_ext.name .. " <- " .. internal.name .. ")"
         end
         return {
-            eval_cmds = cmds,
+            eval_cmds = with_virtual_share(cmds),
             needs_reload = needs_reload,
             summary = summary,
             target_ext = target_ext.name,
@@ -413,7 +533,7 @@ function M.plan(mode, monitors, opts)
         local cmds = {
             format_hl_monitor({
                 output = internal.name,
-                mode = "preferred",
+                mode = preserve_mode(internal),
                 position = "0x0",
                 scale = scale_num(internal),
             }),
@@ -421,13 +541,13 @@ function M.plan(mode, monitors, opts)
         for _, ext in ipairs(ordered_externals()) do
             cmds[#cmds + 1] = format_hl_monitor({
                 output = ext.name,
-                mode = "preferred",
+                mode = preserve_mode(ext),
                 position = "auto-left",
                 scale = scale_num(ext),
             })
         end
         return {
-            eval_cmds = cmds,
+            eval_cmds = with_virtual_share(cmds),
             needs_reload = needs_reload,
             summary = "Extend left (" .. target_ext.name .. " <- " .. internal.name .. ")",
             target_ext = target_ext.name,
@@ -436,7 +556,7 @@ function M.plan(mode, monitors, opts)
         local cmds = {
             format_hl_monitor({
                 output = internal.name,
-                mode = "preferred",
+                mode = preserve_mode(internal),
                 position = "0x0",
                 scale = scale_num(internal),
             }),
@@ -444,13 +564,13 @@ function M.plan(mode, monitors, opts)
         for _, ext in ipairs(ordered_externals()) do
             cmds[#cmds + 1] = format_hl_monitor({
                 output = ext.name,
-                mode = "preferred",
+                mode = preserve_mode(ext),
                 position = "auto-up",
                 scale = scale_num(ext),
             })
         end
         return {
-            eval_cmds = cmds,
+            eval_cmds = with_virtual_share(cmds),
             needs_reload = needs_reload,
             summary = "Extend above (" .. target_ext.name .. " above " .. internal.name .. ")",
             target_ext = target_ext.name,
@@ -459,7 +579,7 @@ function M.plan(mode, monitors, opts)
         local cmds = {
             format_hl_monitor({
                 output = internal.name,
-                mode = "preferred",
+                mode = preserve_mode(internal),
                 position = "0x0",
                 scale = scale_num(internal),
             }),
@@ -467,14 +587,14 @@ function M.plan(mode, monitors, opts)
         for _, ext in ipairs(ordered_externals()) do
             cmds[#cmds + 1] = format_hl_monitor({
                 output = ext.name,
-                mode = "preferred",
+                mode = preserve_mode(ext),
                 position = "auto",
                 scale = scale_num(ext),
                 mirror = internal.name,
             })
         end
         return {
-            eval_cmds = cmds,
+            eval_cmds = with_virtual_share(cmds),
             needs_reload = false,
             summary = "Mirror (" .. target_ext.name .. " = " .. internal.name .. ")",
             target_ext = target_ext.name,
@@ -490,6 +610,9 @@ function M.should_ignore_hotplug(mon_name, ctx)
     if type(mon_name) ~= "string" or mon_name == "" or M.is_virtual_monitor(mon_name) then
         return true, "virtual"
     end
+    if is_internal_name(mon_name) then
+        return true, "internal"
+    end
     ctx = type(ctx) == "table" and ctx or {}
     if ctx.enabled == false then
         return true, "disabled"
@@ -500,7 +623,7 @@ function M.should_ignore_hotplug(mon_name, ctx)
     if type(ctx.now) == "number" and type(ctx.started_at) == "number" and (ctx.now - ctx.started_at) < 5 then
         return true, "startup"
     end
-    if type(ctx.now) == "number" and type(ctx.last_event_at) == "number" and (ctx.now - ctx.last_event_at) < 1 then
+    if type(ctx.now) == "number" and type(ctx.last_event_at) == "number" and (ctx.now - ctx.last_event_at) <= 1 then
         return true, "debounce"
     end
     return false, nil
@@ -521,31 +644,46 @@ function M.plan_disconnect_recovery(removed_name, monitors, state)
             cleanup_mirror = false,
             restore_bar = false,
             restore_dnd = false,
+            ext_affected = false,
         }
     end
 
     state = type(state) == "table" and state or {}
     local remaining = {}
+    local virtuals = {}
+    local removed_id_str = nil
     for _, m in ipairs(monitors or {}) do
-        if m.name ~= removed_name and not M.is_virtual_monitor(m.name, m) then
+        if m.name == removed_name and m.id ~= nil then
+            removed_id_str = tostring(m.id)
+        end
+        if M.is_virtual_monitor(m.name, m) then
+            virtuals[#virtuals + 1] = m
+        elseif m.name ~= removed_name then
             remaining[#remaining + 1] = m
         end
     end
 
     local internal, externals = M.pick_roles(remaining)
     local any_enabled = false
+    local ext_still_present = false
     for _, m in ipairs(remaining) do
         if not m.disabled then
             any_enabled = true
-            break
+        end
+        if type(state.external_monitor) == "string" and state.external_monitor ~= "" and m.name == state.external_monitor then
+            ext_still_present = true
         end
     end
 
     local matches_ext = state.external_monitor == removed_name
-    local was_mirror = state.mode == "mirror"
+    local ext_affected = matches_ext
+        or (type(state.external_monitor) == "string" and state.external_monitor ~= "" and not ext_still_present)
+        or (state.external_monitor == nil and #externals == 0)
+
+    local was_mirror = ext_affected and (state.mode == "mirror" or state.control_on_laptop == true)
     if not was_mirror then
         for _, m in ipairs(remaining) do
-            if is_mirror_active(m) then
+            if is_mirror_active(m) and (ext_affected or m.mirror_of == removed_name or (removed_id_str ~= nil and m.mirror_of == removed_id_str)) then
                 was_mirror = true
                 break
             end
@@ -554,7 +692,7 @@ function M.plan_disconnect_recovery(removed_name, monitors, state)
 
     local eval_cmds = {}
     local recover_internal = false
-    if internal and (not any_enabled or (internal.disabled and (matches_ext or state.mode == "external" or #externals == 0))) then
+    if internal and (not any_enabled or (internal.disabled and (ext_affected or state.mode == "external" or #externals == 0))) then
         recover_internal = true
         eval_cmds[#eval_cmds + 1] = format_hl_monitor({
             output = internal.name,
@@ -563,14 +701,20 @@ function M.plan_disconnect_recovery(removed_name, monitors, state)
             scale = scale_num(internal),
         })
     end
+    if was_mirror and has_kaze_share(virtuals) then
+        eval_cmds[#eval_cmds + 1] = kaze_share_monitor_cmd()
+    end
 
-    local cleanup_mirror = (matches_ext or state.mirror_pid ~= nil)
+    local cleanup_mirror = ext_affected
         and (state.mode == "mirror" or state.mode == "mirror-scaled" or state.mirror_pid ~= nil)
-    local clear_present = (matches_ext or state.present_workspace ~= nil)
-        and (state.mode == "present" or state.present_workspace ~= nil)
-    local restore_bar = type(state.bar_hidden_monitors) == "table" and #state.bar_hidden_monitors > 0
-        and (matches_ext or state.mode == "present" or state.mode == "mirror-scaled")
+    local clear_present = ext_affected
+        and (state.mode == "present" or state.present_workspace ~= nil or state.control_on_laptop == true)
+    local restore_bar = ext_affected
+        and type(state.bar_hidden_monitors) == "table"
+        and #state.bar_hidden_monitors > 0
+        and (matches_ext or state.mode == "present" or state.mode == "mirror-scaled" or clear_present or cleanup_mirror)
     local restore_dnd = M.should_restore_dnd(state)
+        and ext_affected
         and (matches_ext or clear_present or cleanup_mirror)
 
     return {
@@ -583,6 +727,7 @@ function M.plan_disconnect_recovery(removed_name, monitors, state)
         cleanup_mirror = cleanup_mirror,
         restore_bar = restore_bar,
         restore_dnd = restore_dnd,
+        ext_affected = ext_affected,
     }
 end
 

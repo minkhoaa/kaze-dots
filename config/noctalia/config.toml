@@ -103,16 +103,29 @@ capsule = false
 capsule_border_width = 1.0
 start = [ "launcher", "ws" ]
 center = [ "vclock" ]
-end = [ "tray", "net", "vol", "bat", "notifications", "control-center", "session" ]
+end = [ "tray", "display", "net", "vol", "bat", "notifications", "control-center", "session" ]
 
 [widget.ws]
 type = "workspaces"
-style = "minimal"
+style = "regular"
+label_source = "id"
+monitors = [ "*" ]
+hide_when_empty = false
+active_pill_size = 1.6
 capsule_radius = 0
 show_labels = true
 focused_color = "primary"
-occupied_color = "outline_variant"
+occupied_color = "secondary"
 empty_color = "surface_container"
+
+[widget.display]
+type = "custom_button"
+glyph = "device-desktop"
+tooltip = "Display & Share (Left: Menu, Right: Push/Pull Window)"
+
+[widget.display.actions]
+left = "exec kaze-display --menu"
+right = "exec kaze-display toggle-window-share"
 
 [widget.vclock]
 type = "clock"

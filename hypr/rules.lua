@@ -90,6 +90,13 @@ hl.window_rule({
 
 if hl.workspace_rule then
     hl.workspace_rule({ workspace = "s[true]", animation = "slidevert" })
+    local persist_count = tonumber(cfg.persistent_workspaces)
+    if persist_count == nil then
+        persist_count = 5
+    end
+    for i = 1, math.floor(persist_count) do
+        hl.workspace_rule({ workspace = tostring(i), persistent = true })
+    end
 end
 
 hl.window_rule({

@@ -6,7 +6,8 @@ local bin_dir = fs.home() .. "/.local/bin/"
 local cli = fs.shell_quote(bin_dir .. "kaze-session")
 local display_cli = fs.shell_quote(bin_dir .. "kaze-display")
 local signature = os.getenv("HYPRLAND_INSTANCE_SIGNATURE") or ""
-local started_at = os.time()
+-- Set only on initial `hyprland.start` so `hyprctl reload` never re-arms the 5s startup grace.
+local started_at = nil
 local last_added_at = nil
 
 hl.on("hyprland.start", function()
