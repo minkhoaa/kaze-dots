@@ -375,7 +375,7 @@ end
 local function ensure_dpms_awake(mon_list)
     for _, m in ipairs(mon_list or {}) do
         if not m.virtual and not m.disabled and m.dpms == false then
-            hypr_eval('hl.dispatch(hl.dsp.dpms("on"))')
+            hypr_eval('hl.dispatch(hl.dsp.dpms({ action = "on" }))')
             return
         end
     end

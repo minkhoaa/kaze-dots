@@ -69,12 +69,12 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             assert_true(full_ok, "full --dry-run exit 0")
             for _, pkg in ipairs({
                 "noctalia", "slurp", "wf-recorder", "ffmpeg", "hyprpicker",
-                "yazi", "fcitx5", "fcitx5-bamboo",
+                "yazi", "zathura", "zathura-pdf-poppler", "fcitx5", "fcitx5-bamboo",
                 "fzf", "zoxide", "eza", "bat", "ripgrep", "fd", "starship", "wl-mirror",
             }) do
                 assert_contains(full_out, "  " .. pkg .. "\n", "full includes " .. pkg)
             end
-            for _, removed in ipairs({ "waybar", "swaybg", "fuzzel", "fnott", "hypridle", "hyprlock", "cliphist", "hyprsunset", "matugen", "mate-polkit", "grim", "swappy", "gst-plugin-pipewire" }) do
+            for _, removed in ipairs({ "waybar", "swaybg", "fuzzel", "fnott", "hypridle", "hyprlock", "cliphist", "hyprsunset", "matugen", "mate-polkit", "grim", "swappy", "gst-plugin-pipewire", "zathura-pdf-mupdf" }) do
                 assert_true(not has_word(full_out, removed), "removed package leaked into full: " .. removed)
             end
 
@@ -83,6 +83,11 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             end
             local _, bad_ok = read_all(env .. " " .. installer .. " --profile bogus --dry-run 2>&1")
             assert_true(not bad_ok)
+
+            -- Invoking via POSIX `sh scripts/install.sh` re-execs cleanly under bash
+            local sh_out, sh_ok = read_all(env .. " sh " .. installer .. " --profile minimal --dry-run 2>&1")
+            assert_true(sh_ok, "sh scripts/install.sh --dry-run should succeed: " .. sh_out)
+            assert_contains(sh_out, "Kaze profile: minimal")
         end)
         rm_rf(tmp)
         if not ok_test then error(err_test, 0) end

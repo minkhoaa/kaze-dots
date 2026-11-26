@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+if [ -z "${BASH_VERSION:-}" ]; then
+    exec bash "$0" "$@"
+fi
+set +o posix 2>/dev/null || true
 set -euo pipefail
 
 DRY_RUN=false

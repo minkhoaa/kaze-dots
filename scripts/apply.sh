@@ -1,5 +1,27 @@
 #!/usr/bin/env bash
+if [ -z "${BASH_VERSION:-}" ]; then
+    exec bash "$0" "$@"
+fi
+set +o posix 2>/dev/null || true
 set -euo pipefail
+
+if [ "$(id -u)" -eq 0 ]; then
+    if [ -z "${SUDO_USER:-}" ] || [ "$SUDO_USER" = "root" ]; then
+        echo "apply.sh: do not run directly as root; run as your regular desktop user." >&2
+        exit 1
+    fi
+    target_home="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6 || true)"
+    if [ -z "$target_home" ] || [ ! -d "$target_home" ]; then
+        echo "apply.sh: could not determine home directory for user '$SUDO_USER'." >&2
+        exit 1
+    fi
+    target_uid="$(id -u "$SUDO_USER")"
+    user_env=(HOME="$target_home" USER="$SUDO_USER" LOGNAME="$SUDO_USER")
+    if [ -d "/run/user/$target_uid" ]; then
+        user_env+=(XDG_RUNTIME_DIR="/run/user/$target_uid")
+    fi
+    exec sudo -u "$SUDO_USER" -H env "${user_env[@]}" bash "$0" "$@"
+fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AUTO_YES=false
@@ -165,7 +187,29 @@ fi
 
 cat <<'ROLLBACK_EOF' > "$BACKUP_DIR/rollback.sh"
 #!/usr/bin/env bash
+if [ -z "${BASH_VERSION:-}" ]; then
+    exec bash "$0" "$@"
+fi
+set +o posix 2>/dev/null || true
 set -euo pipefail
+
+if [ "$(id -u)" -eq 0 ]; then
+    if [ -z "${SUDO_USER:-}" ] || [ "$SUDO_USER" = "root" ]; then
+        echo "apply.sh: do not run directly as root; run as your regular desktop user." >&2
+        exit 1
+    fi
+    target_home="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6 || true)"
+    if [ -z "$target_home" ] || [ ! -d "$target_home" ]; then
+        echo "apply.sh: could not determine home directory for user '$SUDO_USER'." >&2
+        exit 1
+    fi
+    target_uid="$(id -u "$SUDO_USER")"
+    user_env=(HOME="$target_home" USER="$SUDO_USER" LOGNAME="$SUDO_USER")
+    if [ -d "/run/user/$target_uid" ]; then
+        user_env+=(XDG_RUNTIME_DIR="/run/user/$target_uid")
+    fi
+    exec sudo -u "$SUDO_USER" -H env "${user_env[@]}" bash "$0" "$@"
+fi
 
 BACKUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAST_BACKUP="$(dirname -- "$BACKUP_DIR")/kaze/last-backup"
