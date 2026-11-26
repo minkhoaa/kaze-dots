@@ -1,65 +1,97 @@
 # kaze-dots
 
-A minimal, Omarchy-inspired, vertical-first **Hyprland 0.57+ + Noctalia Shell (C++ v5.x)** desktop for Arch Linux / CachyOS — **zero AUR packages**, **offline/zero-telemetry**, **≤ 100 MiB idle PSS**, **≤ 0.20% CPU**, and **0 early portals**.
+My personal dotfiles for **Hyprland 0.57+ (Lua)** + **Noctalia Shell (v5.x)** + **Foot** on Arch Linux / CachyOS.
 
-> **Note:** The previous Waybar/swaybg/Fnott/Fuzzel/Hyprlock stack (`48.01 MiB PSS`) is preserved on the `legacy-waybar` branch.
+Built around official Arch `[extra]` packages (no AUR needed for the core setup) and keeping everything Noctalia already ships native instead of rewriting it.
 
-## Architecture
+- `main` — current setup powered by **Noctalia Shell v5.x**
+- `legacy-waybar` — previous Waybar / swaybg / Fnott / Fuzzel / Hyprlock setup
 
-Everything Noctalia already provides stays **100% native** in Noctalia; `kaze-dots` only adds Hyprland's Lua configuration, systemd session management, Foot server integration, and the few utilities Noctalia does not cover:
+## Stack
 
-- **Native Noctalia (`noctalia`):** bar (`42px` left sidebar by default, editable in Settings GUI), themes & wallpaper palettes, built-in app theming templates (`hyprland`, `foot`, `gtk3`, `gtk4`, `btop`), wallpaper, app launcher (`noctalia dmenu`), Control Center, notifications, OSD, clipboard history, idle/DPMS, lockscreen, Night Light, Caffeine, Polkit, screenshots & annotation, and window switcher.
-- **Hyprland 0.57+ Lua (`hypr/*.lua`):** tiling rules, smart gaps (opt-in), named scratchpads, `noctalia-no-anim` layer rules, and keybinds calling `noctalia msg ...` directly. Optional user overrides live in `~/.config/hypr/user.lua`.
-- **7 small CLIs (`bin/`):**
-  - `kaze-session` — `start` / `stop` / `lock` / `wake-displays` for `kaze-session.target`
-  - `kaze-footclient` — opens terminals via `foot --server` with live Noctalia colors
-  - `kaze-display` — Hyprland multi-monitor layout menu (`noctalia dmenu` + `hyprctl`)
-  - `kaze-keys` — searchable Hyprland shortcut sheet (`noctalia dmenu`)
-  - `kaze-tui` — floating `btop` (sysmon) drawer toggle via `footclient`
-  - `kaze-record` — Wayland full/region MP4 screen recording (`wf-recorder` + safe `SIGINT` finalization)
-  - `kaze-doctor` — checks packages, symlinks, `noctalia config validate`, `foot --check-config`, `hyprctl configerrors`, portals, audio, and singleton PIDs
+- **Compositor:** Hyprland 0.57+ configured in Lua (`hypr/*.lua`)
+- **Shell:** Noctalia (`noctalia`) — bar, themes & wallpaper palettes, built-in templates (`hyprland`, `foot`, `gtk3`, `gtk4`, `btop`), launcher, Control Center, notifications, OSD, clipboard, idle/DPMS, lockscreen, Night Light, Polkit, screenshots, and window switcher
+- **Terminal:** Foot (`foot --server` + `footclient`)
+- **Session:** systemd user units (`kaze-session.target`, `kaze-noctalia.service`, `foot-server`)
 
-## Installation (Arch Linux / CachyOS)
+## Repo Layout
 
-```sh
-# Preview packages and paths without touching disk
-./scripts/install.sh --profile minimal --dry-run
-
-# Install official [extra] packages (20 minimal / 34 full, 0 AUR) and apply with automatic backup/rollback
-./scripts/install.sh --profile minimal   # or --profile full
+```text
+hypr/                    Hyprland Lua config (env, rules, keybinds, execs)
+config/noctalia/         Default Noctalia config (sharp/flat, offline, built-in templates)
+config/foot/             Foot terminal config (includes Noctalia theme)
+config/systemd/user/     Session target and user service units
+lua/kaze/                Small Lua helpers (hypr_user, keybinds_data, popups, session, json)
+bin/                     7 small helper CLIs for things Noctalia doesn't cover
+scripts/                 Install, apply, backup/rollback, and VM test helpers
+templates/               Example ~/.config/hypr/user.lua override file
 ```
 
-To roll back cleanly to your pre-install state (preserving `~/.config/hypr/user.lua`):
+### Helper CLIs (`bin/`)
+
+- `kaze-session` — start/stop session, lock screen, wake displays
+- `kaze-footclient` — launch `footclient` with live Noctalia theme colors
+- `kaze-display` — Hyprland multi-monitor layout picker (`noctalia dmenu`)
+- `kaze-keys` — searchable Hyprland shortcut list (`noctalia dmenu`)
+- `kaze-tui` — toggle floating `btop` window
+- `kaze-record` — full/region screen recording (`wf-recorder`)
+- `kaze-doctor` — quick health check for packages, symlinks, configs, and services
+
+## Setup
+
+Preview first without touching anything:
+
+```sh
+./scripts/install.sh --profile minimal --dry-run
+```
+
+Install packages and apply configs (backs up existing dotfiles automatically):
+
+```sh
+./scripts/install.sh --profile minimal   # core setup (20 packages)
+./scripts/install.sh --profile full      # adds recording, color picker, yazi, imv, zathura, fcitx5
+```
+
+Apply dotfiles only (if packages are already installed):
+
+```sh
+./scripts/install.sh --skip-packages
+```
+
+Rollback to the previous backup:
 
 ```sh
 "$(cat ~/.config/kaze/last-backup)/rollback.sh"
 ```
 
-## Key Shortcuts
+## Customization
 
-| Shortcut | Action |
+- **Bar, themes, wallpaper, widgets:** edit directly in Noctalia Settings (`Super + I`) or `~/.config/noctalia/config.toml` — re-running `apply.sh` preserves your edits.
+- **Per-machine Hyprland overrides:** edit `~/.config/hypr/user.lua` (see [templates/hypr-user.lua.example](templates/hypr-user.lua.example)) for monitors, default apps, gaps, or personal tweaks.
+
+## Main Keybinds
+
+Press `Super + /` anytime to search the full list (`kaze-keys`).
+
+| Keybind | Action |
 | --- | --- |
-| `Super` (tap) / `Super + Space` | Noctalia App Launcher |
-| `Super + A` | Noctalia Control Center |
-| `Super + N` | Noctalia Notifications |
-| `Super + I` | Noctalia Settings GUI (bar, themes, widgets, wallpaper) |
-| `Super + Shift + T` | Toggle Dark / Light Mode (`noctalia msg theme-mode-toggle`) |
-| `Super + Shift + W` | Noctalia Wallpaper Picker |
-| `Super + V` | Noctalia Clipboard History |
-| `Super + /` | Search Hyprland Shortcuts (`kaze-keys`) |
-| `Super + Shift + P` | Multi-Monitor Layout Menu (`kaze-display`) |
-| `Super + Return` / `Super + T` | Foot Terminal (`kaze-footclient`) |
-| `Ctrl + Shift + Esc` | Floating `btop` System Monitor (`kaze-tui sysmon`) |
-| `Print` / `Super + Shift + S` / `Super + Shift + Alt + S` | Noctalia Fullscreen / Region / Annotate Screenshot |
-| `Ctrl + Alt + R` / `Super + Shift + Alt + R` | Toggle Full / Region Screen Recording (`kaze-record`) |
-| `Super + L` / `Ctrl + Alt + Del` | Lock Screen / Noctalia Session Menu |
+| `Super` (tap) / `Super + Space` | App launcher |
+| `Super + Return` / `Super + T` | Terminal (`foot`) |
+| `Super + A` / `Super + N` | Control Center / Notifications |
+| `Super + I` | Noctalia Settings |
+| `Super + Shift + T` | Toggle Dark / Light mode |
+| `Super + Shift + W` | Wallpaper picker |
+| `Super + V` | Clipboard history |
+| `Super + /` | Search keybinds |
+| `Super + Shift + P` | Display layout menu |
+| `Ctrl + Shift + Esc` | Floating `btop` |
+| `Print` / `Super + Shift + S` / `Super + Shift + Alt + S` | Full / Region / Annotate screenshot |
+| `Super + Shift + C` | Pick color (`hyprpicker`) |
+| `Ctrl + Alt + R` / `Super + Shift + Alt + R` | Full / Region screen recording |
+| `Super + L` / `Ctrl + Alt + Del` | Lock / Session menu |
 | `Ctrl + Super + Alt + R` | Reload Noctalia & Hyprland |
 
-## Verification
+## Notes
 
-```sh
-find lua hypr bin tests -type f \( -name '*.lua' -o -path 'bin/kaze-*' \) -print0 | xargs -0 -r -n1 luac -p
-lua tests/run.lua
-python3 -m unittest tests/vm-idle-test.py
-shellcheck scripts/*.sh tests/vm-verify.sh tests/vm-common.sh
-```
+- Run `kaze-doctor` inside a session if something looks off.
+- Personal setup tuned for my own workflow — feel free to fork or borrow parts, just review configs before applying blindly.
