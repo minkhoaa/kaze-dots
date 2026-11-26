@@ -11,19 +11,30 @@ local function setup_path()
     end
     local paths = {}
     local script = arg and arg[0] or ""
-    local q = "'" .. script:gsub("'", "'\\''") .. "'"
-    local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
-    local resolved = p and p:read("*l") or nil
-    if p then p:close() end
-    self_path = resolved or script
-    script_dir = self_path:match("^(.*)/[^/]+$")
-    if script_dir then
-        local repo_lua = script_dir .. "/../lua"
-        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
-        if f then
-            f:close()
-            paths[#paths + 1] = repo_lua .. "/?.lua"
-            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+    local direct_base = script:match("^(.*)/[^/]+$")
+    local direct_lua = direct_base and (direct_base .. "/../lua") or nil
+    local f_direct = direct_lua and io.open(direct_lua .. "/kaze/defaults.lua", "r") or nil
+    if f_direct then
+        f_direct:close()
+        self_path = script
+        script_dir = direct_base
+        paths[#paths + 1] = direct_lua .. "/?.lua"
+        paths[#paths + 1] = direct_lua .. "/?/init.lua"
+    else
+        local q = "'" .. script:gsub("'", "'\\''") .. "'"
+        local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+        local resolved = p and p:read("*l") or nil
+        if p then p:close() end
+        self_path = resolved or script
+        script_dir = self_path:match("^(.*)/[^/]+$")
+        if script_dir then
+            local repo_lua = script_dir .. "/../lua"
+            local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+            if f then
+                f:close()
+                paths[#paths + 1] = repo_lua .. "/?.lua"
+                paths[#paths + 1] = repo_lua .. "/?/init.lua"
+            end
         end
     end
     paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
@@ -353,6 +364,7 @@ if not is_ui then
         title = title,
         cols = COLS,
         rows = ROWS,
+        cfg = cfg,
         theme = theme,
         foot_bin = sibling_or_path("kaze-footclient"),
         script_path = self_path,
@@ -599,7 +611,7 @@ widget.run_loop({
 
             -- Rows 12..13: Clickable Live Performance Summary Card
             ui:card(12, 2, COLS - 2, 2, theme.surface)
-            local temp_part = pf.temp_c and string.format("  ·  󰔏 %d°C", pf.temp_c) or ("  ·  󰅐 " .. pf.uptime)
+            local temp_part = pf.temp_c and string.format("  ·  󰔏 %d°C", pf.temp_c) or string.format("  ·  %d cores", pf.cores)
             local vitals1 = string.format(
                 " 󰻠 CPU %2d%%  ·  󰍛 RAM %.1f/%.0fG%s",
                 pf.cpu_pct,
@@ -623,18 +635,18 @@ widget.run_loop({
             local media = query_media()
             if media.active then
                 local icon = media.playing and " 󰎈 " or " 󰏤 "
-                local max_t = COLS - 6 - #media.time_str - 3
+                local max_t = COLS - 6 - widget.vis_len(media.time_str) - 3
                 ui:put(15, 2, icon .. widget.trunc(media.title, math.max(12, max_t)), theme.fg, theme.surface, true)
                 if media.time_str ~= "" then
-                    ui:put(15, COLS - #media.time_str - 1, media.time_str, theme.fg_muted, theme.surface, false)
+                    ui:put(15, COLS - widget.vis_len(media.time_str) - 1, media.time_str, theme.fg_muted, theme.surface, false)
                 end
                 local artist_txt = (media.artist ~= "") and ("   " .. media.artist) or (media.playing and "   Playing" or "   Paused")
                 ui:put(16, 2, widget.trunc(artist_txt, COLS - 4), theme.fg_muted, theme.surface, false)
-                ui:slider(17, 4, COLS - 6, media.pct, not media.playing, theme, nil, theme.surface)
+                ui:slider(17, 4, COLS - 6, media.pct, media.playing and false or "inactive", theme, nil, theme.surface)
             else
                 ui:put(15, 2, " 󰎊  No active media playback", theme.fg_muted, theme.surface, true)
                 ui:put(16, 2, "    Start a player to control playback", theme.fg_muted, theme.surface, false)
-                ui:slider(17, 4, COLS - 6, 0, true, theme, nil, theme.surface)
+                ui:slider(17, 4, COLS - 6, 0, "inactive", theme, nil, theme.surface)
             end
 
             -- Row 18 inside Media Card: Transport controls + Quick Tray link
@@ -729,14 +741,8 @@ widget.run_loop({
                 and "Cleared automatically on logout"
                 or (live_n > 0
                     and string.format("■ %d active popup%s · Scroll or j/k", live_n, live_n == 1 and "" or "s")
-                    or "Scroll or j/k to browse · Click ✕ to dismiss")
-            ui:put(5, 3, widget.trunc(hint_txt, COLS - 18), live_n > 0 and theme.accent or theme.fg_muted, theme.surface, false)
-            if #notifs > 0 then
-                ui:pill(5, COLS - 14, " 󰎟 Clear all ", theme.fg, theme.bg_alt, true, function()
-                    notify.clear_all()
-                    notif_scroll = 0
-                end)
-            end
+                    or "Scroll or j/k · Click ✕ to dismiss")
+            ui:put(5, 3, widget.trunc(hint_txt, COLS - 5), live_n > 0 and theme.accent or theme.fg_muted, theme.surface, false)
 
             -- Rows 7..17: Stacked Cards or Empty State
             if #notifs == 0 then
@@ -767,7 +773,7 @@ widget.run_loop({
                     -- Line 1: Context icon + Summary + Relative time + Dismiss [ ✕ ]
                     local rel = notify.rel_time(item.ts, item.time)
                     local close_col = 2 + card_w - 4
-                    local rel_col = close_col - #rel - 1
+                    local rel_col = close_col - widget.vis_len(rel) - 1
                     local sum_max = math.max(8, rel_col - 8)
                     local sum_txt = widget.trunc((item.summary ~= "" and item.summary) or "Notification", sum_max)
 
@@ -824,14 +830,6 @@ widget.run_loop({
             ui:rule(20, 2, COLS - 2, theme.border)
             ui:pill(
                 21, 2,
-                dnd_on and " 󰂛 DND: On  " or " 󰂚 DND: Off ",
-                dnd_on and theme.accent_fg or theme.fg,
-                dnd_on and theme.warn or theme.surface,
-                true,
-                toggle_dnd
-            )
-            ui:pill(
-                21, 16,
                 " 󰎟 Clear All ",
                 (#notifs > 0) and theme.fg or theme.fg_muted,
                 theme.surface,
@@ -843,6 +841,9 @@ widget.run_loop({
                     end
                 end
             )
+            ui:pill(21, 17, " ◀ Calendar ", theme.fg, theme.surface, false, function()
+                active_tab = "calendar"
+            end)
             ui:pill(21, COLS - 16, " 󰒓 Quick Tray ▸ ", theme.accent_fg, theme.accent, true, function()
                 return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-panel")) }
             end)
@@ -856,12 +857,12 @@ widget.run_loop({
             ui:card(3, 2, COLS - 2, 5, theme.surface)
             local cpu_right = string.format("%3d%% · %s", pf.cpu_pct, pf.ghz or ("Load " .. pf.load1))
             ui:put(3, 3, "󰻠  CPU", theme.fg, theme.surface, true)
-            ui:put(3, COLS - #cpu_right - 1, cpu_right, severity_color(pf.cpu_pct), theme.surface, true)
+            ui:put(3, COLS - widget.vis_len(cpu_right) - 1, cpu_right, severity_color(pf.cpu_pct), theme.surface, true)
             ui:meter(4, 3, COLS - 4, pf.cpu_pct, severity_color(pf.cpu_pct), theme.bg_alt, theme.surface)
 
             local mem_right = string.format("%.1f / %.1f GiB (%d%%)", pf.mem_used_gb, pf.mem_total_gb, pf.mem_pct)
             ui:put(5, 3, "󰍛  Memory", theme.fg, theme.surface, true)
-            ui:put(5, COLS - #mem_right - 1, mem_right, severity_color(pf.mem_pct), theme.surface, true)
+            ui:put(5, COLS - widget.vis_len(mem_right) - 1, mem_right, severity_color(pf.mem_pct), theme.surface, true)
             ui:meter(6, 3, COLS - 4, pf.mem_pct, severity_color(pf.mem_pct), theme.bg_alt, theme.surface)
 
             local swap_txt = (pf.swap_total_gb > 0.05)
@@ -875,7 +876,7 @@ widget.run_loop({
             local d_fmt = (pf.disk.total_gb < 10) and "%.1f / %.1f GiB (%d%%)" or "%.1f / %.0f GiB (%d%%)"
             local d_right = string.format(d_fmt, pf.disk.used_gb, pf.disk.total_gb, pf.disk.pct)
             ui:put(9, 3, "󰋊  Storage (/)", theme.fg, theme.surface, true)
-            ui:put(9, COLS - #d_right - 1, d_right, severity_color(pf.disk.pct), theme.surface, true)
+            ui:put(9, COLS - widget.vis_len(d_right) - 1, d_right, severity_color(pf.disk.pct), theme.surface, true)
             ui:meter(10, 3, COLS - 4, pf.disk.pct, severity_color(pf.disk.pct), theme.bg_alt, theme.surface)
 
             local t_str = pf.temp_c and string.format("󰔏 %d°C", pf.temp_c) or "󰔏 --°C"
@@ -889,14 +890,14 @@ widget.run_loop({
             ui:card(14, 2, COLS - 2, 5, theme.surface)
             ui:put(14, 3, "󰓅  Top Processes", theme.fg, theme.surface, true)
             ui:put(14, COLS - 12, "CPU%    MEM", theme.fg_muted, theme.surface, false)
-            ui:rule(15, 3, COLS - 4, theme.border, theme.surface)
+            ui:rule(15, 3, COLS - 4, theme.fg_muted, theme.surface, true)
             for idx = 1, 3 do
                 local p = pf.procs[idx]
                 if p then
                     local pname = widget.pad_right(p.name, COLS - 18)
                     local pstat = string.format("%5.1f%% %4dM", p.cpu, p.mem_mb)
                     ui:put(15 + idx, 3, pname, theme.fg, theme.surface, false)
-                    ui:put(15 + idx, COLS - #pstat - 1, pstat, p.cpu >= 50 and theme.warn or theme.fg_muted, theme.surface, false)
+                    ui:put(15 + idx, COLS - widget.vis_len(pstat) - 1, pstat, p.cpu >= 50 and theme.warn or theme.fg_muted, theme.surface, false)
                 elseif idx == 1 then
                     ui:put(16, 3, "Idle", theme.fg_muted, theme.surface, false)
                 end

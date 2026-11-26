@@ -62,7 +62,7 @@ if #arg > 0 then
 end
 
 if not list_only then
-    if popups.toggle_existing_fuzzel() then
+    if popups.toggle_existing_fuzzel("kaze-windows") then
         os.exit(0)
     end
     if not fs.command_exists("fuzzel") then
@@ -203,6 +203,7 @@ local choice, dmenu_err = popups.run_dmenu(dmenu_entries, {
     line_height = 30,
     image_size_ratio = 0.65,
     prompt = "Window > ",
+    tag = "kaze-windows",
 })
 if not choice then
     io.stderr:write("kaze-windows: " .. tostring(dmenu_err) .. "\n")

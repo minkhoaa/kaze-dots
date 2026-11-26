@@ -216,8 +216,8 @@ function M.ensure_layout_swatch(name, palette)
         )
     else
         inner = string.format(
-            '<rect x="3" y="4" width="42" height="4" rx="0" fill="%s"/>'
-                .. '<rect x="7" y="12" width="34" height="29" rx="0" fill="%s"/>',
+            '<rect x="3" y="3" width="42" height="6" rx="0" fill="%s"/>'
+                .. '<rect x="7" y="13" width="34" height="28" rx="0" fill="%s"/>',
             accent,
             surface
         )
@@ -347,21 +347,91 @@ local function monotonic_ms()
     return os.time() * 1000
 end
 
-local function dismiss_guard_path()
-    local rt = fs.private_runtime_dir()
-    return rt and (rt .. "/dismiss-guard") or nil
-end
-
-function M.record_dismiss_guard(target)
-    local path = dismiss_guard_path()
-    if not path or type(target) ~= "string" or target == "" then
+-- Atomic write inside $XDG_RUNTIME_DIR/kaze using pure Lua I/O first so callers
+-- running inside Hyprland's embedded Lua engine never fork via os.execute.
+local function write_runtime_file(filename, payload)
+    local dir = fs.runtime_dir()
+    if not dir then
         return false
     end
-    fs.write_atomic(path, string.format("%s\t%d\n", target:gsub("[\r\n\t]+", ""), monotonic_ms()))
+    local path = dir .. "/" .. filename
+    dmenu_seq = dmenu_seq + 1
+    local tmp = string.format("%s.tmp.%d.%d", path, os.time(), dmenu_seq)
+    local f = io.open(tmp, "wb")
+    if not f then
+        local created = fs.private_runtime_dir()
+        if not created then
+            return false
+        end
+        fs.write_atomic(created .. "/" .. filename, payload)
+        return true
+    end
+    local ok = f:write(payload) and f:flush()
+    local c_ok = f:close()
+    if not (ok and c_ok) then
+        os.remove(tmp)
+        return false
+    end
+    if not os.rename(tmp, path) then
+        os.remove(tmp)
+        return false
+    end
     return true
 end
 
-function M.consume_dismiss_guard(target, window_ms)
+function M.mark_active_fuzzel(tag)
+    if type(tag) ~= "string" or tag == "" then
+        return false
+    end
+    return write_runtime_file("active-fuzzel", tag:gsub("[\r\n\t]+", "") .. "\n")
+end
+
+function M.active_fuzzel_tag()
+    local rt = fs.runtime_dir()
+    local path = rt and (rt .. "/active-fuzzel") or nil
+    if not path then
+        return nil
+    end
+    local data = fs.read_file(path)
+    if not data then
+        return nil
+    end
+    local tag = data:match("^([^\r\n\t]+)")
+    return (tag and tag ~= "") and tag or nil
+end
+
+function M.clear_active_fuzzel(expected_tag)
+    local rt = fs.runtime_dir()
+    local path = rt and (rt .. "/active-fuzzel") or nil
+    if not path then
+        return
+    end
+    if expected_tag and expected_tag ~= "" then
+        local cur = M.active_fuzzel_tag()
+        if cur and cur ~= expected_tag then
+            return
+        end
+    end
+    os.remove(path)
+end
+
+function M.record_dismiss_guard(target, subtarget)
+    if type(target) ~= "string" or target == "" then
+        return false
+    end
+    local clean_t = target:gsub("[\r\n\t]+", "")
+    local clean_s = type(subtarget) == "string" and subtarget:gsub("[\r\n\t]+", "") or ""
+    return write_runtime_file("dismiss-guard", string.format("%s\t%d\t%s\n", clean_t, monotonic_ms(), clean_s))
+end
+
+function M.consume_dismiss_guard(target, subtarget_or_window, window_ms)
+    local subtarget = nil
+    local win_ms = window_ms
+    if type(subtarget_or_window) == "number" then
+        win_ms = subtarget_or_window
+    elseif type(subtarget_or_window) == "string" and subtarget_or_window ~= "" then
+        subtarget = subtarget_or_window
+    end
     local rt = fs.runtime_dir()
     local path = rt and (rt .. "/dismiss-guard") or nil
     if not path or type(target) ~= "string" or target == "" then
@@ -371,23 +441,39 @@ function M.consume_dismiss_guard(target, window_ms)
     if not data or data == "" then
         return false
     end
-    local guard_target, ts_s = data:match("^([^\t\r\n]+)\t(%d+)")
+    local guard_target, ts_s, guard_sub = data:match("^([^\t\r\n]+)\t(%d+)\t?([^\r\n]*)")
     local ts = tonumber(ts_s)
     local age = ts and (monotonic_ms() - ts) or nil
-    if guard_target == target and age and age >= 0 and age <= (tonumber(window_ms) or 450) then
+    if guard_target == target and age and age >= 0 and age <= (tonumber(win_ms) or 450) then
+        if not subtarget or not guard_sub or guard_sub == "" or guard_sub == subtarget then
+            os.remove(path)
+            return true
+        end
         os.remove(path)
-        return true
     end
     return false
 end
 
-function M.toggle_existing_fuzzel()
+function M.toggle_existing_fuzzel(tag)
     local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
     if running == true or running == 0 then
+        local prev_tag = M.active_fuzzel_tag()
         os.execute("pkill -x fuzzel >/dev/null 2>&1")
-        return true
+        M.clear_active_fuzzel()
+        if not tag or tag == "" or not prev_tag or prev_tag == "" or prev_tag == tag then
+            return true
+        end
+        -- Switching directly from one fuzzel menu to another: wait briefly for old fuzzel to exit.
+        for _ = 1, 10 do
+            local still = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
+            if not (still == true or still == 0) then
+                break
+            end
+            os.execute("sleep 0.02")
+        end
+        return false
     end
-    return M.consume_dismiss_guard("fuzzel")
+    return M.consume_dismiss_guard("fuzzel", tag)
 end
 
 -- Launches fuzzel --dmenu via a private temp file so NUL-delimited icon tags (\0icon\x1f...)
@@ -484,13 +570,22 @@ function M.run_dmenu(entries, opts)
 
     local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
     local cmd = utf8_guard .. table.concat(argv, " ") .. " < " .. fs.shell_quote(tmp_path)
+    if opts.tag and opts.tag ~= "" then
+        M.mark_active_fuzzel(opts.tag)
+    end
     local proc = io.popen(cmd, "r")
     if not proc then
+        if opts.tag and opts.tag ~= "" then
+            M.clear_active_fuzzel(opts.tag)
+        end
         os.remove(tmp_path)
         return nil, "failed to launch fuzzel"
     end
     local out = proc:read("*a") or ""
     proc:close()
+    if opts.tag and opts.tag ~= "" then
+        M.clear_active_fuzzel(opts.tag)
+    end
     os.remove(tmp_path)
     return (out:gsub("[\r\n]+$", ""))
 end

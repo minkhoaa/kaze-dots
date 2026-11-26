@@ -11,19 +11,30 @@ local function setup_path()
     end
     local paths = {}
     local script = arg and arg[0] or ""
-    local q = "'" .. script:gsub("'", "'\\''") .. "'"
-    local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
-    local resolved = p and p:read("*l") or nil
-    if p then p:close() end
-    self_path = resolved or script
-    script_dir = self_path:match("^(.*)/[^/]+$")
-    if script_dir then
-        local repo_lua = script_dir .. "/../lua"
-        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
-        if f then
-            f:close()
-            paths[#paths + 1] = repo_lua .. "/?.lua"
-            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+    local direct_base = script:match("^(.*)/[^/]+$")
+    local direct_lua = direct_base and (direct_base .. "/../lua") or nil
+    local f_direct = direct_lua and io.open(direct_lua .. "/kaze/defaults.lua", "r") or nil
+    if f_direct then
+        f_direct:close()
+        self_path = script
+        script_dir = direct_base
+        paths[#paths + 1] = direct_lua .. "/?.lua"
+        paths[#paths + 1] = direct_lua .. "/?/init.lua"
+    else
+        local q = "'" .. script:gsub("'", "'\\''") .. "'"
+        local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+        local resolved = p and p:read("*l") or nil
+        if p then p:close() end
+        self_path = resolved or script
+        script_dir = self_path:match("^(.*)/[^/]+$")
+        if script_dir then
+            local repo_lua = script_dir .. "/../lua"
+            local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+            if f then
+                f:close()
+                paths[#paths + 1] = repo_lua .. "/?.lua"
+                paths[#paths + 1] = repo_lua .. "/?/init.lua"
+            end
         end
     end
     paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
@@ -145,21 +156,56 @@ local function split_nmcli_terse(line)
     return fields
 end
 
+local function ipv4_for_iface(ifname)
+    if not ifname or ifname == "" or not fs.command_exists("ip") then
+        return nil
+    end
+    local ip_out = fs.capture("ip -o -4 addr show up scope global dev " .. fs.shell_quote(ifname) .. " 2>/dev/null")
+    local cidr = ip_out and ip_out:match("inet%s+(%S+)")
+    return cidr and cidr:gsub("/%d+$", "") or nil
+end
+
 local function probe_wifi_list(do_rescan)
     local info = {
         nm_ok = false,
         radio_on = true,
         networks = {},
+        wifi_if = nil,
+        wifi_ip = nil,
         wired_if = nil,
         ip_addr = nil,
     }
-    if fs.command_exists("ip") then
+    if fs.command_exists("nmcli") then
+        local dev_out = fs.capture("nmcli -t -f DEVICE,TYPE,STATE device status 2>/dev/null")
+        if dev_out then
+            for line in dev_out:gmatch("[^\r\n]+") do
+                local f = split_nmcli_terse(line)
+                local dev, dtype, dstate = f[1], f[2], f[3]
+                if dev and dev ~= "" then
+                    if dtype == "wifi" and (dstate == "connected" or not info.wifi_if) then
+                        info.wifi_if = dev
+                    elseif dtype == "ethernet" and dstate == "connected" and not info.wired_if then
+                        info.wired_if = dev
+                    end
+                end
+            end
+        end
+    end
+    if info.wifi_if then
+        info.wifi_ip = ipv4_for_iface(info.wifi_if)
+    end
+    if info.wired_if then
+        info.ip_addr = ipv4_for_iface(info.wired_if)
+    elseif fs.command_exists("ip") then
         local ip_out = fs.capture("ip -o -4 addr show up scope global 2>/dev/null")
         if ip_out then
-            local ifn, cidr = ip_out:match("^%d+:%s+(%S+)%s+inet%s+(%S+)")
-            if ifn and cidr then
-                info.wired_if = ifn
-                info.ip_addr = cidr:gsub("/%d+$", "")
+            for line in ip_out:gmatch("[^\r\n]+") do
+                local ifn, cidr = line:match("^%d+:%s+(%S+)%s+inet%s+(%S+)")
+                if ifn and cidr and ifn ~= info.wifi_if then
+                    info.wired_if = ifn
+                    info.ip_addr = cidr:gsub("/%d+$", "")
+                    break
+                end
             end
         end
     end
@@ -350,6 +396,7 @@ if not is_ui then
         title = win_title,
         cols = COLS,
         rows = ROWS,
+        cfg = cfg,
         theme = theme,
         foot_bin = sibling_or_path("kaze-footclient"),
         script_path = self_path,
@@ -364,6 +411,9 @@ local recs_expanded = true
 local wifi_scroll = 0
 local wifi_state = nil
 local wifi_status_msg = nil
+local panel_notice = nil
+local cached_st = nil
+local state_dirty = true
 
 local function set_volume_pct(pct)
     if not fs.command_exists("wpctl") then return end
@@ -374,6 +424,10 @@ local function set_volume_pct(pct)
         tostring(max_v),
         clamped
     ))
+    if cached_st then
+        cached_st.vol_pct = clamped
+        cached_st.vol_muted = false
+    end
 end
 
 local function set_bright_pct(pct, dev, max_val)
@@ -386,11 +440,16 @@ local function set_bright_pct(pct, dev, max_val)
         floor,
         clamped
     ))
+    if cached_st then
+        cached_st.bright_pct = clamped
+    end
 end
 
 local function open_wifi_view(rescan)
     wifi_state = probe_wifi_list(rescan)
     wifi_scroll = 0
+    panel_notice = nil
+    state_dirty = true
     active_view = "wifi"
 end
 
@@ -404,36 +463,51 @@ widget.run_loop({
     theme = theme,
     on_scroll = function(dir)
         if active_view == "wifi" and wifi_state then
-            local max_sc = math.max(0, #wifi_state.networks - 9)
+            local max_sc = math.max(0, #wifi_state.networks - 10)
             wifi_scroll = math.max(0, math.min(max_sc, wifi_scroll - dir))
         end
     end,
     on_key = function(k)
         if active_view ~= "main" and (k == "\127" or k == "\8" or k == "b" or k == "CSI:D") then
             active_view = "main"
+            panel_notice = nil
+            state_dirty = true
             return "redraw"
         elseif k == "w" or k == "W" then
             if active_view == "wifi" then
                 active_view = "main"
+                panel_notice = nil
+                state_dirty = true
             else
                 open_wifi_view(false)
             end
             return "redraw"
         elseif k == "m" or k == "M" then
             os.execute("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle >/dev/null 2>&1 || true")
+            if cached_st then
+                cached_st.vol_muted = not cached_st.vol_muted
+            else
+                state_dirty = true
+            end
             return "redraw"
         elseif k == "+" or k == "=" or k == "CSI:C" then
-            local st = probe_state()
+            local st = cached_st or probe_state()
+            cached_st = st
             set_volume_pct((st.vol_pct or 50) + 5)
             return "redraw"
         elseif k == "-" then
-            local st = probe_state()
+            local st = cached_st or probe_state()
+            cached_st = st
             set_volume_pct((st.vol_pct or 50) - 5)
             return "redraw"
         end
     end,
     render = function(ui)
-        local st = probe_state()
+        if state_dirty or not cached_st then
+            cached_st = probe_state()
+            state_dirty = false
+        end
+        local st = cached_st
         ui:begin_frame(theme.bg_alt, theme.fg)
 
         if active_view == "wifi" then
@@ -444,6 +518,8 @@ widget.run_loop({
             -- Row 1: Back + Title + Radio Switch + Close
             ui:pill(1, 3, " ◀ Back ", theme.fg, theme.surface, true, function()
                 active_view = "main"
+                panel_notice = nil
+                state_dirty = true
             end)
             ui:put(1, 13, "󰤨  Wi-Fi & Network", theme.fg, theme.bg_alt, true)
             if wf.nm_ok then
@@ -451,6 +527,7 @@ widget.run_loop({
                     local next_st = wf.radio_on and "off" or "on"
                     os.execute("nmcli radio wifi " .. next_st .. " >/dev/null 2>&1 || true")
                     wifi_state = probe_wifi_list(false)
+                    state_dirty = true
                 end)
             end
             ui:pill(1, 41, " ✕ ", theme.fg_muted, theme.surface, true, function()
@@ -461,12 +538,16 @@ widget.run_loop({
             ui:card(3, 3, 41, 3, theme.surface)
             if st.wifi_ssid then
                 ui:put(3, 4, "󰤨  Connected: " .. widget.trunc(st.wifi_ssid, 24), theme.ok, theme.surface, true)
-                ui:put(4, 4, "   IPv4: " .. (wf.ip_addr or "DHCP") .. "  ·  Wireless", theme.fg_muted, theme.surface, false)
+                ui:put(4, 4, "   IPv4: " .. (wf.wifi_ip or "DHCP") .. "  ·  Wireless", theme.fg_muted, theme.surface, false)
                 ui:pill(5, 4, " Disconnect ", theme.danger, theme.bg_alt, false, function()
-                    if wf.wired_if then
-                        os.execute("nmcli device disconnect " .. fs.shell_quote(wf.wired_if) .. " >/dev/null 2>&1 || true")
+                    if wf.wifi_if then
+                        os.execute("nmcli device disconnect " .. fs.shell_quote(wf.wifi_if) .. " >/dev/null 2>&1 || true")
+                        wifi_status_msg = "Disconnected " .. wf.wifi_if
+                    else
+                        wifi_status_msg = "No active Wi-Fi interface found"
                     end
                     wifi_state = probe_wifi_list(false)
+                    state_dirty = true
                 end)
             elseif wf.wired_if and wf.ip_addr then
                 ui:put(3, 4, "󰈀  Ethernet Active (" .. wf.wired_if .. ")", theme.ok, theme.surface, true)
@@ -486,9 +567,10 @@ widget.run_loop({
                     os.execute("nmcli device wifi rescan >/dev/null 2>&1 || true")
                     wifi_state = probe_wifi_list(true)
                     wifi_status_msg = string.format("Found %d networks", #wifi_state.networks)
+                    state_dirty = true
                 end)
             end
-            ui:rule(8, 4, 39, theme.border, theme.surface)
+            ui:rule(8, 4, 39, theme.fg_muted, theme.surface, true)
 
             if not wf.nm_ok then
                 ui:put(11, 5, "󰈀  NetworkManager is not running", theme.fg_muted, theme.surface, true)
@@ -502,6 +584,11 @@ widget.run_loop({
                 ui:put(14, 5, "click [Rescan] / [Open nmtui] below.", theme.fg_muted, theme.surface, false)
             else
                 local max_rows = 10
+                local max_sc = math.max(0, #wf.networks - max_rows)
+                if wifi_scroll > max_sc then wifi_scroll = max_sc end
+                local has_scroll = (#wf.networks > max_rows)
+                local row_w = has_scroll and 38 or 39
+                local name_w = has_scroll and 23 or 24
                 for idx = 1, max_rows do
                     local net = wf.networks[wifi_scroll + idx]
                     if not net then break end
@@ -510,14 +597,13 @@ widget.run_loop({
                     local lock = net.secured and "󰌾" or " "
                     local row_bg = net.active and theme.accent or theme.surface
                     local row_fg = net.active and theme.accent_fg or theme.fg
-                    local name_w = 24
                     local clean_name = widget.pad_right(net.ssid:gsub("[\r\n\t]+", " "), name_w)
                     local right_tag = net.active
                         and string.format(" ✓ %3d%% ", net.signal)
                         or string.format(" %s %3d%% ", lock, net.signal)
                     local full_row = string.format(" %s %s%s", sig_icon, clean_name, right_tag)
-                    ui:put(r, 4, widget.pad_right(full_row, 39), row_fg, row_bg, net.active)
-                    ui:hitbox(r, 4, r, 42, {
+                    ui:put(r, 4, widget.pad_right(full_row, row_w), row_fg, row_bg, net.active)
+                    ui:hitbox(r, 4, r, 4 + row_w - 1, {
                         click = function()
                             if net.active then return end
                             local ok_fast = os.execute(
@@ -526,6 +612,7 @@ widget.run_loop({
                             if ok_fast == true or ok_fast == 0 then
                                 wifi_status_msg = "Connected to " .. net.ssid
                                 wifi_state = probe_wifi_list(false)
+                                state_dirty = true
                             else
                                 return {
                                     exec_and_close = fs.shell_quote(sibling_or_path("kaze-wifi"))
@@ -534,6 +621,9 @@ widget.run_loop({
                             end
                         end,
                     })
+                end
+                if has_scroll then
+                    ui:scrollbar(9, max_rows, 43, #wf.networks, max_rows, wifi_scroll, theme.accent, theme.border, theme.surface)
                 end
             end
 
@@ -554,8 +644,10 @@ widget.run_loop({
 
             ui:pill(23, 3, " ◀ Quick Tray ", theme.fg, theme.surface, false, function()
                 active_view = "main"
+                panel_notice = nil
+                state_dirty = true
             end)
-            ui:pill(23, 27, " 󰑐 Fuzzel Wi-Fi ▸ ", theme.fg, theme.surface, false, function()
+            ui:pill(23, 26, " 󰑐 Fuzzel Wi-Fi ▸ ", theme.fg, theme.surface, false, function()
                 return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-wifi")) }
             end)
             return
@@ -563,6 +655,8 @@ widget.run_loop({
             -- SETTINGS / APPEARANCE SUB-VIEW
             ui:pill(1, 3, " ◀ Back ", theme.fg, theme.surface, true, function()
                 active_view = "main"
+                panel_notice = nil
+                state_dirty = true
             end)
             ui:put(1, 13, "󰒓  Appearance & Desktop", theme.fg, theme.bg_alt, true)
             ui:pill(1, 41, " ✕ ", theme.fg_muted, theme.surface, true, function()
@@ -594,15 +688,19 @@ widget.run_loop({
             -- Card 2 (Rows 8..13): Theme, Polarity & Night Light
             ui:card(8, 3, 41, 6, theme.surface)
             ui:put(8, 4, "󰔎  Light Mode (Paper)", theme.fg, theme.surface, true)
-            ui:switch(8, 37, st.light_on, theme, function()
+            ui:switch(8, 38, st.light_on, theme, function()
                 return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-theme")) .. " toggle-polarity" }
             end)
             ui:put(9, 4, "   Theme: " .. tostring(cfg.theme or "kaze"), theme.fg_muted, theme.surface, false)
 
             ui:put(10, 4, "󰖔  Night Light (" .. tostring(cfg.night_temp or 4500) .. "K)", theme.fg, theme.surface, true)
-            ui:switch(10, 37, st.night_on, theme, function()
+            ui:switch(10, 38, st.night_on, theme, function()
                 if fs.command_exists("hyprsunset") then
                     os.execute(fs.shell_quote(sibling_or_path("kaze-night")) .. " >/dev/null 2>&1 || true")
+                    panel_notice = nil
+                    state_dirty = true
+                else
+                    panel_notice = "Install hyprsunset for Night Light"
                 end
             end)
 
@@ -626,7 +724,10 @@ widget.run_loop({
                         is_p and theme.accent_fg or theme.fg,
                         is_p and theme.accent or theme.bg_alt,
                         is_p,
-                        function() power_profile.set(prof) end
+                        function()
+                            power_profile.set(prof)
+                            state_dirty = true
+                        end
                     )
                     px = px + pw + 1
                 end
@@ -647,8 +748,14 @@ widget.run_loop({
                 }
             end)
 
+            if panel_notice then
+                ui:put(21, 3, widget.trunc(panel_notice, 41), theme.warn, theme.bg_alt, false)
+            end
+            ui:rule(22, 3, 41, theme.border)
             ui:pill(23, 3, " ◀ Quick Tray ", theme.fg, theme.surface, false, function()
                 active_view = "main"
+                panel_notice = nil
+                state_dirty = true
             end)
             ui:pill(23, 28, " 󰑓 Reload Shell ", theme.fg, theme.surface, false, function()
                 return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-sync")) .. " --reload" }
@@ -664,7 +771,7 @@ widget.run_loop({
             open_wifi_view(false)
         end)
         if st.bat_str then
-            local bw = tonumber(utf8.len(st.bat_str)) or #st.bat_str
+            local bw = widget.vis_len(st.bat_str)
             ui:put(1, 40 - bw, st.bat_str, theme.ok, theme.bg_alt, true)
         end
         ui:pill(1, 41, " ✕ ", theme.fg_muted, theme.surface, true, function()
@@ -677,6 +784,10 @@ widget.run_loop({
         ui:switch(3, 38, st.caffeine_on, theme, function()
             if fs.command_exists("systemd-inhibit") then
                 os.execute(fs.shell_quote(sibling_or_path("kaze-inhibit")) .. " >/dev/null 2>&1 || true")
+                panel_notice = nil
+                state_dirty = true
+            else
+                panel_notice = "systemd-inhibit is not available"
             end
         end)
         ui:put(
@@ -697,12 +808,17 @@ widget.run_loop({
             ui:put(7, 4, "■  Screen recorder", theme.danger, theme.surface, true)
             ui:pill(7, 29, " 󰓛 Stop Rec  ", theme.accent_fg, theme.danger, true, function()
                 os.execute(fs.shell_quote(sibling_or_path("kaze-record")) .. " stop >/dev/null 2>&1 || true")
+                state_dirty = true
             end)
             ui:put(8, 4, "   Recording since " .. (st.rec_since or "now"), theme.danger, theme.surface, false)
         else
             ui:put(7, 4, "󰑊  Screen record", theme.fg, theme.surface, true)
             local mode_lbl = (rec_mode == "fullscreen") and " 󰊓 Fullscreen " or " 󰩭 Region     "
             ui:pill(7, 25, mode_lbl, theme.accent_fg, theme.accent, true, function()
+                if not fs.command_exists("wf-recorder") then
+                    panel_notice = "Install wf-recorder for screen recording"
+                    return
+                end
                 local flag = (rec_mode == "region") and " --region" or " toggle"
                 return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-record")) .. flag }
             end)
@@ -744,18 +860,17 @@ widget.run_loop({
             end
         end
 
-        -- Card 3 (Rows 14..16): Quick toggles (6 Caelestia squircles across cols 3..43)
-        ui:card(14, 3, 41, 3, theme.surface)
-        ui:put(14, 4, "Quick toggles", theme.fg, theme.surface, true)
+        -- Section 3 (Rows 14..16): Quick toggles (6 elevated surface tiles directly on bg_alt)
+        ui:put(14, 3, "Quick toggles", theme.fg, theme.bg_alt, true)
         if st.zen_on then
-            ui:put(14, 18, "· Game", theme.ok, theme.surface, true)
+            ui:put(14, 17, "· Game", theme.ok, theme.bg_alt, true)
         end
         local notif_pill = (st.notif_count > 0)
             and string.format(" %s %d ▸ ", st.dnd_on and "󰂛" or "󰂚", st.notif_count)
             or (st.dnd_on and " 󰂛 DND ▸ " or " 󰂚 Inbox ▸ ")
         local notif_fg = st.dnd_on and theme.warn or ((st.notif_count > 0) and theme.accent or theme.fg_muted)
         local notif_w = widget.vis_len(notif_pill)
-        ui:pill(14, 43 - notif_w, notif_pill, notif_fg, theme.bg_alt, st.dnd_on or st.notif_count > 0, function()
+        ui:pill(14, 44 - notif_w, notif_pill, notif_fg, theme.surface, st.dnd_on or st.notif_count > 0, function()
             return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-dashboard")) .. " --notifications" }
         end)
 
@@ -768,10 +883,12 @@ widget.run_loop({
             elseif fs.command_exists("bluetui") then
                 return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-tui")) .. " bluetooth" }
             end
+            panel_notice = "Install bluez-utils or bluetui for Bluetooth"
         end, nil, function()
             if fs.command_exists("bluetui") or fs.command_exists("bluetoothctl") then
                 return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-tui")) .. " bluetooth" }
             end
+            panel_notice = "Install bluez-utils or bluetui for Bluetooth"
         end)
         ui:squircle(
             15, 17, 6,
@@ -782,17 +899,23 @@ widget.run_loop({
             function()
                 if fs.command_exists("wpctl") then
                     os.execute("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle >/dev/null 2>&1 || true")
+                    st.mic_muted = not st.mic_muted
+                    panel_notice = nil
                 end
             end
         )
         ui:squircle(15, 24, 6, "󰒓", "Tune", st.night_on or st.light_on, theme, function()
             active_view = "settings"
+            panel_notice = nil
+            state_dirty = true
         end)
         ui:squircle(15, 31, 6, "󰊴", "Game", st.zen_on, theme, function()
             return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-perf")) }
         end, theme.ok)
         ui:squircle(15, 38, 6, "󰂛", "DND", st.dnd_on, theme, function()
             os.execute(fs.shell_quote(sibling_or_path("kaze-dnd")) .. " --quiet toggle >/dev/null 2>&1 || true")
+            panel_notice = nil
+            state_dirty = true
         end, nil, function()
             return { exec_and_close = fs.shell_quote(sibling_or_path("kaze-dashboard")) .. " --notifications" }
         end)
@@ -802,8 +925,10 @@ widget.run_loop({
         local v_icon = st.vol_muted and " 󰖁 " or " 󰕾 "
         ui:pill(18, 4, v_icon, st.vol_muted and theme.danger or theme.accent, theme.bg_alt, true, function()
             os.execute("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle >/dev/null 2>&1 || true")
+            st.vol_muted = not st.vol_muted
         end)
-        ui:slider(18, 8, 21, st.vol_pct or 0, st.vol_muted, theme, {
+        local slider_state = (st.vol_pct == nil) and "inactive" or st.vol_muted
+        ui:slider(18, 8, 21, st.vol_pct or 0, slider_state, theme, {
             set = function(p) set_volume_pct(p) end,
             scroll = function(dir) set_volume_pct((st.vol_pct or 50) + dir * 5) end,
         }, theme.surface)
@@ -822,6 +947,8 @@ widget.run_loop({
             ui:put(19, 30, string.format("%3d%%", st.bright_pct), theme.fg, theme.surface, true)
             ui:pill(19, 35, " Tune ▸ ", theme.fg, theme.bg_alt, false, function()
                 active_view = "settings"
+                panel_notice = nil
+                state_dirty = true
             end)
         else
             ui:pill(
@@ -843,14 +970,24 @@ widget.run_loop({
                 function()
                     if fs.command_exists("hyprsunset") then
                         os.execute(fs.shell_quote(sibling_or_path("kaze-night")) .. " >/dev/null 2>&1 || true")
+                        panel_notice = nil
+                        state_dirty = true
+                    else
+                        panel_notice = "Install hyprsunset for Night Light"
                     end
                 end
             )
             ui:pill(19, 28, " 󰙵 " .. (cfg.layout or "sidebar") .. " ▸ ", theme.fg, theme.bg_alt, false, function()
                 active_view = "settings"
+                panel_notice = nil
+                state_dirty = true
             end)
         end
-        ui:put(20, 4, widget.trunc("Theme: " .. (cfg.theme or "kaze") .. " · Click WiFi or [nmtui]", 39), theme.fg_muted, theme.surface, false)
+        if panel_notice then
+            ui:put(20, 4, widget.trunc(panel_notice, 39), theme.warn, theme.surface, false)
+        else
+            ui:put(20, 4, widget.trunc("Theme: " .. (cfg.theme or "kaze") .. " · Click WiFi or [nmtui]", 39), theme.fg_muted, theme.surface, false)
+        end
 
         -- Row 22..23: Footer with 1-click nmtui, Lock, Screen, Power
         ui:rule(22, 3, 41, theme.border)

@@ -64,7 +64,7 @@ if #arg > 0 then
     os.exit(2)
 end
 
-if popups.toggle_existing_fuzzel() then
+if popups.toggle_existing_fuzzel("kaze-power") then
     os.exit(0)
 end
 
@@ -102,6 +102,7 @@ local choice, dmenu_err = popups.run_dmenu(labels, {
     hide_prompt = true,
     line_height = 34,
     prompt = "Power > ",
+    tag = "kaze-power",
 })
 if not choice then
     io.stderr:write("kaze-power: " .. tostring(dmenu_err) .. "\n")

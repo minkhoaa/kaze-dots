@@ -34,6 +34,7 @@ setup_path()
 
 local display = require("kaze.display")
 local fs = require("kaze.fs")
+local notify_store = require("kaze.notify")
 local popups = require("kaze.popups")
 
 local function usage(out)
@@ -49,6 +50,13 @@ local function notify(title, body, urgency)
     if not cmd_exists("notify-send") then
         return
     end
+    notify_store.record({
+        app = "kaze-display",
+        icon = "󰍹",
+        urgency = urgency or "low",
+        summary = title,
+        body = body,
+    })
     os.execute(string.format(
         "notify-send -a kaze-display -t 2200 -u %s -h string:x-canonical-private-synchronous:kaze-display %s %s >/dev/null 2>&1 || true",
         fs.shell_quote(urgency or "low"),
@@ -93,7 +101,7 @@ if mode == "--list" then
 end
 
 if mode == "--menu" then
-    if popups.toggle_existing_fuzzel() then
+    if popups.toggle_existing_fuzzel("kaze-display") then
         os.exit(0)
     end
     if not cmd_exists("fuzzel") then
@@ -121,23 +129,19 @@ if mode == "--menu" then
         by_label[e.label] = e.mode
     end
 
-    local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
-    local cmd = string.format(
-        "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 46 --lines %d -p %s",
-        utf8_guard,
-        fs.shell_quote(table.concat(labels, "\n")),
-        popups.active_right_flags(),
-        #labels,
-        fs.shell_quote("Display > ")
-    )
-    local p = io.popen(cmd)
-    if not p then
-        io.stderr:write("kaze-display: failed to launch fuzzel\n")
+    local choice, dmenu_err = popups.run_dmenu(labels, {
+        flags = popups.active_right_flags(),
+        width = 46,
+        lines = #labels,
+        minimal_lines = true,
+        line_height = 32,
+        prompt = "Display > ",
+        tag = "kaze-display",
+    })
+    if not choice then
+        io.stderr:write("kaze-display: " .. tostring(dmenu_err) .. "\n")
         os.exit(1)
     end
-    local out = p:read("*a") or ""
-    p:close()
-    local choice = out:gsub("[\r\n]+$", "")
     if choice == "" then
         os.exit(0)
     end

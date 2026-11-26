@@ -45,6 +45,7 @@ package.path = table.concat(paths, ";")
 
 local cfg = require("kaze.config").load({ strict = false })
 local fs = require("kaze.fs")
+local popups = require("kaze.popups")
 local quote = fs.shell_quote
 
 local function fail(msg)
@@ -104,13 +105,31 @@ if action == "list" or action == "wipe" then
     os.exit(0)
 end
 
+if popups.toggle_existing_fuzzel("kaze-clipboard") then
+    os.exit(0)
+end
 if not os.execute("command -v cliphist >/dev/null && command -v fuzzel >/dev/null && command -v wl-copy >/dev/null") then
     fail("pick requires cliphist, fuzzel and wl-copy")
 end
-local selected = fs.capture("bash -o pipefail -c " .. quote(cliphist .. "list | fuzzel --dmenu -p 'Clip > '"))
-if not selected then os.exit(0) end
-selected = selected:gsub("\n$", "")
-if not selected:match("^%d+\t") then os.exit(0) end
+local listed = fs.capture(cliphist .. "list")
+if not listed or listed == "" then os.exit(0) end
+local rows = {}
+for line in listed:gmatch("[^\r\n]+") do
+    if line ~= "" then
+        rows[#rows + 1] = line
+    end
+end
+if #rows == 0 then os.exit(0) end
+local selected, dmenu_err = popups.run_dmenu(rows, {
+    width = 64,
+    lines = math.min(12, #rows),
+    minimal_lines = true,
+    line_height = 30,
+    prompt = "Clip > ",
+    tag = "kaze-clipboard",
+})
+if not selected then fail(dmenu_err or "failed to launch fuzzel") end
+if selected == "" or not selected:match("^%d+\t") then os.exit(0) end
 
 -- Decode completely before opening wl-copy; deleted/stale selection must be a no-op.
 local data = fs.capture(cliphist .. "decode " .. quote(selected))

@@ -12,8 +12,8 @@ local M = {
         fuzzel_radius = 0,
         fnott_radius = 0,
         fnott_anchor = "top-right",
-        fnott_edge_margin_vertical = 12,
-        fnott_edge_margin_horizontal = 12,
+        fnott_edge_margin_vertical = 8,
+        fnott_edge_margin_horizontal = 8,
         popup_top_y = 10,
         popup_right_x = 12,
         popup_right_y = 10,
@@ -213,7 +213,7 @@ window#waybar {
     padding: 0;
     min-width: 8px;
     min-height: 8px;
-    margin: 4px 11px;
+    margin: 4px 10px;
     border-radius: 0;
     background: @fg_muted;
     transition: all 150ms cubic-bezier(0.2, 0.0, 0.0, 1.0);

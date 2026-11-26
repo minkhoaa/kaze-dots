@@ -342,7 +342,7 @@ if disconnect_mac then
     os.exit(disconnect_device(mac, label_hint) and 0 or 1)
 end
 
-if not list_only and popups.toggle_existing_fuzzel() then
+if not list_only and popups.toggle_existing_fuzzel("kaze-bluetooth") then
     os.exit(0)
 end
 
@@ -421,6 +421,7 @@ local choice, dmenu_err = popups.run_dmenu(rows, {
     minimal_lines = true,
     line_height = 32,
     prompt = "Bluetooth > ",
+    tag = "kaze-bluetooth",
 })
 if not choice then
     io.stderr:write("kaze-bluetooth: " .. tostring(dmenu_err) .. "\n")
@@ -438,6 +439,7 @@ elseif choice == power_on_row then
 elseif choice == power_off_row then
     os.exit(set_power(false) and 0 or 1)
 elseif choice == scan_row then
+    notify("Bluetooth", "Scanning for nearby devices (5s)...", "low")
     btctl_exec("--timeout 5 scan on", 7)
     local self_bin = arg and arg[0] or sibling_or_path("kaze-bluetooth")
     local ok_re = os.execute(fs.shell_quote(self_bin))

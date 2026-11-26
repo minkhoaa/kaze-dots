@@ -1,4 +1,5 @@
 local fs = require("kaze.fs")
+local notify_store = require("kaze.notify")
 local popups = require("kaze.popups")
 
 local M = {}
@@ -162,9 +163,7 @@ end
 
 function M.menu(opts)
     opts = opts or {}
-    local running = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
-    if running == true or running == 0 then
-        os.execute("pkill -x fuzzel >/dev/null 2>&1")
+    if popups.toggle_existing_fuzzel("kaze-power-profile") then
         return true
     end
     if not cmd_exists("fuzzel") then
@@ -177,29 +176,29 @@ function M.menu(opts)
     local profiles = M.list()
     local lines = {}
     local valid = {}
-    for _, p in ipairs(profiles) do
+    local active_idx = nil
+    for idx, p in ipairs(profiles) do
         valid[p] = true
         local marker = (p == current) and " (active)" or ""
         lines[#lines + 1] = p .. marker
+        if p == current and active_idx == nil then
+            active_idx = idx - 1
+        end
     end
 
-    local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
-    local cmd = string.format(
-        "%sprintf '%%s\\n' %s | fuzzel --dmenu %s -w 40 --lines %d -p %s",
-        utf8_guard,
-        fs.shell_quote(table.concat(lines, "\n")),
-        popups.active_right_flags(),
-        #lines,
-        fs.shell_quote("Power Profile > ")
-    )
-    local proc = io.popen(cmd)
-    if not proc then
-        return false, "failed to launch fuzzel"
+    local trimmed, dmenu_err = popups.run_dmenu(lines, {
+        flags = popups.active_right_flags(),
+        width = 40,
+        lines = #lines,
+        minimal_lines = true,
+        line_height = 32,
+        select_index = active_idx,
+        prompt = "Power Profile > ",
+        tag = "kaze-power-profile",
+    })
+    if not trimmed then
+        return false, dmenu_err or "failed to launch fuzzel"
     end
-    local out = proc:read("*a") or ""
-    proc:close()
-
-    local trimmed = out:gsub("[\r\n]+$", "")
     if trimmed == "" then
         return true
     end
@@ -215,6 +214,13 @@ function M.menu(opts)
     local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
     local wl_disp = os.getenv("WAYLAND_DISPLAY")
     if not opts.quiet and ((hypr_sig and hypr_sig ~= "") or (wl_disp and wl_disp ~= "")) and cmd_exists("notify-send") then
+        notify_store.record({
+            app = "kaze-power-profile",
+            icon = "󰓅",
+            urgency = "low",
+            summary = "Power profile",
+            body = "Active: " .. choice,
+        })
         os.execute(string.format(
             "notify-send -a kaze-power-profile -t 1800 -u low -h string:x-canonical-private-synchronous:kaze-switch %s %s >/dev/null 2>&1 || true",
             fs.shell_quote("Power profile"),

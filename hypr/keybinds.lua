@@ -181,28 +181,57 @@ if hl.on then
         local outside_armed = false
         local armed_binds = {}
 
+        local function is_obj(v)
+            local t = type(v)
+            return t == "table" or t == "userdata"
+        end
+
+        local function get_field(obj, key)
+            if not is_obj(obj) then
+                return nil
+            end
+            local ok, val = pcall(function() return obj[key] end)
+            if ok then
+                return val
+            end
+            return nil
+        end
+
         local function vec_xy(v)
-            if type(v) ~= "table" then
+            if not is_obj(v) then
                 return nil, nil
             end
-            return tonumber(v.x or v[1]), tonumber(v.y or v[2])
+            local vx = get_field(v, "x")
+            local vy = get_field(v, "y")
+            if vx == nil then vx = get_field(v, 1) end
+            if vy == nil then vy = get_field(v, 2) end
+            return tonumber(vx), tonumber(vy)
         end
 
         local function is_popover_win(w)
-            return type(w) == "table" and type(w.class) == "string" and w.class:match("^kaze%-widget%-") ~= nil
+            local cls = get_field(w, "class")
+            return type(cls) == "string" and cls:match("^kaze%-widget%-") ~= nil
         end
 
         local function is_popover_layer(l)
-            if type(l) ~= "table" or l.mapped == false or type(l.namespace) ~= "string" then
+            if not is_obj(l) then
                 return false
             end
-            return l.namespace == "launcher" or l.namespace:match("^kaze%-popup%-") ~= nil
+            if get_field(l, "mapped") == false then
+                return false
+            end
+            local ns = get_field(l, "namespace")
+            if type(ns) ~= "string" then
+                return false
+            end
+            return ns == "launcher" or ns:match("^kaze%-popup%-") ~= nil
         end
 
         local function open_popovers()
             local wins = {}
             for _, w in ipairs(hl.get_windows({ mapped = true }) or {}) do
-                if is_popover_win(w) and type(w.address) == "string" then
+                local addr = get_field(w, "address")
+                if is_popover_win(w) and type(addr) == "string" then
                     wins[#wins + 1] = w
                 end
             end
@@ -218,8 +247,14 @@ if hl.on then
         end
 
         local function point_in_win(cx, cy, w, pad)
-            local wx, wy = vec_xy(w.at)
-            local ww, wh = vec_xy(w.size)
+            local wx, wy = vec_xy(get_field(w, "at"))
+            local ww, wh = vec_xy(get_field(w, "size"))
+            if not (wx and wy) then
+                wx, wy = tonumber(get_field(w, "x")), tonumber(get_field(w, "y"))
+            end
+            if not (ww and wh) then
+                ww, wh = tonumber(get_field(w, "w")), tonumber(get_field(w, "h"))
+            end
             if not (wx and wy and ww and wh) then
                 return false
             end
@@ -228,10 +263,19 @@ if hl.on then
         end
 
         local function point_in_layer(cx, cy, l, pad)
-            if type(l) ~= "table" then
+            if not is_obj(l) then
                 return false
             end
-            local lx, ly, lw, lh = tonumber(l.x), tonumber(l.y), tonumber(l.w), tonumber(l.h)
+            local lx = tonumber(get_field(l, "x"))
+            local ly = tonumber(get_field(l, "y"))
+            local lw = tonumber(get_field(l, "w"))
+            local lh = tonumber(get_field(l, "h"))
+            if not (lx and ly) then
+                lx, ly = vec_xy(get_field(l, "at"))
+            end
+            if not (lw and lh) then
+                lw, lh = vec_xy(get_field(l, "size"))
+            end
             if not (lx and ly and lw and lh and lw > 0 and lh > 0) then
                 return false
             end
@@ -244,7 +288,7 @@ if hl.on then
                 return false
             end
             for _, l in ipairs(hl.get_layers({ namespace = "waybar" }) or {}) do
-                if l.mapped ~= false and point_in_layer(cx, cy, l, 2) then
+                if get_field(l, "mapped") ~= false and point_in_layer(cx, cy, l, 2) then
                     return true
                 end
             end
@@ -291,19 +335,40 @@ if hl.on then
 
             local on_bar = cursor_on_waybar(cx, cy)
             if on_bar and ok_popups then
-                if #wins > 0 and type(wins[1].class) == "string" then
-                    pcall(popups.record_dismiss_guard, wins[1].class)
+                local w_cls = #wins > 0 and get_field(wins[1], "class") or nil
+                if type(w_cls) == "string" then
+                    local w_title = get_field(wins[1], "title")
+                    pcall(popups.record_dismiss_guard, w_cls, type(w_title) == "string" and w_title or "")
                 elseif #layers > 0 then
-                    pcall(popups.record_dismiss_guard, "fuzzel")
+                    local ok_tag, active_tag = pcall(popups.active_fuzzel_tag)
+                    pcall(popups.record_dismiss_guard, "fuzzel", (ok_tag and type(active_tag) == "string") and active_tag or "")
                 end
             end
 
             for _, w in ipairs(wins) do
-                local addr = w.address:match("^0x") and w.address or ("0x" .. w.address)
-                hl.dispatch(hl.dsp.window.close({ window = "address:" .. addr }))
+                local raw_addr = get_field(w, "address")
+                if type(raw_addr) == "string" then
+                    local addr = raw_addr:match("^0x") and raw_addr or ("0x" .. raw_addr)
+                    hl.dispatch(hl.dsp.window.close({ window = "address:" .. addr }))
+                end
             end
             if #layers > 0 then
-                hl.exec_cmd("pkill -x fuzzel || true")
+                local pids = {}
+                for _, l in ipairs(layers) do
+                    local pid = tonumber(get_field(l, "pid"))
+                    if pid and pid > 0 and math.floor(pid) == pid then
+                        pids[#pids + 1] = tostring(math.floor(pid))
+                    end
+                end
+                if #pids > 0 then
+                    -- Target exact dismissed layer PIDs so a newly launched fuzzel on cross-click is never killed.
+                    hl.exec_cmd("kill " .. table.concat(pids, " ") .. " 2>/dev/null || true")
+                else
+                    hl.exec_cmd("pkill -x fuzzel || true")
+                end
+                if ok_popups then
+                    pcall(popups.clear_active_fuzzel)
+                end
             end
             disarm_outside()
         end
@@ -328,19 +393,21 @@ if hl.on then
         end
 
         local function close_on_focus_shift(active_win)
-            if type(active_win) == "table" and is_popover_win(active_win) then
+            if is_obj(active_win) and is_popover_win(active_win) then
                 sync_outside()
                 return
             end
-            if type(active_win) == "table" and type(active_win.class) == "string" and active_win.class ~= "" then
+            local act_cls = get_field(active_win, "class")
+            if type(act_cls) == "string" and act_cls ~= "" then
                 local wins = {}
                 for _, w in ipairs(hl.get_windows({ mapped = true }) or {}) do
-                    if is_popover_win(w) and type(w.address) == "string" then
-                        wins[#wins + 1] = w
+                    local addr = get_field(w, "address")
+                    if is_popover_win(w) and type(addr) == "string" then
+                        wins[#wins + 1] = addr
                     end
                 end
-                for _, w in ipairs(wins) do
-                    local addr = w.address:match("^0x") and w.address or ("0x" .. w.address)
+                for _, raw_addr in ipairs(wins) do
+                    local addr = raw_addr:match("^0x") and raw_addr or ("0x" .. raw_addr)
                     hl.dispatch(hl.dsp.window.close({ window = "address:" .. addr }))
                 end
             end

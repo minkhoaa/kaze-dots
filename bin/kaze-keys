@@ -44,7 +44,7 @@ if arg[1] == "--list" then
     os.exit(0)
 end
 
-if popups.toggle_existing_fuzzel() then
+if popups.toggle_existing_fuzzel("kaze-keys") then
     os.exit(0)
 end
 
@@ -53,18 +53,16 @@ if not fs.command_exists("fuzzel") then
     os.exit(1)
 end
 
-local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
-local cmd = string.format(
-    "%sprintf '%%s\\n' %s | fuzzel --dmenu -w 58 --lines 14 -p %s",
-    utf8_guard,
-    fs.shell_quote(table.concat(rows, "\n")),
-    fs.shell_quote("Keys > ")
-)
-local proc = io.popen(cmd, "r")
-if not proc then
-    io.stderr:write("kaze-keys: failed to launch fuzzel\n")
+local _, dmenu_err = popups.run_dmenu(rows, {
+    width = 86,
+    lines = 14,
+    minimal_lines = true,
+    line_height = 28,
+    prompt = "Keys > ",
+    tag = "kaze-keys",
+})
+if dmenu_err then
+    io.stderr:write("kaze-keys: " .. tostring(dmenu_err) .. "\n")
     os.exit(1)
 end
-local _ = proc:read("*a")
-proc:close()
 os.exit(0)

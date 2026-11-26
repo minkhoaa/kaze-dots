@@ -110,9 +110,11 @@ local function connect_with_prompt(ssid, is_secured)
             right_flags,
             fs.shell_quote("Password (" .. ssid:gsub("[\r\n\t]+", " ") .. ") > ")
         )
+        popups.mark_active_fuzzel("kaze-wifi-pw")
         local pw_proc = io.popen(pw_cmd)
         local pw = pw_proc and (pw_proc:read("*a") or "") or ""
         if pw_proc then pw_proc:close() end
+        popups.clear_active_fuzzel("kaze-wifi-pw")
         pw = pw:gsub("[\r\n]+$", "")
         if pw == "" then
             return true
@@ -138,7 +140,7 @@ if connect_ssid and connect_ssid ~= "" then
     os.exit(connect_with_prompt(connect_ssid, true) and 0 or 1)
 end
 
-if not list_only and popups.toggle_existing_fuzzel() then
+if not list_only and popups.toggle_existing_fuzzel("kaze-wifi") then
     os.exit(0)
 end
 
@@ -280,6 +282,7 @@ local choice, dmenu_err = popups.run_dmenu(rows, {
     minimal_lines = true,
     line_height = 32,
     prompt = "Wi-Fi > ",
+    tag = "kaze-wifi",
 })
 if not choice then
     io.stderr:write("kaze-wifi: " .. tostring(dmenu_err) .. "\n")

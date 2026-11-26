@@ -12,8 +12,8 @@ local M = {
         fuzzel_radius = 0,
         fnott_radius = 0,
         fnott_anchor = "top-right",
-        fnott_edge_margin_vertical = 36,
-        fnott_edge_margin_horizontal = 10,
+        fnott_edge_margin_vertical = 8,
+        fnott_edge_margin_horizontal = 8,
         popup_top_y = 8,
         popup_right_x = 8,
         popup_right_y = 8,
@@ -191,7 +191,7 @@ window#waybar {
 #workspaces button {
     padding: 0 9px;
     margin: 0;
-    min-height: 27px;
+    min-height: 26px;
     color: @fg_muted;
     background: transparent;
     box-shadow: inset 0 -2px 0 0 transparent;

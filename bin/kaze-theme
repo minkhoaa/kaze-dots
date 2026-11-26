@@ -61,7 +61,7 @@ local function usage(output)
 end
 
 local function pick_from_menu(cur_cfg)
-    if popups.toggle_existing_fuzzel() then
+    if popups.toggle_existing_fuzzel("kaze-theme") then
         return nil
     end
     if not cmd_exists("fuzzel") then
@@ -123,6 +123,7 @@ local function pick_from_menu(cur_cfg)
         image_size_ratio = 0.72,
         select_index = active_idx,
         prompt = "Theme > ",
+        tag = "kaze-theme",
     })
     if not trimmed then
         io.stderr:write("kaze-theme: " .. tostring(dmenu_err) .. "\n")

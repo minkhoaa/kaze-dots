@@ -25,9 +25,10 @@ function M.bg(hex6)
     return string.format("\27[48;2;%d;%d;%dm", r, g, b)
 end
 
-function M.style(fg_hex, bg_hex, bold)
+function M.style(fg_hex, bg_hex, bold, dim)
     local parts = { "\27[0m" }
     if bold then parts[#parts + 1] = M.BOLD end
+    if dim then parts[#parts + 1] = M.DIM end
     if fg_hex then parts[#parts + 1] = M.fg(fg_hex) end
     if bg_hex then parts[#parts + 1] = M.bg(bg_hex) end
     return table.concat(parts)
@@ -58,30 +59,95 @@ function M.clean_text(s)
     return table.concat(out)
 end
 
+local function is_zero_width(cp)
+    return cp == 0x00AD
+        or (cp >= 0x0300 and cp <= 0x036F)
+        or (cp >= 0x1AB0 and cp <= 0x1AFF)
+        or (cp >= 0x1DC0 and cp <= 0x1DFF)
+        or (cp >= 0x200B and cp <= 0x200F)
+        or (cp >= 0x20D0 and cp <= 0x20FF)
+        or (cp >= 0xFE00 and cp <= 0xFE0F)
+        or (cp >= 0xFE20 and cp <= 0xFE2F)
+        or (cp >= 0xE0100 and cp <= 0xE01EF)
+end
+
+local function is_wide_cp(cp)
+    return (cp >= 0x1100 and cp <= 0x115F)
+        or cp == 0x2329 or cp == 0x232A
+        or (cp >= 0x2E80 and cp <= 0xA4CF and cp ~= 0x303F)
+        or (cp >= 0xAC00 and cp <= 0xD7A3)
+        or (cp >= 0xF900 and cp <= 0xFAFF)
+        or (cp >= 0xFE10 and cp <= 0xFE19)
+        or (cp >= 0xFE30 and cp <= 0xFE6F)
+        or (cp >= 0xFF00 and cp <= 0xFF60)
+        or (cp >= 0xFFE0 and cp <= 0xFFE6)
+        or (cp >= 0x1F300 and cp <= 0x1FAFF)
+        or (cp >= 0x20000 and cp <= 0x3FFFD)
+end
+
+local function codepoint_width(cp, prev_cp)
+    if cp == 0xFE0F and prev_cp and prev_cp >= 0x2600 and prev_cp <= 0x27BF then
+        -- Variation Selector-16 promotes Dingbats/Misc Symbols (e.g. ⚠️) to 2-cell emoji width.
+        return 1
+    end
+    if is_zero_width(cp) then
+        return 0
+    end
+    if is_wide_cp(cp) then
+        return 2
+    end
+    return 1
+end
+
+local function split_graphemes(clean)
+    local clusters = {}
+    local prev_cp = nil
+    for _, cp in utf8.codes(clean) do
+        local ch = utf8.char(cp)
+        if cp == 0xFE0F and #clusters > 0 then
+            clusters[#clusters].text = clusters[#clusters].text .. ch
+            clusters[#clusters].w = clusters[#clusters].w + codepoint_width(cp, prev_cp)
+        elseif is_zero_width(cp) and #clusters > 0 then
+            clusters[#clusters].text = clusters[#clusters].text .. ch
+        else
+            clusters[#clusters + 1] = { text = ch, w = codepoint_width(cp, prev_cp) }
+        end
+        prev_cp = cp
+    end
+    return clusters
+end
+
 function M.vis_len(s)
     local clean = M.clean_text(s)
-    return utf8.len(clean) or #clean
+    local total = 0
+    local prev_cp = nil
+    for _, cp in utf8.codes(clean) do
+        total = total + codepoint_width(cp, prev_cp)
+        prev_cp = cp
+    end
+    return total
 end
 
 function M.trunc(s, max_len)
     s = M.clean_text(s)
-    local len = utf8.len(s) or #s
-    if len <= max_len then return s end
+    if M.vis_len(s) <= max_len then return s end
     if max_len <= 0 then return "" end
     if max_len == 1 then return "…" end
+    local clusters = split_graphemes(s)
     local out = {}
-    local n = 0
-    for _, code in utf8.codes(s) do
-        n = n + 1
-        if n > max_len - 1 then break end
-        out[#out + 1] = utf8.char(code)
+    local used = 0
+    local limit = max_len - 1
+    for _, cl in ipairs(clusters) do
+        if used + cl.w > limit then break end
+        out[#out + 1] = cl.text
+        used = used + cl.w
     end
     return table.concat(out) .. "…"
 end
 
 function M.pad_right(s, width)
     s = M.trunc(s, width)
-    local len = utf8.len(s) or #s
+    local len = M.vis_len(s)
     if len < width then
         return s .. string.rep(" ", width - len)
     end
@@ -93,26 +159,46 @@ function M.wrap_lines(s, first_w, next_w)
     if clean == "" or first_w <= 0 then
         return "", M.trunc(clean, math.max(0, next_w or 0))
     end
-    local chars = {}
-    for _, code in utf8.codes(clean) do
-        chars[#chars + 1] = utf8.char(code)
+    local clusters = split_graphemes(clean)
+    local total_w = 0
+    for _, cl in ipairs(clusters) do
+        total_w = total_w + cl.w
     end
-    if #chars <= first_w then
+    if total_w <= first_w then
         return clean, ""
     end
-    local split = first_w
-    for idx = first_w, math.max(1, first_w - 14), -1 do
-        if chars[idx] == " " then
-            split = idx
+    local split = 0
+    local used = 0
+    local last_space = nil
+    for idx, cl in ipairs(clusters) do
+        if used + cl.w > first_w then
             break
         end
+        used = used + cl.w
+        split = idx
+        if cl.text == " " and used >= math.max(1, first_w - 14) then
+            last_space = idx
+        end
     end
-    local line1 = table.concat(chars, "", 1, split):gsub("%s+$", "")
+    if last_space then
+        split = last_space
+    end
+    if split < 1 then
+        split = 1
+    end
+    local p1, p2 = {}, {}
+    for i = 1, split do
+        p1[#p1 + 1] = clusters[i].text
+    end
+    local line1 = table.concat(p1):gsub("%s+$", "")
     local rest_start = split + 1
-    while rest_start <= #chars and chars[rest_start] == " " do
+    while rest_start <= #clusters and clusters[rest_start].text == " " do
         rest_start = rest_start + 1
     end
-    local rest = (rest_start <= #chars) and table.concat(chars, "", rest_start) or ""
+    for i = rest_start, #clusters do
+        p2[#p2 + 1] = clusters[i].text
+    end
+    local rest = table.concat(p2)
     return line1, M.trunc(rest, math.max(0, next_w or first_w))
 end
 
@@ -121,12 +207,13 @@ function M.toggle_or_open(opts)
     local app_id = assert(opts.app_id, "missing app_id")
     local target_title = opts.title or app_id
     local popups = require("kaze.popups")
-    if popups.consume_dismiss_guard(app_id) then
+    if popups.consume_dismiss_guard(app_id, target_title) then
         return false
     end
     local running_fuzzel = os.execute("pgrep -x fuzzel >/dev/null 2>&1")
     if running_fuzzel == true or running_fuzzel == 0 then
         os.execute("pkill -x fuzzel >/dev/null 2>&1 || true")
+        popups.clear_active_fuzzel()
     end
 
     local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
@@ -167,11 +254,16 @@ function M.toggle_or_open(opts)
 
     local foot_bin = opts.foot_bin or "kaze-footclient"
     local bg_alt = (opts.theme and opts.theme.bg_alt) or "181b22"
+    local base_font = (opts.cfg and opts.cfg.font) or "JetBrainsMono Nerd Font"
+    local font_spec = base_font:match("Nerd Font$")
+        and (base_font .. " Mono:size=10.5," .. base_font .. ":size=10.5")
+        or (base_font .. ":size=10.5")
     local cmd = string.format(
-        "%s -N -o main.locked-title=yes -o 'main.pad=14x12 center' -o 'text-bindings.\\x04=Escape'"
+        "%s -N -o main.locked-title=yes -o %s -o 'main.pad=14x12 center' -o 'text-bindings.\\x04=Escape'"
             .. " -o colors-dark.background=%s -o colors-dark.alpha=0.94"
             .. " -W %dx%d -a %s -T %s %s --ui%s",
         fs.shell_quote(foot_bin),
+        fs.shell_quote("main.font=" .. font_spec),
         fs.shell_quote(bg_alt),
         tonumber(opts.cols) or 38,
         tonumber(opts.rows) or 16,
@@ -216,7 +308,7 @@ local function create_canvas(cols, rows, base_bg, base_fg)
         end
     end
 
-    function canvas:put(row, col, text, fg_hex, bg_hex, bold)
+    function canvas:put(row, col, text, fg_hex, bg_hex, bold, dim)
         if row < 1 or row > self.rows or col < 1 or col > self.cols then
             return
         end
@@ -234,7 +326,7 @@ local function create_canvas(cols, rows, base_bg, base_fg)
             "\27[%d;%dH%s%s%s",
             row,
             col,
-            M.style(fg_c, bg_c, bold),
+            M.style(fg_c, bg_c, bold, dim),
             text,
             M.style(self.base_fg, self.base_bg, false)
         )
@@ -265,8 +357,8 @@ local function create_canvas(cols, rows, base_bg, base_fg)
         end
     end
 
-    function canvas:rule(row, col, width, color_hex, bg_hex)
-        self:put(row, col, string.rep("─", width), color_hex or self.base_fg, bg_hex or self.base_bg, false)
+    function canvas:rule(row, col, width, color_hex, bg_hex, dim)
+        self:put(row, col, string.rep("─", width), color_hex or self.base_fg, bg_hex or self.base_bg, false, dim)
     end
 
     function canvas:pill(row, col, label, fg_hex, bg_hex, bold, on_click, outer_bg_or_rc, on_right_click)
@@ -314,13 +406,13 @@ local function create_canvas(cols, rows, base_bg, base_fg)
         local outer_bg = outer_bg_hex or (row_cells and row_cells[col]) or self.base_bg
         local inactive_bg = (outer_bg == theme.bg_alt) and theme.surface or theme.bg_alt
         local label = active and " ■ ✓ " or " □   "
-        local fg_c = active and theme.accent_fg or theme.fg_muted
+        local fg_c = active and theme.accent_fg or theme.fg
         local bg_c = active and theme.accent or inactive_bg
         return self:pill(row, col, label, fg_c, bg_c, true, on_click, outer_bg)
     end
 
-    function canvas:squircle(row, col, width, glyph, caption, active, theme, on_click, active_color, on_right_click)
-        local fill = active and (active_color or theme.accent) or theme.bg_alt
+    function canvas:squircle(row, col, width, glyph, caption, active, theme, on_click, active_color, on_right_click, inactive_bg)
+        local fill = active and (active_color or theme.accent) or (inactive_bg or theme.surface)
         local fg1 = active and theme.accent_fg or theme.fg
         local fg2 = active and theme.accent_fg or theme.fg_muted
         local function center_pad(s)
@@ -385,13 +477,16 @@ local function create_canvas(cols, rows, base_bg, base_fg)
         local bg_c = bg_override or self.base_bg
         local clamped = math.max(0, math.min(100, math.floor((tonumber(pct) or 0) + 0.5)))
         local knob_pos = math.floor((clamped / 100) * (bar_w - 1) + 0.5)
-        local active_col = muted and theme.fg_muted or theme.accent
-        local track_col = (bg_c == theme.surface) and theme.bg_alt or theme.surface
+        local is_inactive = (muted == "inactive")
+        local is_muted = (muted == true)
+        local active_col = (is_muted or is_inactive) and theme.fg_muted or theme.accent
+        local knob_col = is_muted and theme.danger or (is_inactive and theme.fg_muted or theme.fg)
+        local track_col = (bg_c == theme.surface) and theme.border or theme.surface
         for i = 0, bar_w - 1 do
             if i == knob_pos then
-                self:put(row, col + i, "┃", muted and theme.danger or theme.fg, bg_c, true)
+                self:put(row, col + i, "┃", knob_col, bg_c, not is_inactive)
             elseif i < knob_pos then
-                self:put(row, col + i, "━", active_col, bg_c, true)
+                self:put(row, col + i, "━", active_col, bg_c, not is_inactive)
             else
                 self:put(row, col + i, "━", track_col, bg_c, false)
             end
@@ -464,6 +559,25 @@ local function read_csi(tty)
     end
 end
 
+local function monotonic_ms()
+    local raw = fs.read_file("/proc/uptime")
+    local sec = raw and tonumber(raw:match("^([%d%.]+)"))
+    if sec then
+        return math.floor(sec * 1000)
+    end
+    return os.time() * 1000
+end
+
+-- Foot emits an initial CSI O (FocusOut) right when ?1004h is enabled if the
+-- compositor has not sent xdg_toplevel.activated yet. Ignore pre-activation
+-- startup blur until either FocusIn arrives or the startup grace window passes.
+function M.should_close_on_blur(close_on_blur, saw_focus_in, elapsed_ms)
+    if close_on_blur == false then
+        return false
+    end
+    return saw_focus_in == true or (tonumber(elapsed_ms) or 0) >= 400
+end
+
 function M.run_loop(opts)
     local tty = io.open("/dev/tty", "rb")
     if not tty then
@@ -487,6 +601,8 @@ function M.run_loop(opts)
     io.stdout:write("\27[?1049h\27[?25l\27[?1000h\27[?1002h\27[?1006h\27[?1004h")
     io.stdout:flush()
 
+    local started_ms = monotonic_ms()
+    local saw_focus_in = false
     local post_exit_cmd = nil
     local ok, err = pcall(function()
         local ui = create_canvas(opts.cols, opts.rows, opts.theme.bg_alt, opts.theme.fg)
@@ -525,9 +641,9 @@ function M.run_loop(opts)
                         local csi = read_csi(tty)
                         if not csi then break end
                         if csi == "I" then
-                            -- Track focus regain cleanly; ignore nothing.
+                            saw_focus_in = true
                         elseif csi == "O" then
-                            if opts.close_on_blur ~= false then
+                            if M.should_close_on_blur(opts.close_on_blur, saw_focus_in, monotonic_ms() - started_ms) then
                                 break
                             end
                         elseif csi:sub(1, 1) == "<" then

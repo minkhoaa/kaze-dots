@@ -404,7 +404,7 @@ test("emitters: all 3 layouts x 5 themes (15 combinations) produce valid configs
             margin_right = 0,
             fuzzel_radius = 0,
             fnott_radius = 0,
-            fnott_vmargin = 12,
+            fnott_vmargin = 8,
         },
         islands = {
             position = "top",
@@ -414,7 +414,7 @@ test("emitters: all 3 layouts x 5 themes (15 combinations) produce valid configs
             margin_right = 10,
             fuzzel_radius = 0,
             fnott_radius = 0,
-            fnott_vmargin = 48,
+            fnott_vmargin = 8,
         },
         slim = {
             position = "top",
@@ -424,7 +424,7 @@ test("emitters: all 3 layouts x 5 themes (15 combinations) produce valid configs
             margin_right = 0,
             fuzzel_radius = 0,
             fnott_radius = 0,
-            fnott_vmargin = 36,
+            fnott_vmargin = 8,
         },
     }
 
@@ -975,6 +975,7 @@ case "$7" in
   *) exit 2 ;;
 esac
 ]])
+        stub("pgrep", "exit 1")
         stub("fuzzel", [[
 cat >/dev/null
 [ "${CANCEL:-0}" = 0 ] && printf '1\tfixture\n'
@@ -1144,8 +1145,14 @@ esac
         assert_true(not fs.file_exists(tmp .. "/toast"), "no saved toast on failure")
         assert(os.execute(rec("toggle")))
         os.remove(tmp .. "/stop-order")
+        for _, fname in ipairs({ "notifications.json", "dnd.state", "perf.state", "dismiss-guard", "active-fuzzel" }) do
+            fs.write_atomic(dir .. "/" .. fname, "ephemeral\n")
+        end
         assert(os.execute(run("kaze-session", "stop", "HYPRLAND_INSTANCE_SIGNATURE=test-hyprland")))
         assert_eq(fs.read_file(tmp .. "/stop-order"), "recorder\ntarget\n")
+        for _, fname in ipairs({ "notifications.json", "dnd.state", "perf.state", "dismiss-guard", "active-fuzzel" }) do
+            assert_true(not fs.file_exists(dir .. "/" .. fname), "session stop removes ephemeral " .. fname)
+        end
     end)
 end)
 
@@ -1356,6 +1363,7 @@ exit 1
             assert_contains(assert(fs.read_file(tmp .. "/tui-dispatch")), "window.close")
 
             -- Verify kaze-clipboard JPEG & WebP MIME inference
+            stub("pgrep", "exit 1")
             stub("cliphist", [[
 case "$7" in
   list) printf '1\timg\n' ;;
@@ -1462,6 +1470,12 @@ fi
 ]])
             assert(os.execute(run("kaze-calc", "")))
             assert_eq(fs.read_file(tmp .. "/calc-copied"), "42")
+
+            -- Pressing Enter on the initial UTF-8 hint row must exit 0 cleanly without error or copy
+            os.remove(tmp .. "/calc-copied")
+            stub("fuzzel", [[cat > "$HOME/calc-hint-rows"; head -n 1 "$HOME/calc-hint-rows"]])
+            assert(os.execute(run("kaze-calc", "")))
+            assert_true(not fs.file_exists(tmp .. "/calc-copied"), "hint row Enter must not copy or evaluate")
 
             -- 2. kaze-perf status / toggle (systemd unit stop/start + fallback pkill)
             assert_eq(fs.capture(run("kaze-perf", "status")), "off\n")
@@ -1915,7 +1929,7 @@ fi
             local frame = ui:render_string()
             assert_contains(frame, widget.style(t.fg, t.surface, true) .. " Back ", "sharp rectangular chip outside card blends on surface")
             assert_contains(frame, widget.style(t.accent_fg, t.accent, true) .. " Rescan ", "sharp rectangular chip inside card blends on accent")
-            assert_contains(frame, widget.style(t.fg_muted, t.bg_alt, true) .. " □   ", "off switch uses square □ indicator inside card")
+            assert_contains(frame, widget.style(t.fg, t.bg_alt, true) .. " □   ", "off switch uses high-contrast square □ indicator inside card")
             assert_contains(frame, widget.style(t.accent_fg, t.accent, true) .. " ■ ✓ ", "on switch uses square ■ indicator inside card")
             assert_contains(frame, "█", "meter uses full block glyph")
             assert_true(
@@ -1923,6 +1937,42 @@ fi
                     or frame:find("▋") or frame:find("▊") or frame:find("▉"),
                 "meter uses 1/8th partial block for smooth transition"
             )
+
+            -- Display-width helpers handle wide emoji, VS16, CJK, and multi-byte 1-col chars
+            assert_eq(widget.vis_len("a·b"), 3, "middle dot is 1 display column")
+            assert_eq(widget.vis_len("🎧"), 2, "emoji occupies 2 display columns")
+            assert_eq(widget.vis_len("⚠️"), 2, "VS16 emoji occupies 2 display columns")
+            assert_eq(widget.vis_len("日本語"), 6, "CJK occupies 2 display columns per glyph")
+            assert_eq(widget.vis_len(widget.trunc("🎧 Hello World", 8)), 8, "trunc respects wide display width")
+            assert_eq(widget.vis_len(widget.pad_right("Wi-Fi 🎉", 12)), 12, "pad_right respects wide display width")
+
+            -- Startup FocusOut guard ignores premature CSI O before activation, honors blur after FocusIn or grace
+            assert_eq(widget.should_close_on_blur(true, false, 2), false, "ignore startup blur before activation")
+            assert_eq(widget.should_close_on_blur(true, true, 2), true, "honor blur once FocusIn was received")
+            assert_eq(widget.should_close_on_blur(true, false, 450), true, "honor blur after startup grace window")
+            assert_eq(widget.should_close_on_blur(false, true, 1000), false, "respect close_on_blur=false")
+
+            -- Inactive slider uses muted neutral knob rather than red danger highlight
+            local ui_inact = widget.create_canvas(30, 5, t.bg_alt, t.fg)
+            ui_inact:begin_frame(t.bg_alt, t.fg)
+            ui_inact:slider(2, 3, 18, 0, "inactive", t)
+            local inact_frame = ui_inact:render_string()
+            assert_contains(inact_frame, widget.fg(t.fg_muted), "inactive slider uses muted color")
+            assert_true(not inact_frame:find(widget.fg(t.danger), 1, true), "inactive slider must not show danger red")
+
+            -- Hyprlock light theme adds frosted backing shape card; dark theme stays bare
+            local emit_hyprlock = require("kaze.emit_hyprlock")
+            local hl_cfg = { font = "JetBrainsMono Nerd Font", wallpaper_expanded = "/tmp/wall.png" }
+            local hl_layout = layouts.get("sidebar")
+            local hl_paper = emit_hyprlock.emit(hl_cfg, themes.get("paper"), hl_layout)
+            assert_contains(hl_paper, "shape {", "paper hyprlock emits frosted backing card")
+            assert_contains(hl_paper, "brightness = 0.85", "paper hyprlock uses bright wallpaper backdrop")
+            assert_contains(hl_paper, "zindex = 0", "paper hyprlock places backing card behind clock")
+            assert_contains(hl_paper, "zindex = 1", "paper hyprlock places text above backing card")
+            assert_contains(hl_paper, "shadow_passes = 2", "paper hyprlock adds contrast shadow to status line")
+            local hl_dark = emit_hyprlock.emit(hl_cfg, themes.get("kaze"), hl_layout)
+            assert_true(not hl_dark:find("shape {", 1, true), "dark hyprlock omits light backing card")
+            assert_contains(hl_dark, "brightness = 0.65", "dark hyprlock keeps dark wallpaper dimming")
         end)
     end)
 
@@ -2061,6 +2111,41 @@ printf '\211PNG\r\n\032\n' > "$out"
             -- Different component opens cleanly even immediately after
             assert(os.execute(run("kaze-panel", "", "HYPRLAND_INSTANCE_SIGNATURE=live")))
             assert_eq(fs.file_exists(tmp .. "/guard-foot"), true, "different component opens normally")
+
+            -- Subtarget dismiss guard: Main panel blocks Main flicker, but allows immediate switch to Wi-Fi sub-view
+            os.remove(tmp .. "/guard-foot")
+            os.execute(string.format(
+                "env HOME=%s XDG_RUNTIME_DIR=%s lua -e %s",
+                q(tmp),
+                q(tmp .. "/runtime"),
+                q(string.format("package.path=%q; require('kaze.popups').record_dismiss_guard('kaze-widget-panel', 'Kaze Control Center')", repo_dir .. "/lua/?.lua;" .. package.path))
+            ))
+            assert(os.execute(run("kaze-panel", "", "HYPRLAND_INSTANCE_SIGNATURE=live")))
+            assert_eq(fs.file_exists(tmp .. "/guard-foot"), false, "same panel view blocked by subtarget dismiss guard")
+
+            os.execute(string.format(
+                "env HOME=%s XDG_RUNTIME_DIR=%s lua -e %s",
+                q(tmp),
+                q(tmp .. "/runtime"),
+                q(string.format("package.path=%q; require('kaze.popups').record_dismiss_guard('kaze-widget-panel', 'Kaze Control Center')", repo_dir .. "/lua/?.lua;" .. package.path))
+            ))
+            assert(os.execute(run("kaze-panel", "--wifi", "HYPRLAND_INSTANCE_SIGNATURE=live")))
+            assert_eq(fs.file_exists(tmp .. "/guard-foot"), true, "different panel sub-view opens on first click")
+
+            -- Fuzzel subtarget dismiss guard: same menu blocked, different menu opens on first click
+            local guard_res = assert(fs.capture(string.format(
+                "env HOME=%s XDG_RUNTIME_DIR=%s lua -e %s",
+                q(tmp),
+                q(tmp .. "/runtime"),
+                q(string.format(
+                    "package.path=%q; local p=require('kaze.popups'); "
+                        .. "p.record_dismiss_guard('fuzzel','kaze-power'); local same=p.consume_dismiss_guard('fuzzel','kaze-power'); "
+                        .. "p.record_dismiss_guard('fuzzel','kaze-power'); local diff=p.consume_dismiss_guard('fuzzel','kaze-menu'); "
+                        .. "print(tostring(same)..'|'..tostring(diff))",
+                    repo_dir .. "/lua/?.lua;" .. package.path
+                ))
+            )))
+            assert_eq(guard_res, "true|false\n", "fuzzel subtarget guard blocks same tag and allows cross-switch")
         end)
     end)
 end

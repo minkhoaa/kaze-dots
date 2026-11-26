@@ -71,7 +71,7 @@ local function sibling_or_path(bin)
 end
 
 if not list_only then
-    if popups.toggle_existing_fuzzel() then
+    if popups.toggle_existing_fuzzel("kaze-audio-sink") then
         os.exit(0)
     end
     if not fs.command_exists("fuzzel") then
@@ -163,6 +163,7 @@ local choice, dmenu_err = popups.run_dmenu(rows, {
     line_height = 32,
     select_index = active_idx,
     prompt = "Audio Output > ",
+    tag = "kaze-audio-sink",
 })
 if not choice then
     io.stderr:write("kaze-audio-sink: " .. tostring(dmenu_err) .. "\n")

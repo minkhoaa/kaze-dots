@@ -66,7 +66,7 @@ if #arg > 0 then
     os.exit(2)
 end
 
-if popups.toggle_existing_fuzzel() then
+if popups.toggle_existing_fuzzel("kaze-menu") then
     os.exit(0)
 end
 
@@ -147,24 +147,19 @@ for _, item in ipairs(items) do
     end
 end
 
-local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
-local cmd = string.format(
-    "%sprintf '%%s\\n' %s | fuzzel --dmenu %s --lines %d -p %s",
-    utf8_guard,
-    fs.shell_quote(table.concat(labels, "\n")),
-    popups.active_menu_flags(),
-    math.min(16, #labels),
-    fs.shell_quote("Kaze > ")
-)
-local p = io.popen(cmd)
-if not p then
-    io.stderr:write("kaze-menu: failed to launch fuzzel\n")
+local choice, dmenu_err = popups.run_dmenu(labels, {
+    flags = popups.active_menu_flags(),
+    width = 40,
+    lines = math.min(16, #labels),
+    minimal_lines = true,
+    line_height = 30,
+    prompt = "Kaze > ",
+    tag = "kaze-menu",
+})
+if not choice then
+    io.stderr:write("kaze-menu: " .. tostring(dmenu_err) .. "\n")
     os.exit(1)
 end
-local out = p:read("*a") or ""
-p:close()
-
-local choice = out:gsub("[\r\n]+$", "")
 if choice == "" then
     os.exit(0)
 end

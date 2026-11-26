@@ -216,7 +216,7 @@ printf '[Launchers]  Super + /  —  Search keyboard shortcuts\n'
             assert_eq(enter_why, "exit")
             assert_eq(enter_code, 0)
             assert_eq(fs.read_file(tmp .. "/stdout"), "", "Enter lookup prints nothing to stdout")
-            assert_eq(fs.read_file(tmp .. "/fuzzel-args"), "--dmenu -w 58 --lines 14 -p Keys > \n", "fuzzel invocation flags")
+            assert_eq(fs.read_file(tmp .. "/fuzzel-args"), "--dmenu -w 86 --lines 14 --minimal-lines --line-height=28 -p Keys > \n", "fuzzel invocation flags")
             assert_eq(fs.read_file(tmp .. "/fuzzel-stdin"), list_out, "fuzzel receives exact formatted rows")
 
             for _, esc_code in ipairs({ 1, 2 }) do
@@ -553,9 +553,18 @@ printf '[Launchers]  Super + /  —  Search keyboard shortcuts\n'
                 events["layer.opened"]()
                 assert_true(dyn_binds["mouse:272"] ~= nil, "opening fuzzel layer arms mouse:272")
                 cursor = { x = 20, y = 20 }
-                -- Run with HOME/XDG_RUNTIME_DIR pointing to tmp/runtime via popups guard check
                 dyn_binds["mouse:272"].dispatcher()
                 assert_true(#execs >= 1 and execs[#execs]:find("pkill %-x fuzzel") ~= nil, "outside click dismisses open fuzzel")
+
+                -- When layer reports exact PID, dismiss targets that PID so a newly spawned fuzzel is never killed
+                layers = {
+                    { namespace = "waybar", mapped = true, x = 8, y = 8, w = 42, h = 1064 },
+                    { namespace = "kaze-popup-left", mapped = true, pid = 4321, x = 58, y = 8, w = 320, h = 420 },
+                }
+                events["layer.opened"]()
+                cursor = { x = 20, y = 20 }
+                dyn_binds["mouse:272"].dispatcher()
+                assert_true(execs[#execs]:find("kill 4321") ~= nil, "outside click kills exact fuzzel layer PID when available")
 
                 -- Focusing another non-widget window closes open popover
                 windows = {

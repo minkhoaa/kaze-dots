@@ -66,6 +66,7 @@ Every theme defines a strict semantic palette (6-char hex without `#`, so Lua em
 2. **`lavender`**: Deep indigo (`#11111b` / `#181825`) with soft lavender accent (`#b4befe`).
 3. **`tokyonight`**: Tokyo Night Storm (`#1a1b26` / `#24283b`) with crisp electric blue (`#7aa2f7`).
 4. **`carbon`**: Monochrome matte black (`#0c0c0e` / `#141417`) with stark silver-white accent (`#e4e4e7`).
+5. **`paper`**: Warm ivory light (`#f7f6f2` / `#efede7`) with crisp dark-ink text (`#1c1e24`) and cobalt-blue accent (`#2563eb`).
 
 ## 5. Interaction & Ephemeral UI Design
 
@@ -73,7 +74,7 @@ Every theme defines a strict semantic palette (6-char hex without `#`, so Lua em
 - `Super + Space`: App launcher (centered, max 8 visible lines, icon-enabled, instant fuzzy match).
 - `Super + Shift + Space` (or clicking the OS/Logo button on the bar): **`kaze-menu`** — structured Kaze command palette:
   - `Switch Layout` (`sidebar` / `islands` / `slim`)
-  - `Switch Theme` (`kaze` / `lavender` / `tokyonight` / `carbon`)
+  - `Switch Theme` (`kaze` / `lavender` / `tokyonight` / `carbon` / `paper`)
   - `Wi-Fi` / `Bluetooth` / `Audio` / `System Monitor`
   - `Clipboard History` / `Screenshot Region` / `Reload Shell` / `Power Menu`
 

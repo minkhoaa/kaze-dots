@@ -37,19 +37,19 @@ Every palette is a pure Lua table of **uppercase/lowercase 6-digit hex strings w
 
 ## 2. Built-in Theme Presets
 
-| Token | `kaze` *(default)* | `lavender` | `tokyonight` | `carbon` |
-|---|---|---|---|---|
-| `bg` | `111318` | `11111b` | `1a1b26` | `0c0c0e` |
-| `bg_alt` | `181b22` | `181825` | `24283b` | `141417` |
-| `surface` | `252a36` | `313244` | `343b58` | `232329` |
-| `border` | `323846` | `45475a` | `414868` | `303038` |
-| `fg` | `e6edf7` | `cdd6f4` | `c0caf5` | `e4e4e7` |
-| `fg_muted` | `8b95a7` | `9399b2` | `787c99` | `8a8a95` |
-| `accent` | `89b4fa` | `b4befe` | `7aa2f7` | `e4e4e7` |
-| `accent_fg` | `111318` | `11111b` | `1a1b26` | `0c0c0e` |
-| `ok` | `a6e3a1` | `a6e3a1` | `9ece6a` | `86efac` |
-| `warn` | `f9e2af` | `f9e2af` | `e0af68` | `fde047` |
-| `danger` | `f38ba8` | `f38ba8` | `f7768e` | `f87171` |
+| Token | `kaze` *(default)* | `lavender` | `tokyonight` | `carbon` | `paper` *(light)* |
+|---|---|---|---|---|---|
+| `bg` | `111318` | `11111b` | `1a1b26` | `0c0c0e` | `f7f6f2` |
+| `bg_alt` | `181b22` | `181825` | `24283b` | `141417` | `efede7` |
+| `surface` | `252a36` | `313244` | `343b58` | `232329` | `e3e0d8` |
+| `border` | `323846` | `45475a` | `414868` | `303038` | `8c887e` |
+| `fg` | `e6edf7` | `cdd6f4` | `c0caf5` | `e4e4e7` | `1c1e24` |
+| `fg_muted` | `8b95a7` | `9399b2` | `787c99` | `8a8a95` | `555963` |
+| `accent` | `89b4fa` | `b4befe` | `7aa2f7` | `e4e4e7` | `2563eb` |
+| `accent_fg` | `111318` | `11111b` | `1a1b26` | `0c0c0e` | `f7f6f2` |
+| `ok` | `a6e3a1` | `a6e3a1` | `9ece6a` | `86efac` | `15803d` |
+| `warn` | `f9e2af` | `f9e2af` | `e0af68` | `fde047` | `b45309` |
+| `danger` | `f38ba8` | `f38ba8` | `f7768e` | `f87171` | `dc2626` |
 
 ## 3. Per-App Emitter Specifications
 
@@ -105,7 +105,7 @@ Produces 3 files under `~/.config/waybar/`:
 The verification harness also generates a themed Mako config on its disposable image. It shares the layout's notification anchor, outer margins, radius, width (`360`), margin (`10`), padding (`14,18`), and `max-icon-size=40`, enables bounded history, and orders criteria as OSD no-history → DND invisible → OSD-visible DND exception. The emitter performs no I/O. It is not installed by `kaze-sync` while Fnott is the default.
 
 ### 3.5 `emit_hyprlock.lua` → `~/.config/hypr/hyprlock.conf`
-- Clean minimal lockscreen matching `bg`, `bg_alt`, `fg`, `fg_muted`, `accent`, `warn`, `danger` with `immediate_render = true`, blurred wallpaper background, large centered time (`68px`), date subtitle (`15px`), minimalist rounded password pill (`fade_on_empty = true`, `capslock_color = rgb(<warn>)`), and subtle bottom status line (`cmd[update:15000]`) showing laptop battery and active MPRIS track when playing.
+- Clean minimal lockscreen matching `bg`, `bg_alt`, `fg`, `fg_muted`, `accent`, `warn`, `danger` with `immediate_render = true`, blurred wallpaper background, large centered time (`68px`), date subtitle (`15px`), sharp password field (`rounding = <layout.hypr.rounding>`, `fade_on_empty = true`, `capslock_color = rgb(<warn>)`), and subtle bottom status line (`cmd[update:15000]`) showing laptop battery and active MPRIS track when playing. In light themes (`paper`), adds a frosted sharp backing `shape` card (`zindex = 0`, `brightness = 0.85`, text `zindex = 1`) and `shadow_passes = 2` on the bottom status line so dark ink remains legible over any wallpaper.
 
 ### 3.6 Hyprland Live Colors (`hypr/core.lua`)
 - `hypr/core.lua` does **not** need a generated file — it calls `require("kaze.config").load()` directly inside Hyprland's Lua engine!

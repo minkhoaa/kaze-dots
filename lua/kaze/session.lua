@@ -21,6 +21,20 @@ local function clear_clipboard()
     return os.execute("[ ! -L " .. path .. " ] && rm -f -- " .. path .. "/cliphist.db " .. path .. "/cliphist.db.tmp")
 end
 
+local function clear_ephemeral_ui_state()
+    local dir = fs.runtime_dir()
+    if not dir then return end
+    local path = fs.shell_quote(dir)
+    os.execute(
+        "[ ! -L " .. path .. " ] && rm -f -- "
+            .. path .. "/notifications.json "
+            .. path .. "/dnd.state "
+            .. path .. "/perf.state "
+            .. path .. "/dismiss-guard "
+            .. path .. "/active-fuzzel"
+    )
+end
+
 local function clear_environment()
     -- The D-Bus activation API can overwrite values, but only systemd can unset them.
     local dbus_ok = os.execute(dbus_env .. "WAYLAND_DISPLAY= XDG_CURRENT_DESKTOP= HYPRLAND_INSTANCE_SIGNATURE=")
@@ -146,6 +160,7 @@ function M.stop()
         return nil, "could not stop " .. target
     end
     local clipboard_ok = clear_clipboard()
+    clear_ephemeral_ui_state()
     local env_ok = clear_environment()
     if not clipboard_ok then return nil, "could not remove the session clipboard" end
     if not env_ok then return nil, "could not clear the Wayland activation environment" end

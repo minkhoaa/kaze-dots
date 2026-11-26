@@ -57,7 +57,7 @@ function M.private_runtime_dir()
         return nil
     end
     local q = M.shell_quote(dir)
-    if os.execute("[ ! -L " .. q .. " ] && install -d -m 700 -- " .. q) then
+    if os.execute("[ ! -L " .. q .. " ] && install -d -m 700 -- " .. q .. " 2>/dev/null") then
         return dir
     end
 end

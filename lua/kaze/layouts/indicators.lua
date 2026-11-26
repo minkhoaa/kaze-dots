@@ -50,7 +50,7 @@ end
 
 function M.css(vertical)
     local result = "\n#custom-recording,\n#custom-night,\n#custom-dnd,\n#custom-inhibit,\n#custom-passthrough {\n    font-size: 14px;\n"
-    result = result .. (vertical and "    min-width: 32px;\n    min-height: 26px;\n    margin: 0 4px;\n    padding: 0;\n" or "    padding: 0 7px;\n") .. "}\n"
+    result = result .. (vertical and "    min-width: 28px;\n    min-height: 26px;\n    border: 1px solid transparent;\n    margin: 1px 4px;\n    padding: 0;\n" or "    padding: 0 7px;\n") .. "}\n"
     for _, spec in ipairs(specs) do
         result = result .. ("#custom-%s { color: @%s; }\n"):format(spec[1], spec[7])
     end

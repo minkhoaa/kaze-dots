@@ -18,8 +18,8 @@ return {
         fuzzel_radius = 0,
         fnott_radius = 0,
         fnott_anchor = "top-right",
-        fnott_edge_margin_vertical = 12,
-        fnott_edge_margin_horizontal = 12,
+        fnott_edge_margin_vertical = 8,
+        fnott_edge_margin_horizontal = 8,
     },
     build_waybar_config = function(cfg, theme) ... end, -- returns JSONC string
     build_waybar_css    = function(cfg, theme) ... end, -- returns CSS string
@@ -31,7 +31,7 @@ return {
 - **Consistent click targets**:
   - `custom/menu` → left-click `kaze-menu` (Top drop-down), right-click `kaze-panel` (Right drawer)
   - `clock` → `kaze-dashboard` (Top drop-down Calendar & Media popup)
-  - `network` → left-click `kaze-wifi` (Right popup), right-click `kaze-tui wifi` (Right TUI drawer)
+  - `network` → left-click `kaze-panel --wifi` (Right Wi-Fi panel), right-click `kaze-tui wifi` (Right TUI drawer)
   - `wireplumber` → left-click `kaze-audio-sink` (Right popup), middle-click `kaze-tui audio` (Right TUI drawer), right-click `kaze-osd vol-mute`, scroll up/down `kaze-osd vol-up` / `vol-down`
   - `battery` → left-click `kaze-panel` (Right Quick Control Drawer), right-click `kaze-tui sysmon` (Right TUI drawer)
   - `custom/power` → left-click `kaze-power` (Right popup), right-click `kaze-panel` (Right drawer)
@@ -62,7 +62,7 @@ return {
  │ 32 │
  │ ⏻  │
  ╰────╯
-  width: 42px, margin: 8px 0 8px 8px, border-radius: 14px
+  width: 42px, margin: 8px 0 8px 8px, border-radius: 0
 ```
 
 ### Geometry & Hyprland Sync
@@ -72,7 +72,7 @@ return {
   - Border: `2px solid @border`
   - Border radius: `0px`
 - Hyprland: `gaps_in = 4`, `gaps_out = 8`, `rounding = 0`, `border_size = 2` (flush `8px` sharp framing grid aligned with the `8px` sidebar margin while preserving full `1080px` vertical screen height).
-- Fnott: `anchor = top-right`, `edge-margin-vertical = 12`, `edge-margin-horizontal = 12`, `border-radius = 0`.
+- Fnott: `anchor = top-right`, `edge-margin-vertical = 8`, `edge-margin-horizontal = 8`, `border-radius = 0`.
 
 ### Waybar Module Slots
 - **Top (`modules-left`)**: `["custom/menu"]`
@@ -104,12 +104,12 @@ return {
   - Border radius: `0px`
   - Padding: `0 3px`
 - Hyprland: `gaps_in = 5`, `gaps_out = 10`, `rounding = 0`, `border_size = 2`.
-- Fnott: `anchor = top-right`, `edge-margin-vertical = 48`, `border-radius = 0`.
+- Fnott: `anchor = top-right`, `edge-margin-vertical = 8`, `edge-margin-horizontal = 10`, `border-radius = 0` (positioned `8px` below Waybar's `40px` exclusive zone → `y = 48px`, flush with right popups).
 
 ### Waybar Module Slots
 - **Left**: `["custom/menu", "hyprland/workspaces"]`
-  - `custom/menu`: Arch icon (`󰣇`), subtle circular hover highlight (`border-radius: 10px`).
-  - `hyprland/workspaces`: 5 persistent workspaces (`1..5`), inactive dots (`8px × 8px`), active workspace smoothly expands to **`24px × 8px` rounded pill in `@accent`**.
+  - `custom/menu`: Arch icon (`󰣇`), crisp rectangular hover highlight (`border-radius: 0`).
+  - `hyprland/workspaces`: 5 persistent workspaces (`1..5`), inactive blocks (`8px × 8px`), active workspace expands to **`24px × 8px` sharp bar in `@accent`**.
 - **Center**: `["mpris", "clock"]`
   - `mpris`: Shows `󰎈 Artist - Title` (max-length 28) only when playing/paused; collapses cleanly when idle.
   - `clock`: `Tue 25 Nov · 00:15` (weight `600`, tooltip shows full monthly calendar).
@@ -123,7 +123,7 @@ return {
 ```text
  󰣇  1  [2]  3  4  5                Tue 25 Nov  14:32                󰤨  󰕾 64%  󰁹 92%  [tray]  ⏻
  ────────────────────────────────────────────────────────────────────────────────────────────────
-  height: 28px, margin: 0, border-radius: 0, 1px bottom hairline border
+  height: 28px, margin: 0, border-radius: 0, 2px bottom border
 ```
 
 ### Geometry & Hyprland Sync
@@ -133,7 +133,7 @@ return {
   - Border: `border-bottom: 2px solid @border`
   - Border radius: `0px`
 - Hyprland: `gaps_in = 4`, `gaps_out = 6`, `rounding = 0`, `border_size = 2`.
-- Fnott: `anchor = top-right`, `edge-margin-vertical = 36`, `edge-margin-horizontal = 10`, `border-radius = 0`.
+- Fnott: `anchor = top-right`, `edge-margin-vertical = 8`, `edge-margin-horizontal = 8`, `border-radius = 0` (positioned `8px` below Waybar's `28px` exclusive zone → `y = 36px`).
 
 ### Waybar Module Slots
 - **Left**: `["custom/menu", "hyprland/workspaces", "hyprland/window"]`

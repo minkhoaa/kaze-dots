@@ -57,7 +57,7 @@ local function usage()
 end
 
 local function pick_from_menu(current_layout, active_theme)
-    if popups.toggle_existing_fuzzel() then
+    if popups.toggle_existing_fuzzel("kaze-layout") then
         return nil
     end
     if not cmd_exists("fuzzel") then
@@ -88,6 +88,7 @@ local function pick_from_menu(current_layout, active_theme)
         line_height = 36,
         select_index = active_idx,
         prompt = "Layout > ",
+        tag = "kaze-layout",
     })
     if not trimmed then
         io.stderr:write("kaze-layout: " .. tostring(dmenu_err) .. "\n")

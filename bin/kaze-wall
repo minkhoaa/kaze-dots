@@ -135,7 +135,7 @@ local function scan_wallpapers(wall_dir)
 end
 
 local function pick_from_menu(wall_dir, current_wall, theme)
-    if popups.toggle_existing_fuzzel() then
+    if popups.toggle_existing_fuzzel("kaze-wall") then
         return nil
     end
     if not cmd_exists("fuzzel") then
@@ -210,12 +210,12 @@ local function pick_from_menu(wall_dir, current_wall, theme)
         width = 56,
         lines = math.min(#dmenu_entries, 12),
         minimal_lines = true,
-        hide_prompt = true,
         line_height = 52,
         image_size_ratio = 0.84,
         select_index = active_pos and (active_pos - 1) or nil,
         force_icons = (os.getenv("KAZE_WALL_FORCE_THUMBS") == "1"),
         prompt = "Wallpaper > ",
+        tag = "kaze-wall",
     })
     if not selected then
         fail(dmenu_err or "failed to launch fuzzel")
