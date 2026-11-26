@@ -1,182 +1,87 @@
-# Spec 04 — Lua CLI Tools & Keybind Matrix
+# Spec 04 — Helper CLIs & Hyprland Keybind Matrix
 
-## 1. Pure-Lua CLI Tools (`bin/kaze-*`)
+## 1. Helper CLIs (`bin/kaze-*`)
 
-All executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, have `chmod +x`, and follow strict POSIX exit codes (`0` success, non-zero + `stderr` error message on failure).
+All 7 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run strictly on demand (`0 MiB` resident background RAM), and follow POSIX exit codes (`0` success, `2` invalid CLI args, non-zero + `stderr` message on runtime errors).
 
-### `kaze-sync [--reload | --check | --session-start | --set-layout NAME | --set-theme NAME | --set-dynamic-theme | --set-wallpaper PATH | --set-profile NAME]`
-- Reads resolved config (`defaults` + `state.lua` + `user.lua` + active `layout`).
-- Generates all target configs atomically via `fs.write_atomic()`.
-- `--check`: Dry-run validation only (verifies theme/layout/emitters without writing `~/.config/*` or reloading daemons).
-- `--reload` / `--set-*`: Stage and validate, then reload the active Kaze session. Restart Waybar and Fnott; pre-map a transient `swaybg` candidate before restarting `kaze-wallpaper.service` for zero-flash image transitions, apply any new cursor setting, and start/stop optional `full` profile services (`kaze-polkit.service`, `kaze-fcitx5.service`) when profile flags change. Foot is not restarted. On failure restore generated files, `session.env`, and the previous runtime appearance. With no powered outputs use service/PID health instead of requiring a mapped layer. Startup uses `--session-start` with safe preset fallbacks and no live reload.
+### `kaze-session <start|stop|lock|wake-displays>`
+- `start`: renders `$XDG_RUNTIME_DIR/kaze/session.env` from `hypr_user.load()`, imports only `WAYLAND_DISPLAY`, `XDG_CURRENT_DESKTOP`, and `HYPRLAND_INSTANCE_SIGNATURE` to `systemd --user` / D-Bus, and starts `kaze-session.target`.
+- `stop`: tears down active virtual-share/presentation state (`kaze-display cleanup`), stops any running `kaze-record.service` gracefully, stops `kaze-session.target`, and unsets session Wayland vars.
+- `lock`: triggers Noctalia lockscreen (`noctalia msg lock`).
+- `wake-displays`: re-enables display power via Hyprland 0.57 `hl.dsp.dpms({ action = "on" })` (invoked by Noctalia's idle `resume_command`).
 
-### `kaze-layout [--quiet] [sidebar|islands|slim|--menu|--current]`
-- No args or `--menu`: Opens `fuzzel --dmenu -p "Layout > "` listing all layouts with `(active)` marker on the current one.
-- `<name>`: Validates, delegates the serialized switch to `kaze-sync`, then sends a confirmation notification (suppressed with `--quiet`). State is committed only after the switch succeeds.
-- `--current`: Prints active layout name to `stdout`.
+### `kaze-footclient [footclient-args...]`
+- Connects to the packaged `foot-server.socket` (`footclient -E --server-socket=...`), reads live color overrides from `~/.config/foot/themes/noctalia`, passes them via `-o`, and propagates the exact child exit status.
 
-### `kaze-theme [--quiet] [kaze|lavender|tokyonight|carbon|paper|dynamic|toggle-polarity|--menu|--current]`
-- No args or `--menu`: Opens `fuzzel --dmenu -p "Theme > "` listing all themes (including `paper` light mode and `dynamic` when `matugen` is installed or active) with `(active)` marker.
-- `toggle-polarity`: Instant outdoor Light (`paper`) ↔ Dark (`last_dark_theme` or `kaze`, reusing cached `dynamic_palette` when returning to `dynamic`) switch.
-- `<name>`: Validates (`dynamic` extracts colors via `matugen` and WCAG-clamps tokens before calling `kaze-sync --set-dynamic-theme`), delegates the serialized switch to `kaze-sync` (which also exports read-only `~/.cache/kaze/palette.{lua,json,sh}`), then sends a confirmation notification (suppressed with `--quiet`). State is committed only after the switch succeeds.
-- `--current`: Prints active theme name to `stdout`.
-
-### `kaze-perf [--quiet] [on|off|toggle|status]`
-- Instant 0-MiB Zen / Gamemode toggle (`Super + Shift + Z`): uses `hyprctl eval` to disable animations, blur, shadow, rounding, gaps and translucency (`1.0` opacity) and hides Waybar (`SIGUSR1`); restores layout via `hyprctl reload` on exit.
-
-### `kaze-dashboard [--print | --perf | --notifications]` · `kaze-panel [--status | --wifi | --settings]` · `kaze-dnd [--quiet] [on|off|toggle|status]`
-- Zero-daemon (`0 MiB` background RAM) stateful `footclient` TrueColor popovers synced to active layout margins (auto-dismissing cleanly on outside click, focus shift, or `Esc`):
-  - `kaze-dashboard` (`Super + N` / left-click `clock`, right-click `clock` for `--perf`, right-click `custom/dnd` for `--notifications`): Interactive **Calendar** + MPRIS Media, Caelestia-style **Notification Center** (`--notifications` / `--notifs` with stacked accent-bar cards, smooth scroll, per-item dismiss, `Clear All`, live `Do Not Disturb` switch sync, and `kaze.notify` session store capped at 25 items in `$XDG_RUNTIME_DIR/kaze/notifications.json` ignoring `kaze-osd`), and live **Performance** tab (CPU %, GHz/Load, Memory/Swap, Storage `/`, Temp `°C`, Uptime, Top Processes, and 1-click `btop` / Zen Mode).
-  - `kaze-panel` (`Super + A` / click `battery`, right-click `menu`/`power`, or click `network` for `--wifi`): Caelestia-inspired Quick Control Tray featuring **Keep awake** (with `Active since HH:MM` badge), **Screen recorder** (`Fullscreen`/`Region` split selector + live saved `Recordings` list), 6-tile **Quick toggles** (`Wi-Fi`, `Bluetooth`, `Mic`, `Tune/Settings`, `Game/Zen`, `DND` with right-click opening Notification Center) plus inline `Alerts / Inbox` pill, inline **Wi-Fi & Network** view (with 1-click `nmtui` button), Volume/Brightness sliders, and Session footer.
-  - `kaze-dnd`: Session-scoped Do Not Disturb (`$XDG_RUNTIME_DIR/kaze/dnd.state` + `fnottctl pause/unpause` + Waybar `RTMIN+10` indicator whose right-click opens `kaze-dashboard --notifications`).
-  - Floating TUIs (`kaze-tui`) dock flush along the bar/drawer edge, and the default `Super + S` scratchpad (`kaze-dropdown`) drops down from the top (`animation = "slide top"`).
-
-### `kaze-windows [--list]` · `kaze-audio-sink [--quiet] [--list]` · `kaze-wifi [--list] [--rescan]` · `kaze-bluetooth [--list] [--scan]` · `kaze-calc [--eval EXPR]`
-- On-demand Fuzzel workflow helpers (`0 MiB` background footprint):
-  - `kaze-windows` (`Super + Tab`): Fuzzy window switcher across all normal and `special:*` workspaces via `hyprctl -j clients`.
-  - `kaze-audio-sink` (`Super + Shift + A`): 1-step PipeWire default sink switcher via `wpctl status` + `wpctl set-default`.
-  - `kaze-wifi`: Fast `<20 ms` `nmcli --rescan no` Wi-Fi switcher with password prompt, rescan, and `nmtui`/`impala` fallback.
-  - `kaze-bluetooth`: Quick `bluetoothctl` switcher in Fuzzel (paired/connected devices with battery `%`, power on/off toggle, 5s scan, and `bluetui` fallback).
-  - `kaze-calc` (`Super + Alt + C` / `XF86Calculator`): Pure-Lua 5.5 sandboxed expression calculator (`--eval` for CLI, interactive `fuzzel` + `wl-copy`).
-
-### `kaze-wall [--quiet] [<path> | --random | --menu | --preview | --current]`
-- Validates image magic bytes (PNG/JPEG/WebP/GIF/BMP/SVG), rejects pinned `user.lua` `wallpaper` overrides with exit `1`, serializes switches under `wall.lock` + `sync.lock`, updates `dynamic_palette` automatically when `theme == "dynamic"`, and transitions `swaybg` without flashing black.
-- `--random` picks a different image from `cfg.wallpaper_dir` when ≥ 2 images exist; `--menu` lists relative paths with cached square `96×96` PNG thumbnails (PNG/SVG direct fallback on `minimal`) in `fuzzel --dmenu`; `--preview` opens `yazi` in `kaze-footclient`.
-
-### `kaze-display [--menu | --list | extend-right | extend-left | extend-up | mirror | external | internal | auto]`
-- Pure-Lua external monitor manager powered by `lua/kaze/display.lua` and `hyprctl -j monitors all` + `hyprctl keyword monitor` (zero resident daemon, zero extra packages).
-- Prefers `eDP-*` / `LVDS-*` / `DSI-*` as the internal laptop display; refuses `external` when no external monitor is connected so a single display is never blacked out. Bound to `Super + Shift + P` and `XF86Display`, and exposed in `kaze-menu`.
+### `kaze-display [COMMAND]`
+- Zero-daemon Hyprland 0.57 multi-monitor, presentation, and virtual-share orchestrator powered by `lua/kaze/display.lua` and `noctalia dmenu` (`kaze.popups`).
+- Interactive menu (`--menu`, bound to `Super + Shift + P` / `XF86Display` and bar `[widget.display]`):
+  1. **Mirror Full Screen** (`mirror`, `mirror-scaled` via `wl-mirror`, `stop-mirror`)
+  2. **Present Workspace** (`present [ws_id]`, `toggle-control` on `Ctrl + Super + P`, `stop-present`) — hides Noctalia bar on the external monitor and manages DND safely
+  3. **Virtual Share (Meet/Discord 1080p)** (`virtual-share [ws_id]`, `switch-share [ws_id]`, `toggle-window-share` on `Super + Alt + P`, `toggle-preview`, `stop-virtual`) — creates a `1920x1080@60` headless `kaze-share` output at `9999x0` and safely rescues windows on stop/logout
+  4. **Extend / Layout** (`extend-right`, `extend-left`, `extend-up`, `external`, `internal`, `auto`)
+- Lifecycle hooks: `--hotplug <monitor>`, `--on-disconnect <monitor>`, `--list`, `cleanup`. Persists active monitor rules in `$XDG_RUNTIME_DIR/kaze/monitors.lua` so `hyprctl reload` preserves runtime layouts.
 
 ### `kaze-keys [--list]`
-- Shares `lua/kaze/keybinds_data.lua` with `hypr/keybinds.lua` (single pure-Lua source of truth with zero compositor IPC needed to list shortcuts).
-- `--list` prints `[Group]  Chord  —  Description` rows; no args opens `fuzzel --dmenu -p "Keys > "` (bound to `Super + /`, Esc-safe).
+- Reads `lua/kaze/keybinds_data.lua` directly (single pure-Lua source of truth shared with `hypr/keybinds.lua`, zero compositor IPC needed for `--list`).
+- Default mode opens `noctalia dmenu` (`Super + /`, Esc-safe).
 
-### `kaze-doctor [--offline] [--profile minimal|full]`
-- Verifies required `PATH` binaries for the active profile (`minimal` never fails on absent `full` packages), deployed XDG symlink integrity (including systemd user units and drop-ins), UTF-8 locale, empty `hyprctl configerrors`, matching `systemd --user` Wayland activation vars, passive `busctl --user --activatable` portal check (never waking portals), active PipeWire/WirePlumber, and singleton daemon PID counts. Prints informational guidance on user-managed opt-ins (`gnome-keyring`/`keepassxc`, `mpris-proxy`, `udisks2`).
-
-### `kaze-menu`
-- Opens a flat command palette in `fuzzel` (toggles closed if `fuzzel` is already running). When launched from `kaze-waybar.service`, actions detach via `systemd-run --user --scope --quiet` so bar restarts never terminate switch transactions. Entries without their backend binary are hidden:
-  - `󰀻  App Launcher` → calls `fuzzel`
-  - `󰃭  Calendar & Dashboard` → calls `kaze-dashboard`
-  - `󰂚  Notification Center` → calls `kaze-dashboard --notifications`
-  - `󰓅  Performance Dashboard` → calls `kaze-dashboard --perf`
-  - `󰒓  Quick Control Tray` → calls `kaze-panel`
-  - `󰤨  Wi-Fi & Network Panel` → calls `kaze-panel --wifi`
-  - `󰆍  Terminal` → calls `kaze-footclient -N`
-  - `󰙵  Switch Layout` → calls `kaze-layout --menu`
-  - `󰏘  Switch Theme` → calls `kaze-theme --menu`
-  - `󰖩  Wi-Fi (nmtui)` → calls `kaze-tui wifi`
-  - `󰂯  Quick Bluetooth` → calls `kaze-bluetooth`
-  - `󰂯  Bluetooth (bluetui)` → calls `kaze-tui bluetooth`
-  - `󰕾  Audio Mixer (wiremix)` → calls `kaze-tui audio`
-  - `󰍛  System Monitor (btop)` → calls `kaze-tui sysmon`
-  - `󰅌  Clipboard History` → `kaze-clipboard pick`
-  - `󰄀  Screenshot Region` → `kaze-screenshot region`
-  - `󰆓  Save Screenshot Region` → `kaze-screenshot region --save`
-  - `Annotate Screenshot` → `kaze-screenshot region --annotate` (`swappy`)
-  - `Pick Color` → `kaze-screenshot color` (`hyprpicker`)
-  - `Toggle Screen Recording` / `Toggle Region Recording` → `kaze-record [--region]` (`wf-recorder`)
-  - `Toggle Night Light` → `kaze-night` (`hyprsunset`)
-  - `Toggle Caffeine` → `kaze-inhibit` (`systemd-inhibit`)
-  - `󰑓  Reload Shell` → `kaze-sync --reload`
-  - `⏻  Power Menu` → calls `kaze-power`
-
-### `kaze-power`
-- Opens `fuzzel --dmenu -p "Power > "` with clean options:
-  - `󰌾  Lock` → request a lock for the graphical login via logind; hypridle starts `kaze-lock.service` and updates `LockedHint` from Wayland confirmations
-  - `󰍹  Screen Off` → turn the displays off via Hyprland DPMS, with no suspend or immediate lock. A key press or mouse movement turns them back on.
-  - `󰍃  Logout` → finalize any active recording, stop the Kaze session, clear session clipboard and env, then dispatch `hl.dsp.exit()`
-  - `󰜉  Reboot` → `systemctl reboot`
-  - `⏻  Shutdown` → `systemctl poweroff`
-- Kaze does not request system sleep. Lid events and suspend requests from outside Kaze are governed by system policy.
-
-### `kaze-clipboard [pick|list|store|wipe]`
-- Clipboard history is shared by both MIME watchers and picker, is private in `$XDG_RUNTIME_DIR/kaze` by default, and skips non-`data` events. `Esc` or a failed decode does not touch the clipboard.
-
-### `kaze-screenshot <screen|region> [--save]` / `region --annotate` / `color`
-- Screenshot capture is staged before copying. An interrupted selection or failed capture leaves the clipboard untouched and sends no success notification. `--save` writes a PNG to the XDG Pictures `Screenshots` subdirectory instead of copying it.
-- `region --annotate` opens a private temporary PNG in `swappy` after a successful selection and removes it when the editor closes. Saving or copying annotations is left to the editor.
-- `color` runs `hyprpicker` without autocopy. Only a valid `#RRGGBB` from a successful pick replaces the clipboard and triggers a color toast.
+### `kaze-tui <sysmon|wifi|bluetooth|audio>`
+- Toggles a floating left-edge drawer (`-a kaze-tui`, matched by `hypr/rules.lua`) inside `kaze-footclient`. Primary hotkey is `Ctrl + Shift + Esc` → `kaze-tui sysmon` (`btop`, fallback `htop`/`top`). Focuses or closes an existing drawer cleanly on repeat press.
 
 ### `kaze-record [toggle|--region|stop|status]`
-- No args / `toggle` starts video-only capture on the focused output. `--region` starts from a `slurp` selection cropped to one output. Either toggle stops an active recording; `stop` never starts one. `Esc` doesn't reserve a file. `status` prints `on` or `off`.
-- Writes a unique MP4 under the XDG Videos `Recordings` subdirectory (`~/Videos/Recordings` fallback). A nonblocking `record.lock` ignores overlapping invocations.
-- Captures at 30 fps with damage-only capture disabled so a static screen doesn't stall a normal stop. Stops via `kaze-record.service` (`SIGINT`, 10s stop timeout); announces the path only after the job completes, the encoder exited successfully, and a bounded `ffprobe` read found a video packet. Failures warn about incomplete video.
-- Use the Kaze Power menu to log out: it stops the recorder before asking Hyprland to exit. The direct compositor shutdown hook also attempts a bounded stop; if Wayland is already blocked in shutdown or the recorded output disappears, the recorder's main thread can time out. Treat such a file as potentially incomplete even if the encoder got time to write the trailer.
+- Video-only `wf-recorder` capture managed via on-demand `kaze-record.service` with `flock` concurrency protection (`$XDG_RUNTIME_DIR/kaze/record.lock`).
+- `--region` selects a single-output rectangle via `slurp` (`Esc` cancels without reserving a file).
+- Writes unique `.mp4` files under XDG Videos `Recordings/`, stops cleanly via `SIGINT` with `ffprobe` packet verification, and notifies on completion.
 
-### `kaze-night [on|off|toggle|status]` / `kaze-inhibit [on|off|toggle|status]`
-- Both toggle by default; `status` reports `on` or `off`. They only run during the Kaze login and add no worker when off.
-- Night Light runs `hyprsunset` at `night_temp` (default `4500` K, `1000..6500`). Run `kaze-sync --reload` after editing the setting and turn Night Light off/on to use it.
-- Caffeine uses logind's `idle` inhibitor, honored by hypridle. It stops on demand, on logout, or after two hours, releasing the inhibitor without disabling manual lock or changing sleep/lid policy.
-
-### `kaze-tui <wifi|bluetooth|audio|sysmon|power-profile>`
-- Launches a centered floating `kaze-footclient` window (`-a kaze-tui`, matched by Hyprland `window_rule` `^kaze-tui$`):
-  - `wifi` → `impala` when standalone `iwd.service` is active and `NetworkManager.service` is inactive; otherwise `nmtui`
-  - `bluetooth` → `bluetui` (falls back to `bluetoothctl`)
-  - `audio` → `wiremix` (falls back to `pulsemixer` or `alsamixer` if absent)
-  - `sysmon` → `btop` (falls back to `htop` or `top`)
-  - `power-profile` → Fuzzel selector communicating directly with an active D-Bus PowerProfiles daemon (`org.freedesktop.UPower.PowerProfiles` / `net.hadess.PowerProfiles`) via `busctl --system --auto-start=no` (zero Python; automatically hidden when absent or when `tlp.service` is active)
-- If a `kaze-tui` window for the same tool is already focused/open, cleanly focuses or closes it without hanging.
-
-### `kaze-osd <vol-up|vol-down|vol-mute|mic-mute|bright-up|bright-down>`
-- Executes the exact hardware command (`wpctl` or `brightnessctl`), reads the updated percentage/mute state, and fires a synchronous replacing notification to `fnott`:
-  ```bash
-  notify-send -a kaze-osd -t 1400 -u low \
-    -h string:x-canonical-private-synchronous:kaze-osd \
-    -h int:value:<pct> \
-    "<icon> <label>" "<pct>%"
-  ```
-- Hardware key auto-repeat is throttled inside Hyprland (80 ms per volume/backlight channel). Brightness changes only panel backlights and use a floor of `ceil(2% of max_brightness)`, at least one device unit.
-- **Zero extra resident OSD daemon** (`0 MiB` idle RAM).
+### `kaze-doctor [--offline] [--profile minimal|full] [--diff [--template PATH]]`
+- Validates required `PATH` binaries for the active profile (`minimal` vs `full`), deployed XDG symlinks (zero broken links), `noctalia config validate`, `foot --check-config`, `zsh -n` across `~/.zshrc`/`~/.zprofile`/`conf.d/*.zsh`, UTF-8 locale, empty `hyprctl configerrors`, matching `systemd --user` Wayland env, passive `busctl --user --activatable` portal check (never wakes portals), active PipeWire/WirePlumber, and singleton daemon counts (`noctalia`, `foot`, plus `fcitx5` on `full`).
+- `--diff` (alias `--diff-noctalia`): pure-Lua drift check (`lua/kaze/toml_diff.lua`) comparing `~/.config/noctalia/config.toml` against `<repo>/config/noctalia/config.toml` to surface newly added upstream sections, keys, and bar/template list items without flagging user GUI edits. Normal `kaze-doctor` runs also emit a `[WARN]` hint when drift exists.
 
 ---
 
-## 2. Hyprland Keybind Matrix (`hypr/keybinds.lua`)
+## 2. Hyprland Keybind Matrix (`lua/kaze/keybinds_data.lua`)
 
-| Keybind | Action | Flags |
+| Group | Keybind | Action |
 |---|---|---|
-| `Super` (tap release) / `Super + Space` | Toggle App Launcher (`fuzzel`) | `release` (`SUPER_L`) |
-| `Super + Shift + Space` | Open `kaze-menu` | — |
-| `Super + /` | Search Keyboard Shortcuts (`kaze-keys`) | — |
-| `Super + Shift + L` | Quick Layout Switcher (`kaze-layout --menu`) | — |
-| `Super + Shift + T` | Quick Theme Switcher (`kaze-theme --menu`) | — |
-| `Super + Return` / `Super + T` | Open Terminal (`kaze-footclient`) | — |
-| `Super + W` | Open Browser (`cfg.browser`) | — |
-| `Super + C` | Open Editor (`cfg.editor`, fallback `code`/`nvim`) | — |
-| `Super + E` | Open File Manager (`cfg.files`) | — |
-| `Super + V` | Clipboard History (`cliphist` + `fuzzel`) | — |
-| `Super + L` | Lock Screen (`kaze-session lock` → logind → hypridle/Hyprlock) | — |
-| `Ctrl + Alt + Delete` | Power Menu (`kaze-power`) | — |
-| `Ctrl + Alt + C` | Dismiss All Notifications (`fnottctl dismiss all`) | `locked` |
-| `Super + Alt + W` | Floating Wi-Fi TUI (`kaze-tui wifi`) | — |
-| `Super + Alt + B` | Floating Bluetooth TUI (`kaze-tui bluetooth`) | — |
-| `Ctrl + Alt + V` / `Super + Alt + A` | Floating Audio TUI (`kaze-tui audio`) | — |
-| `Ctrl + Shift + Esc` | Floating System Monitor (`kaze-tui sysmon`) | — |
-| `Print` | Fullscreen Screenshot → Clipboard | `locked` |
-| `Super + Shift + S` | Region Screenshot (`slurp`) → Clipboard | — |
-| `Super + Shift + Alt + S` | Annotate Region Screenshot (`swappy`) | — |
-| `Super + Shift + C` | Color Picker (`hyprpicker`) | — |
-| `Ctrl + Alt + R` / `Super + Shift + Alt + R` | Toggle Screen / Region Recording (`kaze-record`) | — |
-| `Ctrl + Super + Alt + R` | Sync & Reload Shell (`kaze-sync --reload`) | `release` |
-| `Super + Q` | Close Active Window | — |
-| `Super + F` / `Super + Alt + F` | Fullscreen / Maximize | — |
-| `Super + Alt + Space` | Toggle Floating | — |
-| `Super + P` | Toggle Pin | — |
-| `Ctrl + Super + \` / `Ctrl + Super + Alt + \` | Center / Normalize (55%×70% + Center) Window | — |
-| `Super + Alt + \` | Pin Window as Picture-in-Picture (bottom-right) | — |
-| `Super + ,` / `Super + Shift + ,` / `Super + U` | Toggle / Lock / Ungroup Window Group | — |
-| `Ctrl + Alt + Tab` / `Ctrl + Shift + Alt + Tab` | Cycle Window Group Tabs | `repeating` |
-| `Super + -/=` / `Super + Shift + -/=` / `Super + Alt + Arrows` | Resize Active Window (±10%) | `repeating` |
-| `Super + S` / `Super + Alt + S` / `Ctrl + Super + Shift + Up/Down` | Toggle / Move In & Out of Scratchpad (`special:scratch`) | — |
-| `Super + M` / `Super + D` / `Super + R` | Toggle Special Workspaces (`music`, `communication`, `todo`) | — |
-| `Super + H/J/K/Arrows` | Focus Window Direction | — |
-| `Super + Shift + Arrows` | Move Window Direction | — |
-| `Super + 1..0` / `Super + Shift/Alt + 1..0` | Focus / Move to Workspace `1..10` | — |
-| `Ctrl + Super + Left/Right` / `Super + Page_Up/Down` / `Scroll` | Cycle Prev / Next Workspace | `repeating` |
-| `Ctrl + Super + Shift + Left/Right` / `Super + Alt + Page_Up/Down` | Move Window to Prev / Next Workspace | `repeating` |
-| `Super + LMB / Z` · `Super + RMB / X` | Drag / Resize Window | `mouse` |
-| `XF86AudioRaiseVolume` / `Lower` | `kaze-osd vol-up` / `vol-down` | `locked`, `repeating` |
-| `XF86AudioMute` / `Super + Shift + M` / `MicMute` | `kaze-osd vol-mute` / `mic-mute` | `locked` |
-| `XF86MonBrightnessUp` / `Down` | `kaze-osd bright-up` / `bright-down` | `locked`, `repeating` |
-| `XF86AudioPlay` / `Ctrl + Super + Space` | `playerctl play-pause` | `locked` |
-| `XF86AudioNext` / `Prev` / `Stop` (`Ctrl + Super + = / - / Backspace`) | `playerctl next` / `previous` / `stop` | `locked` |
+| **Launchers** | `Super` (tap) / `Super + Space` | Toggle Noctalia app launcher |
+| **Launchers** | `Super + A` / `Super + N` | Control Center / Notifications tab |
+| **Launchers** | `Super + I` | Noctalia Settings GUI |
+| **Launchers** | `Super + /` | Search Hyprland shortcuts (`kaze-keys`) |
+| **Launchers** | `Super + Shift + T` | Toggle Dark / Light mode (Noctalia) |
+| **Launchers** | `Super + Shift + W` | Noctalia wallpaper picker |
+| **Launchers** | `Super + V` | Noctalia clipboard history |
+| **System** | `Ctrl + Alt + Delete` | Noctalia session menu |
+| **System** | `Super + L` | Lock screen (`kaze-session lock`) |
+| **System** | `Ctrl + Alt + C` | Dismiss active notifications (`locked`) |
+| **System** | `Super + Shift + D` | Toggle Do Not Disturb |
+| **System** | `Super + Shift + N` | Toggle Night Light |
+| **System** | `Super + Esc` | Enter/exit VM keybind `passthrough` submap |
+| **System** | `Super + Shift + P` / `XF86Display` | Display / Present / Virtual Share menu (`kaze-display --menu`) |
+| **System** | `Super + Alt + P` | Push/pull window to shared workspace (`kaze-display toggle-window-share`) |
+| **System** | `Ctrl + Super + P` | Toggle control presented workspace on laptop (`kaze-display toggle-control`) |
+| **System** | `Ctrl + Super + Alt + R` | Reload Noctalia & Hyprland (`noctalia msg config-reload && hyprctl reload`) |
+| **Apps** | `Super + Return` / `Super + T` | Terminal (`kaze-footclient -N`) |
+| **Apps** | `Super + W` / `Super + C` / `Super + E` | Browser / Editor (`codium`/`code`/`nvim`) / File manager (`yazi`) |
+| **Tools** | `Super + Alt + W` / `Super + Alt + B` | Network / Bluetooth Control Center tab |
+| **Tools** | `Ctrl + Alt + V` / `Super + Alt + A` | Audio Control Center tab |
+| **Tools** | `Ctrl + Shift + Esc` | Floating `btop` drawer (`kaze-tui sysmon`) |
+| **Capture** | `Print` / `Super + Shift + S` / `Super + Shift + Alt + S` | Full / Region / Annotate screenshot (Noctalia native) |
+| **Capture** | `Super + Shift + C` | Pick screen color (`hyprpicker` → clipboard) |
+| **Capture** | `Ctrl + Alt + R` / `Super + Shift + Alt + R` | Toggle Full / Region screen recording (`kaze-record`) |
+| **Windows** | `Super + Q` | Close active window |
+| **Windows** | `Super + F` / `Super + Alt + F` | Toggle fullscreen / maximize |
+| **Windows** | `Super + Alt + Space` / `Super + P` | Toggle float / pin |
+| **Windows** | `Ctrl + Super + \` / `Ctrl + Super + Alt + \` / `Super + Alt + \` | Center / Normalize (55%×70%) / Pin as PiP |
+| **Windows** | `Super + Tab` / `Alt + Tab` | Noctalia window switcher / Cycle next window |
+| **Windows** | `Super + ,` / `Super + Shift + ,` / `Super + U` / `Ctrl + Alt + Tab` | Toggle / Lock / Ungroup / Cycle window group |
+| **Windows** | `Super + -/=` / `Super + Shift + -/=` / `Super + Alt + Arrows` | Resize active window (±10%) |
+| **Windows** | `Super + Arrows / H J K` · `Super + Shift + Arrows` | Focus / Move window direction |
+| **Windows** | `Super + LMB / Z` · `Super + RMB / X` | Drag / Resize window |
+| **Workspaces** | `Super + 1..0` · `Super + Shift / Alt + 1..0` | Switch / Move window to workspace `1..10` |
+| **Workspaces** | `Super + Scroll` / `Ctrl + Super + Left/Right` / `Super + Page_Up/Down` | Cycle workspaces (and `+Shift`/`+Alt` to move window) |
+| **Workspaces** | `Super + S` / `Super + Alt + S` / `Ctrl + Super + Shift + Up/Down` | Toggle / Move in & out of `special:scratch` |
+| **Workspaces** | `Super + M` / `Super + D` / `Super + R` | Toggle special workspaces (`music`, `communication`, `todo`) |
+| **Media** | `XF86AudioRaise/LowerVolume`, `XF86AudioMute` (`Super + Shift + M`), `XF86AudioMicMute` | Noctalia native volume/mic OSD (`locked`) |
+| **Media** | `XF86MonBrightnessUp/Down` | Noctalia native brightness OSD (`locked`) |
+| **Media** | `XF86AudioPlay/Next/Prev/Stop` (`Ctrl + Super + Space / = / - / Backspace`) | Noctalia native media controls (`locked`) |

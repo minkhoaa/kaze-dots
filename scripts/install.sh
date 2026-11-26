@@ -125,40 +125,8 @@ case "$PROFILE" in
         ;;
 esac
 
-# 100% official Arch Linux [core]/[extra] packages — 0 AUR dependencies
-PKG_MIN_DESKTOP=(hyprland noctalia)
-PKG_MIN_PORTALS=(xdg-desktop-portal xdg-desktop-portal-hyprland xdg-desktop-portal-gtk dconf libnotify)
-PKG_MIN_TERM=(foot zsh zsh-autosuggestions zsh-syntax-highlighting zsh-completions)
-PKG_MIN_SYS=(wl-clipboard xdg-utils wireplumber brightnessctl playerctl networkmanager bluez bluez-utils btop)
-PKG_MIN_FONTS=(ttf-jetbrains-mono-nerd adwaita-cursors lua)
-
-MINIMAL_PACKAGES=(
-    "${PKG_MIN_DESKTOP[@]}"
-    "${PKG_MIN_PORTALS[@]}"
-    "${PKG_MIN_TERM[@]}"
-    "${PKG_MIN_SYS[@]}"
-    "${PKG_MIN_FONTS[@]}"
-)
-
-PKG_FULL_CAPTURE=(slurp wf-recorder ffmpeg hyprpicker wl-mirror)
-PKG_FULL_APPS=(yazi imv zathura zathura-pdf-poppler)
-PKG_FULL_IME=(gnome-keyring fcitx5 fcitx5-bamboo fcitx5-gtk noto-fonts noto-fonts-emoji)
-PKG_FULL_CLI=(fzf zoxide eza bat ripgrep fd starship)
-
-FULL_EXTRA_PACKAGES=(
-    "${PKG_FULL_CAPTURE[@]}"
-    "${PKG_FULL_APPS[@]}"
-    "${PKG_FULL_IME[@]}"
-    "${PKG_FULL_CLI[@]}"
-)
-
-get_packages_for_profile() {
-    local prof="$1"
-    PACKAGES=("${MINIMAL_PACKAGES[@]}")
-    if [[ "$prof" == "full" ]]; then
-        PACKAGES+=("${FULL_EXTRA_PACKAGES[@]}")
-    fi
-}
+# shellcheck source=scripts/packages.sh
+source "$REPO_DIR/scripts/packages.sh"
 
 PACKAGES=()
 get_packages_for_profile "$PROFILE"

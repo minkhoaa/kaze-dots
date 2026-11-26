@@ -38,7 +38,7 @@ templates/               Example ~/.config/hypr/user.lua override file
 - `kaze-keys` — searchable Hyprland shortcut list (`noctalia dmenu`)
 - `kaze-tui` — toggle floating `btop` window
 - `kaze-record` — full/region screen recording (`wf-recorder`)
-- `kaze-doctor` — quick health check for packages, symlinks, configs, and services
+- `kaze-doctor` — quick health check for packages, symlinks, configs, services, and Noctalia config drift (`--diff`)
 
 ## Setup
 
@@ -99,5 +99,5 @@ Press `Super + /` anytime to search the full list (`kaze-keys`).
 
 ## Notes
 
-- Run `kaze-doctor` inside a session if something looks off.
+- Run `kaze-doctor` inside a session if something looks off, or `kaze-doctor --diff` after updating the repo to see newly added sections/widgets in `config/noctalia/config.toml`.
 - Personal setup tuned for my own workflow — feel free to fork or borrow parts, just review configs before applying blindly.

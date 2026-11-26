@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  static-and-unit:
+    name: Static checks & unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install toolchain (Lua, Zsh, ShellCheck, Python 3)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lua5.4 zsh shellcheck python3
+          lua -v
+          luac -v
+          zsh --version
+          python3 --version
+          shellcheck --version
+
+      - name: Lua bytecode syntax check (luac -p)
+        run: |
+          find lua hypr bin tests -type f \( -name '*.lua' -o -path 'bin/kaze-*' \) -print0 \
+            | xargs -0 -r -n1 luac -p
+
+      - name: Lua unit test suite
+        run: lua tests/run.lua
+
+      - name: Python VM idle sampler unit tests
+        run: python3 -B -m unittest tests/vm-idle-test.py
+
+      - name: Bash syntax check (bash -n)
+        run: bash -n scripts/*.sh tests/*.sh
+
+      - name: ShellCheck (errors)
+        run: shellcheck --severity=error scripts/*.sh tests/vm-verify.sh tests/vm-common.sh
+
+      - name: ShellCheck (warnings, advisory)
+        continue-on-error: true
+        run: shellcheck --severity=warning scripts/*.sh tests/vm-verify.sh tests/vm-common.sh
+
+      - name: Dry-run installer & package manifest consistency
+        run: |
+          ./scripts/install-packages.sh --profile minimal --dry-run
+          ./scripts/install-packages.sh --profile full --dry-run
+          ./scripts/install.sh --profile minimal --dry-run
+          ./scripts/install.sh --profile full --dry-run

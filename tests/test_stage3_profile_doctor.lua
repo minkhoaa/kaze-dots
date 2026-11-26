@@ -978,6 +978,126 @@ fi
         package.loaded["kaze._ctx"] = prev_ctx
         if not ok_exec then error(err_exec, 0) end
     end)
+
+    test("packages.sh: install-packages.sh and install.sh share the exact package manifest for minimal & full", function()
+        local pkg_script = q(repo_dir .. "/scripts/install-packages.sh")
+        local inst_script = q(repo_dir .. "/scripts/install.sh")
+
+        local function extract_pkgs(text)
+            local list = {}
+            for line in (text .. "\n"):gmatch("(.-)\n") do
+                local pkg = line:match("^  ([%w%+%._%-]+)$")
+                if pkg then
+                    list[#list + 1] = pkg
+                end
+            end
+            return table.concat(list, "\n"), #list
+        end
+
+        for _, prof in ipairs({ "minimal", "full" }) do
+            local p_out, p_ok = read_all(pkg_script .. " --profile " .. prof .. " --dry-run 2>&1")
+            local i_out, i_ok = read_all(inst_script .. " --profile " .. prof .. " --dry-run 2>&1")
+            assert_true(p_ok, "install-packages.sh --dry-run failed for " .. prof .. ": " .. p_out)
+            assert_true(i_ok, "install.sh --dry-run failed for " .. prof .. ": " .. i_out)
+            local p_list, p_n = extract_pkgs(p_out)
+            local i_list, i_n = extract_pkgs(i_out)
+            assert_eq(p_n, i_n, "package count mismatch for " .. prof)
+            assert_eq(p_list, i_list, "package list mismatch for " .. prof)
+            assert_contains(p_out, "0 AUR", "install-packages.sh reports 0 AUR")
+        end
+
+        local _, bad_ok = read_all(pkg_script .. " --profile bogus --dry-run 2>&1")
+        assert_true(not bad_ok, "install-packages.sh must reject invalid profile")
+    end)
+
+    test("kaze.toml_diff & kaze-doctor --diff: detects missing Noctalia sections, keys, and bar widgets without flagging user edits", function()
+        local toml_diff = require("kaze.toml_diff")
+        local tpl = assert(fs.read_file(repo_dir .. "/config/noctalia/config.toml"))
+
+        -- Modified values (user GUI edits + full profile polkit_agent) must produce zero drift
+        local edited = tpl
+            :gsub('mode = "dark"', 'mode = "light"')
+            :gsub('builtin = "Tokyo%-Night"', 'builtin = "Catppuccin"')
+            :gsub('polkit_agent = false', 'polkit_agent = true')
+            :gsub('directory = "~/Pictures/Wallpapers"', 'directory = "/home/tester/Pictures/Wallpapers"')
+        local clean = toml_diff.diff(tpl, edited)
+        assert_true(not clean.has_drift, "user value edits must not be reported as drift")
+        local cs, ck, ci = toml_diff.summary_counts(clean)
+        assert_eq(cs, 0)
+        assert_eq(ck, 0)
+        assert_eq(ci, 0)
+
+        -- Simulated older user config missing [widget.display], [widget.display.actions], popup_shadows, and "display" widget
+        local older = tpl
+            :gsub('popup_shadows = false\n', '')
+            :gsub('"tray", "display", "net"', '"tray",\n  "net"')
+            :gsub('%[widget%.display%].-%[widget%.vclock%]', '[widget.vclock]')
+        local drifted = toml_diff.diff(tpl, older)
+        assert_true(drifted.has_drift, "older config must report drift")
+        local ds, dk, di = toml_diff.summary_counts(drifted)
+        assert_eq(ds, 2, "missing [widget.display] and [widget.display.actions]")
+        assert_eq(dk, 1, "missing popup_shadows key")
+        assert_eq(di, 1, "missing display bar widget")
+
+        local report = toml_diff.format_report(drifted)
+        assert_contains(report, "[widget.display]")
+        assert_contains(report, 'glyph = "device-desktop"')
+        assert_contains(report, "[shell] popup_shadows = false")
+        assert_contains(report, '[bar.default] end: missing "display"')
+
+        -- End-to-end CLI test for kaze-doctor --diff and normal [WARN] hint
+        local tmp = make_tmp_dir()
+        local ok_cli, err_cli = pcall(function()
+            local home, cfg, data, cache, runtime = tmp .. "/home", tmp .. "/cfg", tmp .. "/data", tmp .. "/cache", tmp .. "/runtime"
+            local stub_bin = tmp .. "/bin"
+            for _, d in ipairs({ home, cfg .. "/noctalia", data, cache, runtime, stub_bin }) do fs.mkdir_p(d) end
+            link_host_bin(stub_bin, "lua")
+            for _, b in ipairs({
+                "hyprland", "hyprctl", "noctalia", "notify-send",
+                "foot", "footclient", "zsh", "wl-copy", "wl-paste",
+                "wpctl", "brightnessctl", "playerctl",
+                "busctl", "systemctl", "flock",
+            }) do
+                write_stub(stub_bin, b, "exit 0")
+            end
+
+            local doctor = q(repo_dir .. "/bin/kaze-doctor")
+            local env = string.format(
+                "HOME=%s XDG_CONFIG_HOME=%s XDG_DATA_HOME=%s XDG_CACHE_HOME=%s XDG_RUNTIME_DIR=%s LANG=en_US.UTF-8 LC_ALL='' PATH=%s",
+                q(home), q(cfg), q(data), q(cache), q(runtime), q(stub_bin)
+            )
+
+            -- Missing config.toml -> non-zero exit
+            local miss_out, miss_ok = read_all(env .. " " .. doctor .. " --diff 2>&1")
+            assert_true(not miss_ok, "--diff must fail when user config.toml is absent")
+            assert_contains(miss_out, "user Noctalia config not found")
+
+            -- Up-to-date config -> exit 0, Status: up to date
+            fs.write_atomic(cfg .. "/noctalia/config.toml", edited)
+            local ok_out, ok_st = read_all(env .. " " .. doctor .. " --diff 2>&1")
+            assert_true(ok_st, "--diff on up-to-date config failed: " .. ok_out)
+            assert_contains(ok_out, "Status: up to date")
+
+            -- Drifted config -> --diff prints snippet; normal --offline emits WARN hint
+            fs.write_atomic(cfg .. "/noctalia/config.toml", older)
+            local diff_out, diff_st = read_all(env .. " " .. doctor .. " --diff 2>&1")
+            assert_true(diff_st, "--diff on drifted config failed: " .. diff_out)
+            assert_contains(diff_out, "Status: drift detected (2 missing section(s), 1 missing key(s), 1 missing list item(s)).")
+            assert_contains(diff_out, "[widget.display]")
+            assert_contains(diff_out, '[bar.default] end: missing "display"')
+
+            local off_out, off_st = read_all(env .. " " .. doctor .. " --offline 2>&1")
+            assert_true(off_st, "--offline doctor should still exit 0 on drift warning:\n" .. off_out)
+            assert_contains(off_out, "[WARN] noctalia: config.toml drift vs repo template")
+            assert_contains(off_out, "kaze-doctor --diff")
+
+            -- Invalid --template flag without value -> exit 2
+            local _, bad_tpl_ok = read_all(env .. " " .. doctor .. " --diff --template 2>&1")
+            assert_true(not bad_tpl_ok, "--template without path must fail")
+        end)
+        rm_rf(tmp)
+        if not ok_cli then error(err_cli, 0) end
+    end)
 end
 
 return run_suite

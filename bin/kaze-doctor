@@ -1,5 +1,7 @@
 #!/usr/bin/env lua
 
+local repo_root_dir
+
 local function setup_path()
     local home = os.getenv("HOME") or ""
     local xdg_data = os.getenv("XDG_DATA_HOME")
@@ -16,7 +18,8 @@ local function setup_path()
     end
     local base = (resolved or script):match("^(.*)/[^/]+$")
     if base then
-        local repo_lua = base .. "/../lua"
+        repo_root_dir = base .. "/.."
+        local repo_lua = repo_root_dir .. "/lua"
         local f = io.open(repo_lua .. "/kaze/fs.lua", "r")
         if f then
             f:close()
@@ -34,19 +37,34 @@ setup_path()
 
 local fs = require("kaze.fs")
 local hypr_user = require("kaze.hypr_user")
+local toml_diff = require("kaze.toml_diff")
 
 local function usage(out)
-    out:write("Usage: kaze-doctor [--offline] [--profile minimal|full] [-h|--help]\n")
+    out:write("Usage: kaze-doctor [--offline] [--profile minimal|full] [--diff [--template PATH]] [-h|--help]\n")
 end
 
 local offline = false
+local diff_mode = false
 local cli_profile = nil
+local cli_template = nil
 do
     local i = 1
     while i <= #arg do
         local a = arg[i]
         if a == "--offline" then
             offline = true
+        elseif a == "--diff" or a == "--diff-noctalia" then
+            diff_mode = true
+        elseif a == "--template" then
+            i = i + 1
+            cli_template = arg[i]
+            if not cli_template or cli_template == "" then
+                io.stderr:write("kaze-doctor: --template requires a file path\n")
+                usage(io.stderr)
+                os.exit(2)
+            end
+        elseif a:sub(1, 11) == "--template=" then
+            cli_template = a:sub(12)
         elseif a == "--profile" then
             i = i + 1
             cli_profile = arg[i]
@@ -72,6 +90,51 @@ end
 if cli_profile and cli_profile ~= "minimal" and cli_profile ~= "full" then
     io.stderr:write(string.format("kaze-doctor: invalid profile '%s' (expected minimal or full)\n", cli_profile))
     os.exit(2)
+end
+
+local function resolve_noctalia_template()
+    local candidates = {}
+    if cli_template and cli_template ~= "" then
+        candidates[#candidates + 1] = cli_template
+    end
+    local env_tpl = os.getenv("KAZE_NOCTALIA_TEMPLATE")
+    if env_tpl and env_tpl ~= "" then
+        candidates[#candidates + 1] = env_tpl
+    end
+    if repo_root_dir and repo_root_dir ~= "" then
+        candidates[#candidates + 1] = repo_root_dir .. "/config/noctalia/config.toml"
+    end
+    for _, path in ipairs(candidates) do
+        if fs.file_exists(path) then
+            return path
+        end
+    end
+    return nil
+end
+
+if diff_mode then
+    local noc_cfg = fs.config_dir() .. "/noctalia/config.toml"
+    local tpl_path = resolve_noctalia_template()
+    if not tpl_path then
+        io.stderr:write("kaze-doctor: could not locate repo config/noctalia/config.toml template (pass --template PATH)\n")
+        os.exit(1)
+    end
+    if not fs.file_exists(noc_cfg) then
+        io.stderr:write("kaze-doctor: user Noctalia config not found: " .. noc_cfg .. "\n")
+        os.exit(1)
+    end
+    local tpl_text = fs.read_file(tpl_path)
+    local usr_text = fs.read_file(noc_cfg)
+    if not tpl_text or not usr_text then
+        io.stderr:write("kaze-doctor: failed to read Noctalia config files for diff\n")
+        os.exit(1)
+    end
+    local result = toml_diff.diff(tpl_text, usr_text)
+    io.stdout:write(toml_diff.format_report(result, {
+        user_path = noc_cfg,
+        template_path = tpl_path,
+    }))
+    os.exit(0)
 end
 
 local ok_count, warn_count, fail_count = 0, 0, 0
@@ -249,6 +312,22 @@ do
         report_warn("noctalia: skipped config.toml validation (not present or noctalia unavailable)")
     else
         report_fail("noctalia: missing " .. noc_cfg)
+    end
+
+    local tpl_path = resolve_noctalia_template()
+    if tpl_path and fs.file_exists(noc_cfg) then
+        local tpl_text = fs.read_file(tpl_path)
+        local usr_text = fs.read_file(noc_cfg)
+        if tpl_text and usr_text then
+            local diff_res = toml_diff.diff(tpl_text, usr_text)
+            if diff_res.has_drift then
+                local sec_n, key_n, item_n = toml_diff.summary_counts(diff_res)
+                report_warn(string.format(
+                    "noctalia: config.toml drift vs repo template (%d missing section(s), %d missing key(s), %d missing list item(s); run 'kaze-doctor --diff')",
+                    sec_n, key_n, item_n
+                ))
+            end
+        end
     end
 
     local foot_cfg = fs.config_dir() .. "/foot/foot.ini"

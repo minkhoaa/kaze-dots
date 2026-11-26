@@ -5,56 +5,58 @@ fi
 set +o posix 2>/dev/null || true
 set -euo pipefail
 
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROFILE="minimal"
 DRY_RUN=false
 AUTO_YES=false
 
-for arg in "$@"; do
-    case "$arg" in
+while (( $# > 0 )); do
+    case "$1" in
+        --profile)
+            if (( $# < 2 )) || [[ -z "${2:-}" ]]; then
+                echo "install-packages.sh: --profile requires an argument (minimal or full)" >&2
+                exit 2
+            fi
+            PROFILE="$2"
+            shift 2
+            ;;
+        --profile=*)
+            PROFILE="${1#--profile=}"
+            shift
+            ;;
         --dry-run|--check)
             DRY_RUN=true
+            shift
             ;;
         --yes|-y)
             AUTO_YES=true
+            shift
             ;;
         -h|--help)
-            echo "Usage: $0 [--dry-run] [--yes]"
+            echo "Usage: $0 [--profile minimal|full] [--dry-run] [--yes]"
             echo "Installs official Arch Linux [core]/[extra] packages required by kaze-dots + Noctalia (zero AUR dependencies)."
             exit 0
             ;;
         *)
-            echo "Unknown option: $arg" >&2
+            echo "Unknown option: $1" >&2
             exit 2
             ;;
     esac
 done
 
-# 100% official Arch Linux [core]/[extra] packages — zero AUR dependencies
-PACKAGES=(
-    hyprland
-    noctalia
-    xdg-desktop-portal
-    xdg-desktop-portal-hyprland
-    xdg-desktop-portal-gtk
-    dconf
-    libnotify
-    foot
-    zsh
-    zsh-autosuggestions
-    zsh-syntax-highlighting
-    zsh-completions
-    wl-clipboard
-    xdg-utils
-    wireplumber
-    brightnessctl
-    playerctl
-    networkmanager
-    bluez
-    bluez-utils
-    btop
-    ttf-jetbrains-mono-nerd
-    adwaita-cursors
-    lua
-)
+case "$PROFILE" in
+    minimal|full) ;;
+    *)
+        echo "install-packages.sh: invalid profile '$PROFILE' (expected: minimal or full)" >&2
+        exit 2
+        ;;
+esac
+
+# shellcheck source=scripts/packages.sh
+source "$REPO_DIR/scripts/packages.sh"
+
+PACKAGES=()
+get_packages_for_profile "$PROFILE"
 
 PACMAN_FLAGS=(--needed)
 if [ "$AUTO_YES" = true ]; then
@@ -62,7 +64,7 @@ if [ "$AUTO_YES" = true ]; then
 fi
 
 if [ "$DRY_RUN" = true ]; then
-    echo "kaze-dots official Arch packages (${#PACKAGES[@]} total, 0 AUR):"
+    echo "kaze-dots official Arch packages (${PROFILE}: ${#PACKAGES[@]} total, 0 AUR):"
     printf '  %s\n' "${PACKAGES[@]}"
     echo "Command: sudo pacman -S ${PACMAN_FLAGS[*]} ${PACKAGES[*]}"
     exit 0

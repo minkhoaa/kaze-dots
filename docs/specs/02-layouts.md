@@ -1,154 +1,56 @@
-# Spec 02 — Multi-Layout System (`sidebar`, `islands`, `slim`)
+# Spec 02 — Bar Layout & Geometry (Noctalia Shell v5.x Native)
 
-## 1. Layout Contract
+## 1. Visual System (Omarchy-Inspired Flat Geometry)
 
-Every layout module in `lua/kaze/layouts/<name>.lua` exports a deterministic table:
+Layout geometry is unified across Noctalia (`config/noctalia/config.toml`) and Hyprland (`hypr/core.lua`, `hypr/rules.lua`):
 
-```lua
-return {
-    name = "sidebar",
-    label = "Sidebar (Vertical Left Rail)",
-    hypr = {
-        gaps_in = 4,
-        gaps_out = 8,
-        rounding = 0,
-        border_size = 2,
-    },
-    ui = {
-        fuzzel_radius = 0,
-        fnott_radius = 0,
-        fnott_anchor = "top-right",
-        fnott_edge_margin_vertical = 8,
-        fnott_edge_margin_horizontal = 8,
-    },
-    build_waybar_config = function(cfg, theme) ... end, -- returns JSONC string
-    build_waybar_css    = function(cfg, theme) ... end, -- returns CSS string
-}
-```
+- **Sharp corners (`0px`):** `corner_radius_scale = 0.0` and `radius = 0` in Noctalia; `rounding = 0` in Hyprland.
+- **Crisp `2px` borders, zero shadows:** `border_width = 2.0` (`outline_variant`), `shadow = false`, `popup_shadows = false` in Noctalia; `border_size = 2`, `decoration.shadow.enabled = false` in Hyprland.
+- **No double animations:** `hypr/rules.lua` applies `no_anim = true` to `^noctalia-(bar-.+|notification|dock|panel|attached-panel|osd|window-switcher)$` so Noctalia's internal animations render cleanly without Hyprland layer double-animation.
+- **Hyprland framing grid:** `gaps_in = 4`, `gaps_out = 8` matching Noctalia's `margin_edge = 8`, `margin_ends = 8`, `floating_offset = 8`. Optional native single-window smart gaps (`smart_gaps = true` in `user.lua`) collapse gaps/borders on `w[tv1]` and `f[1]`.
 
-### Shared Rules Across All 3 Layouts
-- **Zero polling scripts**: Prefer native Waybar modules (`hyprland/workspaces`, `hyprland/window`, `mpris`, `clock`, `network`, `wireplumber`, `battery`, `tray`). Static launchers `custom/menu` / `custom/power` are click-only, with **no `exec` or `interval`**. Stateful indicators use `interval: "once"`, `exec-on-event: false`, and a dedicated `signal`: the command queries the unit once at startup and on unit start/stop, including external kills and expiry. Empty output hides the whole widget (no blank padding). `pkill --require-handler` avoids signalling a Waybar that has not installed its RT handler yet.
-- **Consistent click targets**:
-  - `custom/menu` → left-click `kaze-menu` (Top drop-down), right-click `kaze-panel` (Right drawer)
-  - `clock` → `kaze-dashboard` (Top drop-down Calendar & Media popup)
-  - `network` → left-click `kaze-panel --wifi` (Right Wi-Fi panel), right-click `kaze-tui wifi` (Right TUI drawer)
-  - `wireplumber` → left-click `kaze-audio-sink` (Right popup), middle-click `kaze-tui audio` (Right TUI drawer), right-click `kaze-osd vol-mute`, scroll up/down `kaze-osd vol-up` / `vol-down`
-  - `battery` → left-click `kaze-panel` (Right Quick Control Drawer), right-click `kaze-tui sysmon` (Right TUI drawer)
-  - `custom/power` → left-click `kaze-power` (Right popup), right-click `kaze-panel` (Right drawer)
-  - `custom/recording` (`RTMIN+8`) → red dot while recording; click runs `kaze-record stop`
-  - `custom/night` (`RTMIN+9`) → moon while Night Light is on; click runs `kaze-night off`
-  - `custom/inhibit` (`RTMIN+11`) → coffee cup while Caffeine is on; click runs `kaze-inhibit off`
-  - `hyprland/workspaces` → scroll up/down switches workspace (`hl.dsp.focus`)
-- **Layer blur**: Hyprland applies `hl.layer_rule({ match = { namespace = "waybar" }, blur = true, ignore_alpha = 0.25 })`. Because `ignore_alpha = 0.25` skips fully transparent gaps (`alpha = 0.0`), floating pill layouts (`islands`) blur **only inside the visible pills**, never creating blurred boxes in empty spaces between islands.
+## 2. Default Layout: Vertical Left Rail (`42px`)
 
----
-
-## 2. Layout 1: `sidebar` *(Default — Vertical Left Rail)*
-
-### Visual Structure (`1920×1080`)
 ```text
- ╭────╮
- │ 󰣇  │  <- Top: Menu / OS icon
+ ┌────┐
+ │ 󰀻  │  start:   launcher, ws (persistent 1..5, square capsules, 0px radius)
+ │ 1  │
+ │[2] │
+ │ 3  │
+ │ 4  │
+ │ 5  │
  │    │
- │ •  │
- │ ┃  │  <- Center: Vertical Workspace Pills (active = 24px tall vertical accent pill)
- │ •  │
- │ •  │
+ │ 14 │  center:  vclock (stacked 24h vertical clock: {:%H\n%M})
+ │ 32 │
  │    │
- │ 󰖩  │  <- Bottom: Stacked status icons + vertical 2-line clock (HH / MM) + Power
+ │ 󰍹  │  end:     tray, display, net, vol, bat, notifications, control-center, session
+ │ 󰤨  │
  │ 󰕾  │
  │ 󰁹  │
- │ 14 │
- │ 32 │
+ │ 󰂚  │
+ │ 󰒓  │
  │ ⏻  │
- ╰────╯
-  width: 42px, margin: 8px 0 8px 8px, border-radius: 0
+ └────┘
+  position = "left", thickness = 42, margin_edge = 8, margin_ends = 8,
+  background_opacity = 0.94, compositor_blur = true
 ```
 
-### Geometry & Hyprland Sync
-- Waybar: `position: "left"`, `width: 42`, `margin-top: 8`, `margin-bottom: 8`, `margin-left: 8`, `margin-right: 0`, `exclusive: true`.
-- Unified vertical rail on `window#waybar`:
-  - Background: `alpha(@bg_alt, 0.94)`
-  - Border: `2px solid @border`
-  - Border radius: `0px`
-- Hyprland: `gaps_in = 4`, `gaps_out = 8`, `rounding = 0`, `border_size = 2` (flush `8px` sharp framing grid aligned with the `8px` sidebar margin while preserving full `1080px` vertical screen height).
-- Fnott: `anchor = top-right`, `edge-margin-vertical = 8`, `edge-margin-horizontal = 8`, `border-radius = 0`.
+### Custom Display Button (`[widget.display]`)
+- `glyph = "device-desktop"`
+- Left-click: `exec kaze-display --menu` (Mirror / Present Workspace / Virtual Share 1080p / Extend & Layout)
+- Right-click: `exec kaze-display toggle-window-share` (push/pull focused window to shared workspace)
 
-### Waybar Module Slots
-- **Top (`modules-left`)**: `["custom/menu"]`
-- **Middle (`modules-center`)**: `["hyprland/workspaces"]`
-  - Vertical stack; inactive `8px × 8px` dots, active expands vertically to **`8px × 24px` pill in `@accent`**.
-- **Bottom (`modules-right`)**: `tray`, `network`, `wireplumber`, `battery`, recording/Night Light/Caffeine indicators, `clock`, `custom/power`
-  - Every status module uses compact **icon-only** format (`󰤨`, `󰕾`, `󰁹`) with rich hover tooltips (exact percentage, SSID, device name) so nothing overflows the `42px` width.
-  - `clock`: 2-line vertical format `"{:%H\n%M}"` (`font-weight: 700`, centered, tooltip shows full date + calendar).
-  - `tray`: vertical stack, `icon-size: 14`, `spacing: 8`.
+### Floating Panels & Overlays
+- **Notifications & OSD:** anchored `top_right` (`offset_x = 12`, `offset_y = 12`, `width = 340`, `border_width = 2.0`, `background_opacity = 0.94`).
+- **Control Center:** attached to the bar (`width = 580`, `sidebar = "compact"`), with disabled heavy tabs hidden (`hidden_tabs = [ "weather", "calendar", "monitor", "screen-time" ]`).
+- **Launcher, Clipboard, Session:** floating centered (`launcher.width = 560`, `layout = "simple"`, `compact = true`).
+- **Noctalia Settings GUI (`dev.noctalia.Noctalia`):** floats centered at `56.25% × 85%` of the active monitor.
+- **Floating TUI Drawer (`^kaze-tui$`):** slides in from the left edge (`x = 58`, `y = 12`, `42%` width × `monitor_h - 24`), flush next to the `42px` bar (`8px + 42px + 8px = 58px`).
+- **Virtual Share Preview (`^at\.yrlf\.wl_mirror$`):** pinned bottom-right PiP (`28% × 28%`, `keep_aspect_ratio = true`, `opaque = true`, `no_blur = true`).
 
----
+## 3. Customization Without Re-Generating Configs
 
-## 3. Layout 2: `islands` *(Floating Top Pill Islands)*
-
-### Visual Structure (`1920×1080`)
-```text
- ╭───┬───────────╮              ╭───────────────────╮              ╭──────────────────────────┬───╮
- │ 󰣇 │ • ━━ • •  │              │ 󰎈 Song · 14:32    │              │ 󰖩  󰕾 64%  󰁹 92%  [tray] │ ⏻ │
- ╰───┴───────────╯              ╰───────────────────╯              ╰──────────────────────────┴───╯
-  margin-top: 6px, margin-left/right: 10px, height: 34px, outer window background: transparent
-```
-
-### Geometry & Hyprland Sync
-- Waybar: `position: "top"`, `height: 34`, `margin-top: 6`, `margin-left: 10`, `margin-right: 10`, `margin-bottom: 0`, `exclusive: true`, `reload_style_on_change: false`.
-- Outer `window#waybar`: `background: transparent; border: none;`.
-- Three distinct sharp floating island containers (`.modules-left`, `.modules-center`, `.modules-right`):
-  - Background: `alpha(@bg_alt, 0.94)`
-  - Border: `2px solid @border`
-  - Border radius: `0px`
-  - Padding: `0 3px`
-- Hyprland: `gaps_in = 5`, `gaps_out = 10`, `rounding = 0`, `border_size = 2`.
-- Fnott: `anchor = top-right`, `edge-margin-vertical = 8`, `edge-margin-horizontal = 10`, `border-radius = 0` (positioned `8px` below Waybar's `40px` exclusive zone → `y = 48px`, flush with right popups).
-
-### Waybar Module Slots
-- **Left**: `["custom/menu", "hyprland/workspaces"]`
-  - `custom/menu`: Arch icon (`󰣇`), crisp rectangular hover highlight (`border-radius: 0`).
-  - `hyprland/workspaces`: 5 persistent workspaces (`1..5`), inactive blocks (`8px × 8px`), active workspace expands to **`24px × 8px` sharp bar in `@accent`**.
-- **Center**: `["mpris", "clock"]`
-  - `mpris`: Shows `󰎈 Artist - Title` (max-length 28) only when playing/paused; collapses cleanly when idle.
-  - `clock`: `Tue 25 Nov · 00:15` (weight `600`, tooltip shows full monthly calendar).
-- **Right**: `tray`, `network`, `wireplumber`, `battery`, recording/Night Light/Caffeine indicators, `custom/power`
-
----
-
-## 4. Layout 3: `slim` *(Flat Ultra-Minimal Top Bar)*
-
-### Visual Structure (`1920×1080`)
-```text
- 󰣇  1  [2]  3  4  5                Tue 25 Nov  14:32                󰤨  󰕾 64%  󰁹 92%  [tray]  ⏻
- ────────────────────────────────────────────────────────────────────────────────────────────────
-  height: 28px, margin: 0, border-radius: 0, 2px bottom border
-```
-
-### Geometry & Hyprland Sync
-- Waybar: `position: "top"`, `height: 28`, `margin: 0`, `exclusive: true`.
-- Full-width flush strip:
-  - Background: `alpha(@bg_alt, 0.95)`
-  - Border: `border-bottom: 2px solid @border`
-  - Border radius: `0px`
-- Hyprland: `gaps_in = 4`, `gaps_out = 6`, `rounding = 0`, `border_size = 2`.
-- Fnott: `anchor = top-right`, `edge-margin-vertical = 8`, `edge-margin-horizontal = 8`, `border-radius = 0` (positioned `8px` below Waybar's `28px` exclusive zone → `y = 36px`).
-
-### Waybar Module Slots
-- **Left**: `["custom/menu", "hyprland/workspaces", "hyprland/window"]`
-  - Numbered workspaces (`1..5`) with crisp `2px` bottom accent underline on active tab; subtle truncated active window title (`max-length: 42`).
-- **Center**: `["clock"]`
-- **Right**: `tray`, `network`, `wireplumber`, `battery`, recording/Night Light/Caffeine indicators, `custom/power`
-
----
-
-## 5. Live Hot-Switch Contract (`kaze-layout <name>`)
-
-Switching layout must execute cleanly in **`≤ 500 ms`** without restarting Hyprland:
-1. Validate `<name>` ∈ `{ "sidebar", "islands", "slim" }`.
-2. Ask `kaze-sync` to stage and validate the generated configs under its switch lock.
-3. Reload Hyprland, restart the Waybar and Fnott user units, and wait for Waybar to map. Optional units are not restarted; the new bar queries their state at startup.
-4. Commit `state.lua` atomically only after successful reload (restore the previous config on error). Send a confirmation toast unless `--quiet` is passed.
-
-The all-on geometry gate uses all three indicators together, with MPRIS also visible in `islands` (the only layout that includes it). Exact layer rectangles at 1920×1080: `8 8 42 1064`, `10 6 1900 34`, and `0 0 1920 28`, respectively.
+Users who prefer a top/bottom bar, rounded corners, different widget ordering, or different transparency edit directly in **Noctalia Settings (`Super + I`)** or `~/.config/noctalia/config.toml`:
+- `scripts/apply.sh` preserves `~/.config/noctalia/config.toml` across re-applies.
+- `kaze-doctor --diff` reports newly added upstream sections, keys, or bar widgets from `config/noctalia/config.toml` without overwriting user choices.
+- Per-machine Hyprland geometry overrides (`gaps_in`, `gaps_out`, `border_size`, `rounding`, `smart_gaps`, `persistent_workspaces`, `blur`, `opacity`) live in `~/.config/hypr/user.lua`.

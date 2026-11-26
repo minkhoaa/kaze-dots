@@ -1,7 +1,7 @@
 # Deployment and VM scripts
 
 ## Scope
-Maintain the [package installer](install-packages.sh), [profile installer](install.sh), [symlink and rollback installer](apply.sh), [VM launcher](launch-vm.sh) and [verification harness](../tests/vm-verify.sh).
+Maintain the shared [package manifest](packages.sh), [package installer](install-packages.sh), [profile installer](install.sh), [symlink and rollback installer](apply.sh), [VM launcher](launch-vm.sh) and [verification harness](../tests/vm-verify.sh).
 
 ## Local rules
 - Use Bash strict mode (`set -euo pipefail`) and quote paths. Respect `XDG_CONFIG_HOME` and `XDG_DATA_HOME` when deploying.

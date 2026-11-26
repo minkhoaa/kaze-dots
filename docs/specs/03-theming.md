@@ -1,122 +1,25 @@
-# Spec 03 — Theming System & Config Emitters
+# Spec 03 — Theming Pipeline (Noctalia Built-in Templates)
 
-## 1. Color Token Schema (`lua/kaze/themes.lua`)
+## 1. Single Source of Truth
 
-Every palette is a pure Lua table of **uppercase/lowercase 6-digit hex strings without `#`**:
+`kaze-dots` does **not** maintain a custom Lua theme compiler or palette emitter. **Noctalia Shell v5.x's native template engine** (`[theme.templates] enable_builtin_templates = true`) is the sole color source across the desktop.
 
-```lua
-{
-    name      = "kaze",
-    label     = "Kaze (Slate & Sky)",
-    bg        = "111318",
-    bg_alt    = "181b22",
-    surface   = "252a36",
-    border    = "323846",
-    fg        = "e6edf7",
-    fg_muted  = "8b95a7",
-    accent    = "89b4fa",
-    accent_fg = "111318",
-    ok        = "a6e3a1",
-    warn      = "f9e2af",
-    danger    = "f38ba8",
-    -- Optional ANSI terminal palette (16 colors) auto-derived if omitted
-}
-```
+Default theme seed in [config/noctalia/config.toml](../../config/noctalia/config.toml):
+- `mode = "dark"` (instant Dark/Light toggle via `Super + Shift + T` → `noctalia msg theme-mode-toggle`)
+- `source = "builtin"`, `builtin = "Tokyo-Night"` (users can switch to any built-in theme or wallpaper-derived `m3-content` palette inside Noctalia Settings `Super + I`)
+- `sync_color_scheme = true` (syncs `prefer-dark` / `prefer-light` natively)
+- `enable_community_templates = false` (strictly offline, built-in templates only)
 
-### Required Helper Functions in `lua/kaze/themes.lua` & `lua/kaze/color.lua`
-- `themes.get(name, overrides, dynamic_palette)` → returns validated palette table (supports `"dynamic"` when supplied a 11-token `dynamic_palette` table) or errors with available names.
-- `themes.list()` → ordered built-in presets `{ "kaze", "lavender", "tokyonight", "carbon", "paper" }`.
-- `themes.list_selectable(include_dynamic)` → appends `"dynamic"` when `matugen` is installed or active.
-- `themes.is_light(t)` → returns `true` for high-luminance light palettes (`paper`), `false` for dark palettes.
-- `themes.hex(c)` → `"#" .. c` (for CSS, `hyprlock`).
-- `themes.hex_alpha(c, aa)` → `c .. aa` (for `fuzzel` `RRGGBBAA` and `fnott` `RRGGBBAA`).
-- `themes.hypr_rgba(c, aa)` → `"rgba(" .. c .. aa .. ")"` (for Hyprland border/bg colors).
-- `themes.validate(t)` → asserts all 11 semantic keys match `^[0-9a-fA-F]{6}$`.
-- `color.build_dynamic_palette(raw_colors)` → pure-Lua parser + WCAG 2.1 contrast clamper (zero I/O): enforces dark-first surface ordering (`bg < bg_alt < surface`), `fg`/`fg_muted` contrast `≥ 4.5:1` against `bg` and `bg_alt`, `accent_fg` contrast `≥ 4.5:1` against `accent`, and `border`/`ok`/`warn`/`danger` contrast `≥ 3.0:1` against `bg` and `bg_alt`.
-- External toolkit isolation: `kaze-sync` never writes or overwrites GTK3, GTK4, Qt6ct, btop, or Neovim theme files. When `sync_prefer_dark = true` in `user.lua` (and `gsettings` + `dconf` are present), `transaction.lua` sets `org.gnome.desktop.interface color-scheme` to `'prefer-dark'` and records `prev_color_scheme` for rollback.
+## 2. Built-in App Theming Matrix
 
-## 2. Built-in Theme Presets
+| Target App | Template ID | Generated Output | How `kaze-dots` Integrates It |
+|---|---|---|---|
+| **Hyprland** | `hyprland` | `~/.config/hypr/noctalia.lua` | Loaded dynamically by [hypr/hyprland.lua](../../hypr/hyprland.lua) via `pcall(require, "noctalia")` and `noctalia_theme.apply_theme()`. Fallback Tokyo-Night borders live in `hypr/core.lua` before the first template run. State borders in `hypr/rules.lua` read `noc_colors.error` (pinned) and `noc_colors.secondary` (fullscreen). |
+| **Foot** | `foot` | `~/.config/foot/themes/noctalia` | Static `include=~/.config/foot/themes/noctalia` in [config/foot/foot.ini](../../config/foot/foot.ini) (seeded empty on first apply so `foot --check-config` always passes), plus live per-window `-o` overrides passed by [bin/kaze-footclient](../../bin/kaze-footclient) so open `foot --server` sessions stay intact while new windows pick up theme changes immediately. |
+| **GTK 3 / 4** | `gtk3`, `gtk4` | `~/.config/gtk-{3,4}.0/noctalia.css` | Managed natively by Noctalia templates without triggering early portal startup. |
+| **btop** | `btop` | `~/.config/btop/themes/noctalia.theme` | Auto-configured and live-reloaded (`SIGUSR2`) when opened via `Ctrl + Shift + Esc` (`kaze-tui sysmon`). |
 
-| Token | `kaze` *(default)* | `lavender` | `tokyonight` | `carbon` | `paper` *(light)* |
-|---|---|---|---|---|---|
-| `bg` | `111318` | `11111b` | `1a1b26` | `0c0c0e` | `f7f6f2` |
-| `bg_alt` | `181b22` | `181825` | `24283b` | `141417` | `efede7` |
-| `surface` | `252a36` | `313244` | `343b58` | `232329` | `e3e0d8` |
-| `border` | `323846` | `45475a` | `414868` | `303038` | `8c887e` |
-| `fg` | `e6edf7` | `cdd6f4` | `c0caf5` | `e4e4e7` | `1c1e24` |
-| `fg_muted` | `8b95a7` | `9399b2` | `787c99` | `8a8a95` | `555963` |
-| `accent` | `89b4fa` | `b4befe` | `7aa2f7` | `e4e4e7` | `2563eb` |
-| `accent_fg` | `111318` | `11111b` | `1a1b26` | `0c0c0e` | `f7f6f2` |
-| `ok` | `a6e3a1` | `a6e3a1` | `9ece6a` | `86efac` | `15803d` |
-| `warn` | `f9e2af` | `f9e2af` | `e0af68` | `fde047` | `b45309` |
-| `danger` | `f38ba8` | `f38ba8` | `f7768e` | `f87171` | `dc2626` |
+## 3. Terminal Prompt & Shell Palette Alignment
 
-## 3. Per-App Emitter Specifications
-
-Every emitter is a **pure function** returning a complete generated config string with a clear header comment:
-`# Auto-generated by kaze-sync — DO NOT EDIT MANUALLY (edit ~/.config/kaze/user.lua)`
-
-### 3.1 `emit_waybar.lua`
-Produces 3 files under `~/.config/waybar/`:
-1. `colors.css`: GTK3 `@define-color` declarations for all 11 tokens (`@bg`, `@bg_alt`, `@surface`, `@border`, `@fg`, `@fg_muted`, `@accent`, `@accent_fg`, `@ok`, `@warn`, `@danger`).
-2. `config.jsonc`: Delegates to `layout.build_waybar_config(cfg, theme)`.
-3. `style.css`: Begins with `@import "colors.css";` followed by `layout.build_waybar_css(cfg, theme)`.
-
-### 3.2 `emit_foot.lua` → `~/.config/foot/foot.ini`
-- `[main]`: `font=<cfg.font>:size=10.5`, `pad=14x12 center`, `dpi-aware=no`.
-- `[cursor]`: `style=beam`, `blink=no`.
-- `[bell]`: `urgent=yes`; `[mouse]`: `hide-when-typing=yes`; `[csd]`: `preferred=none`.
-- `[colors-dark]`: `alpha=0.92`, `background=<bg>`, `foreground=<fg>`, `cursor=<bg> <accent>`, crisp harmonious 16-color ANSI table derived from theme.
-
-### 3.3 `emit_fuzzel.lua` → `~/.config/fuzzel/fuzzel.ini`
-- `[main]`: `font=<cfg.font> Propo:size=11,<cfg.font>:size=11`, `dpi-aware=no`, `use-bold=yes`, `terminal=kaze-footclient -N` (or custom `cfg.terminal`), `icon-theme=<cfg.icon_theme>` (`hicolor` default), `width=40`, `lines=8`, `horizontal-pad=20`, `vertical-pad=16`, `inner-pad=12`, `line-height=26`, `image-size-ratio=0.45`, `layer=overlay`, `exit-on-keyboard-focus-loss=yes`.
-- `[dmenu]`: `exit-immediately-if-empty=yes`.
-- `[border]`: `width=2`, `radius=<layout.ui.fuzzel_radius>`, `selection-radius=0`.
-- `[colors]` (`RRGGBBAA` format):
-  - `background=<bg_alt>e8`
-  - `text=<fg>ff`
-  - `prompt=<accent>ff`
-  - `placeholder=<fg_muted>ff`
-  - `input=<fg>ff`
-  - `match=<accent>ff`
-  - `selection=<accent>2e`
-  - `selection-text=<fg>ff`
-  - `selection-match=<accent>ff`
-  - `counter=<fg_muted>ff`
-  - `border=<accent>cc`
-
-### 3.4 `emit_fnott.lua` → `~/.config/fnott/fnott.ini`
-- `[main]`:
-  - `layer=overlay`
-  - `anchor=<layout.ui.fnott_anchor>`, `stacking-order=top-down`
-  - `edge-margin-vertical=<layout.ui.fnott_edge_margin_vertical>`
-  - `edge-margin-horizontal=<layout.ui.fnott_edge_margin_horizontal>`
-  - `notification-margin=10`, `max-icon-size=40`
-  - `min-width=280`, `max-width=360`, `padding-vertical=14`, `padding-horizontal=18`
-  - `border-size=2`, `border-radius=<layout.ui.fnott_radius>`
-  - `background=<bg_alt>f2`, `border-color=<border>ff`
-  - `title-font=<cfg.font> Propo:size=8.5:weight=bold,<cfg.font>:size=8.5:weight=bold`, `title-color=<accent>dd`, `title-format=%a`
-  - `summary-font=<cfg.font> Propo:size=10.5:weight=bold,<cfg.font>:size=10.5:weight=bold`, `summary-color=<fg>ff`, `summary-format=%s`
-  - `body-font=<cfg.font> Propo:size=9.5,<cfg.font>:size=9.5`, `body-color=<fg_muted>ff`, `body-format=%b`
-  - `progress-bar-height=6`, `progress-color=<accent>ff`, `progress-style=bar`
-- `[low]`, `[normal]`, `[critical]` urgency overrides (`low` clears `title-format=`, uses `12×16` padding, `<border>dd` border, `2s` timeout for clean OSD/switch toasts; `normal` uses `<accent>aa` border and `4s` timeout; `critical` uses `2px` `<danger>ff` border and `<danger>ff` title, timeout `0`).
-
-### Mako A/B candidate (`emit_mako.lua`)
-The verification harness also generates a themed Mako config on its disposable image. It shares the layout's notification anchor, outer margins, radius, width (`360`), margin (`10`), padding (`14,18`), and `max-icon-size=40`, enables bounded history, and orders criteria as OSD no-history → DND invisible → OSD-visible DND exception. The emitter performs no I/O. It is not installed by `kaze-sync` while Fnott is the default.
-
-### 3.5 `emit_hyprlock.lua` → `~/.config/hypr/hyprlock.conf`
-- Clean minimal lockscreen matching `bg`, `bg_alt`, `fg`, `fg_muted`, `accent`, `warn`, `danger` with `immediate_render = true`, blurred wallpaper background, large centered time (`68px`), date subtitle (`15px`), sharp password field (`rounding = <layout.hypr.rounding>`, `fade_on_empty = true`, `capslock_color = rgb(<warn>)`), and subtle bottom status line (`cmd[update:15000]`) showing laptop battery and active MPRIS track when playing. In light themes (`paper`), adds a frosted sharp backing `shape` card (`zindex = 0`, `brightness = 0.85`, text `zindex = 1`) and `shadow_passes = 2` on the bottom status line so dark ink remains legible over any wallpaper.
-
-### 3.6 Hyprland Live Colors (`hypr/core.lua`)
-- `hypr/core.lua` does **not** need a generated file — it calls `require("kaze.config").load()` directly inside Hyprland's Lua engine!
-- Active border: `rgba(<accent>ee)`, inactive border: `rgba(<border>aa)`, background color: `rgb(<bg>)`.
-
-## 4. Theme Hot-Reload Behavior
-
-When `kaze-theme <name>` runs:
-1. Updates `~/.config/kaze/state.lua` atomically.
-2. Runs `kaze-sync --reload`.
-3. `hyprctl reload` updates borders & wallpaper bg instantly.
-4. `waybar` reloads new `colors.css` + `style.css`.
-5. `fnott` restarts to pick up new colors.
-6. New `fuzzel` and `footclient` windows inherit the new theme immediately; optionally `foot --server` can keep running sessions intact while newly opened terminals use updated `foot.ini` (or `foot` OSC sequences can be considered in M3 without killing open shells!).
+- [config/starship/starship.toml](../../config/starship/starship.toml) uses **ANSI named colors only** (zero hardcoded `#RRGGBB` hex values), verified by `tests/run.lua`.
+- Because Starship and Zsh (`config/zsh/`) inherit the terminal's 16-color ANSI palette from Foot, switching themes or toggling Dark/Light mode in Noctalia automatically harmonizes the shell prompt and CLI tools (`eza`, `bat`, `fzf`, `btop`) with zero extra config generation.
