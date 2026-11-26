@@ -12,9 +12,9 @@ usage() {
     cat <<EOF
 Usage: $0 [--profile minimal|full] [--dry-run] [--skip-packages] [--yes] [--reboot|--no-reboot]
 
-Installs official Arch Linux [core]/[extra] packages for the chosen Kaze profile
-(zero AUR dependencies), applies symlinks via scripts/apply.sh, persists the
-active profile in state.lua without overwriting user.lua, and runs kaze-sync.
+Installs official Arch Linux [core]/[extra] packages for the chosen Kaze + Noctalia profile
+(zero AUR dependencies), applies symlinks and default Noctalia/Foot configs via scripts/apply.sh,
+and records the active profile in ~/.config/kaze/profile without overwriting hypr/user.lua.
 
 Options:
   --profile <minimal|full>  Select installation profile (default: minimal)
@@ -83,31 +83,21 @@ esac
 # 100% official Arch Linux [core]/[extra] packages — 0 AUR dependencies
 MINIMAL_PACKAGES=(
     hyprland
-    hypridle
-    hyprlock
+    noctalia
     xdg-desktop-portal
     xdg-desktop-portal-hyprland
     xdg-desktop-portal-gtk
     dconf
-    waybar
-    swaybg
-    fuzzel
-    fnott
     libnotify
     foot
     wl-clipboard
     xdg-utils
-    cliphist
-    grim
-    slurp
     wireplumber
     brightnessctl
     playerctl
     networkmanager
     bluez
     bluez-utils
-    bluetui
-    wiremix
     btop
     ttf-jetbrains-mono-nerd
     adwaita-cursors
@@ -115,18 +105,14 @@ MINIMAL_PACKAGES=(
 )
 
 FULL_EXTRA_PACKAGES=(
-    swappy
-    otf-font-awesome
+    slurp
     wf-recorder
     ffmpeg
     hyprpicker
-    hyprsunset
-    matugen
     yazi
     imv
     zathura
     zathura-pdf-mupdf
-    mate-polkit
     gnome-keyring
     fcitx5
     fcitx5-bamboo
@@ -149,7 +135,6 @@ fi
 
 DATA_HOME=$(realpath -ms -- "${XDG_DATA_HOME:-$HOME/.local/share}")
 CONFIG_HOME=$(realpath -ms -- "${XDG_CONFIG_HOME:-$HOME/.config}")
-BIN_HOME="$HOME/.local/bin"
 
 if [[ "$DRY_RUN" == true ]]; then
     echo "Kaze profile: $PROFILE"
@@ -163,7 +148,7 @@ if [[ "$DRY_RUN" == true ]]; then
     echo "Apply plan: $REPO_DIR/scripts/apply.sh${APPLY_FLAGS[*]:+ ${APPLY_FLAGS[*]}}"
     echo "  CONFIG_HOME=$CONFIG_HOME"
     echo "  DATA_HOME=$DATA_HOME"
-    echo "  STATE_FILE=$CONFIG_HOME/kaze/state.lua (profile=$PROFILE, preserving user.lua)"
+    echo "  PROFILE_FILE=$CONFIG_HOME/kaze/profile (profile=$PROFILE, preserving hypr/user.lua)"
     if [[ "$REBOOT" == "yes" ]]; then
         echo "Post-install: sudo systemctl reboot"
     fi
@@ -194,71 +179,44 @@ if [[ "$SKIP_PACKAGES" == false ]]; then
     sudo pacman -S "${PACMAN_FLAGS[@]}" "${PACKAGES[@]}"
 fi
 
-STATE_FILE="$CONFIG_HOME/kaze/state.lua"
+PROFILE_FILE="$CONFIG_HOME/kaze/profile"
 LAST_BACKUP="$CONFIG_HOME/kaze/last-backup"
-HAD_PREINSTALL_STATE=false
-PREINSTALL_STATE_CONTENT=""
-if [[ ! -f "$LAST_BACKUP" ]] && { [[ -f "$STATE_FILE" ]] || [[ -L "$STATE_FILE" ]]; }; then
-    HAD_PREINSTALL_STATE=true
-    PREINSTALL_STATE_CONTENT="$(cat -- "$STATE_FILE")"
+HAD_PREINSTALL_PROFILE=false
+PREINSTALL_PROFILE_CONTENT=""
+if [[ ! -f "$LAST_BACKUP" ]] && { [[ -f "$PROFILE_FILE" ]] || [[ -L "$PROFILE_FILE" ]]; }; then
+    HAD_PREINSTALL_PROFILE=true
+    PREINSTALL_PROFILE_CONTENT="$(cat -- "$PROFILE_FILE")"
 fi
 
 "$REPO_DIR/scripts/apply.sh" "${APPLY_FLAGS[@]}"
 
-# Record state.lua in the active backup manifest so rollback.sh restores or cleans it cleanly.
+mkdir -p -- "$(dirname -- "$PROFILE_FILE")"
+printf '%s\n' "$PROFILE" > "$PROFILE_FILE"
+
+if [[ "$PROFILE" == "full" ]] && [[ -f "$CONFIG_HOME/noctalia/config.toml" ]]; then
+    sed -i 's/^polkit_agent = false$/polkit_agent = true/' "$CONFIG_HOME/noctalia/config.toml"
+fi
+
+# Record profile file in active backup manifest so rollback restores or cleans it.
 if [[ -f "$LAST_BACKUP" ]]; then
     BACKUP_DIR="$(<"$LAST_BACKUP")"
     if [[ -d "$BACKUP_DIR" ]] && [[ -f "$BACKUP_DIR/installed.list" ]]; then
-        if ! grep -Fxq "$STATE_FILE" "$BACKUP_DIR/installed.list" 2>/dev/null; then
-            printf '%s\n' "$STATE_FILE" >> "$BACKUP_DIR/installed.list"
-            if [[ "$HAD_PREINSTALL_STATE" == true ]] && [[ -f "$BACKUP_DIR/backed_up.list" ]]; then
-                rel_state="${STATE_FILE#"$HOME"/}"
-                if [[ "$rel_state" == "$STATE_FILE" ]]; then
-                    rel_state="_abs/${STATE_FILE#/}"
+        if ! grep -Fxq "$PROFILE_FILE" "$BACKUP_DIR/installed.list" 2>/dev/null; then
+            printf '%s\n' "$PROFILE_FILE" >> "$BACKUP_DIR/installed.list"
+            if [[ "$HAD_PREINSTALL_PROFILE" == true ]] && [[ -f "$BACKUP_DIR/backed_up.list" ]]; then
+                rel_prof="${PROFILE_FILE#"$HOME"/}"
+                if [[ "$rel_prof" == "$PROFILE_FILE" ]]; then
+                    rel_prof="_abs/${PROFILE_FILE#/}"
                 fi
-                saved_state="$BACKUP_DIR/files/$rel_state"
-                if [[ ! -e "$saved_state" ]] && [[ ! -L "$saved_state" ]]; then
-                    mkdir -p -- "$(dirname -- "$saved_state")"
-                    printf '%s\n' "$PREINSTALL_STATE_CONTENT" > "$saved_state"
-                    printf '%s\t%s\n' "$rel_state" "$STATE_FILE" >> "$BACKUP_DIR/backed_up.list"
+                saved_prof="$BACKUP_DIR/files/$rel_prof"
+                if [[ ! -e "$saved_prof" ]] && [[ ! -L "$saved_prof" ]]; then
+                    mkdir -p -- "$(dirname -- "$saved_prof")"
+                    printf '%s\n' "$PREINSTALL_PROFILE_CONTENT" > "$saved_prof"
+                    printf '%s\t%s\n' "$rel_prof" "$PROFILE_FILE" >> "$BACKUP_DIR/backed_up.list"
                 fi
             fi
         fi
     fi
-fi
-
-# Persist profile in state.lua without clobbering layout, theme, wallpaper, or user.lua.
-if [[ -x "$BIN_HOME/kaze-sync" ]] && "$BIN_HOME/kaze-sync" --help 2>/dev/null | grep -q -- '--set-profile' &&
-    [[ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
-    "$BIN_HOME/kaze-sync" --set-profile "$PROFILE"
-else
-    KAZE_REPO_LUA="$REPO_DIR/lua" KAZE_STATE_PATH="$STATE_FILE" KAZE_INSTALL_PROFILE="$PROFILE" lua -e '
-        local repo_lua = assert(os.getenv("KAZE_REPO_LUA"))
-        package.path = repo_lua .. "/?.lua;" .. repo_lua .. "/?/init.lua;" .. package.path
-        local fs = require("kaze.fs")
-        local state = require("kaze.state")
-        local sp = assert(os.getenv("KAZE_STATE_PATH"))
-        local prof = assert(os.getenv("KAZE_INSTALL_PROFILE"))
-        local st = state.load(sp)
-        if fs.file_exists(sp) then
-            local chunk = loadfile(sp, "t", {})
-            local ok, raw = false, nil
-            if chunk then ok, raw = pcall(chunk) end
-            if ok and type(raw) == "table" then
-                for k, v in pairs(raw) do
-                    if st[k] == nil then st[k] = v end
-                end
-            end
-        end
-        st.profile = prof
-        state.save(st, sp)
-        local written = fs.read_file(sp) or ""
-        if not written:find("profile%s*=") then
-            local injected = written:gsub("\n}%s*$", string.format("\n    profile = %q,\n}\n", prof))
-            fs.write_atomic(sp, injected)
-        end
-    '
-    "$BIN_HOME/kaze-sync"
 fi
 
 if [[ "$PROFILE" == "full" ]]; then

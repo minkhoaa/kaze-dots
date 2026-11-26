@@ -17,22 +17,12 @@ package.path = table.concat({
 
 for _, mod in ipairs({
     "kaze._ctx",
-    "kaze.defaults",
-    "kaze.config",
-    "kaze.state",
-    "kaze.color",
-    "kaze.themes",
-    "kaze.json",
+    "kaze.hypr_user",
     "kaze.fs",
+    "kaze.json",
     "kaze.popups",
-    "kaze.notify",
     "kaze.keybinds_data",
-    "kaze.power_profile",
-    "kaze.layouts",
-    "kaze.layouts.indicators",
-    "kaze.layouts.sidebar",
-    "kaze.layouts.islands",
-    "kaze.layouts.slim",
+    "noctalia",
     "env",
     "core",
     "rules",
@@ -42,15 +32,15 @@ for _, mod in ipairs({
     package.loaded[mod] = nil
 end
 
-local pending = require("kaze.state").pending_path()
-local cfg, theme, layout = require("kaze.config").load({
-    strict = false,
-    state_path = pending and require("kaze.fs").file_exists(pending) and pending or nil,
-})
+local cfg = require("kaze.hypr_user").load()
+local ok_noc, noctalia_theme = pcall(require, "noctalia")
+if not (ok_noc and type(noctalia_theme) == "table") then
+    noctalia_theme = nil
+end
+
 package.loaded["kaze._ctx"] = {
     cfg = cfg,
-    theme = theme,
-    layout = layout,
+    noctalia = noctalia_theme,
 }
 
 local monitors = cfg.monitors
@@ -86,3 +76,10 @@ require("core")
 require("rules")
 require("execs")
 require("keybinds")
+
+-- Apply Noctalia built-in Hyprland color template when present.
+-- Keeping require("noctalia") here ensures Noctalia's template apply script
+-- never appends duplicate lines into this symlinked config.
+if noctalia_theme and type(noctalia_theme.apply_theme) == "function" then
+    noctalia_theme.apply_theme()
+end

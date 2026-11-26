@@ -193,4 +193,88 @@ function M.decode(src)
     return res
 end
 
+local function escape_str(s)
+    local out = s:gsub('[\\"\b\f\n\r\t%z\1-\31]', function(c)
+        local b = c:byte(1)
+        if c == '"' then return '\\"'
+        elseif c == "\\" then return "\\\\"
+        elseif c == "\b" then return "\\b"
+        elseif c == "\f" then return "\\f"
+        elseif c == "\n" then return "\\n"
+        elseif c == "\r" then return "\\r"
+        elseif c == "\t" then return "\\t"
+        else return string.format("\\u%04x", b)
+        end
+    end)
+    return '"' .. out .. '"'
+end
+
+local function is_array(tbl)
+    local count = 0
+    local max_i = 0
+    for k in pairs(tbl) do
+        if type(k) ~= "number" or k < 1 or math.floor(k) ~= k then
+            return false, 0
+        end
+        count = count + 1
+        if k > max_i then max_i = k end
+    end
+    return count > 0 and count == max_i, count
+end
+
+local function encode_val(v, indent, level)
+    local t = type(v)
+    if v == nil then
+        return "null"
+    elseif t == "boolean" then
+        return v and "true" or "false"
+    elseif t == "number" then
+        if v ~= v or v == math.huge or v == -math.huge then
+            error("json.encode cannot serialize non-finite number", 0)
+        end
+        return tostring(v)
+    elseif t == "string" then
+        return escape_str(v)
+    elseif t == "table" then
+        local arr, n = is_array(v)
+        if arr then
+            local parts = {}
+            for i = 1, n do
+                parts[i] = encode_val(v[i], indent, level + 1)
+            end
+            return "[" .. table.concat(parts, ",") .. "]"
+        end
+        local keys = {}
+        for k in pairs(v) do
+            if type(k) ~= "string" then
+                error("json.encode object keys must be strings", 0)
+            end
+            keys[#keys + 1] = k
+        end
+        table.sort(keys)
+        if #keys == 0 then
+            return "{}"
+        end
+        local pad = indent and string.rep(" ", indent * (level + 1)) or ""
+        local close_pad = indent and string.rep(" ", indent * level) or ""
+        local sep = indent and ",\n" or ","
+        local colon = indent and ": " or ":"
+        local parts = {}
+        for i = 1, #keys do
+            local k = keys[i]
+            parts[i] = pad .. escape_str(k) .. colon .. encode_val(v[k], indent, level + 1)
+        end
+        if indent then
+            return "{\n" .. table.concat(parts, sep) .. "\n" .. close_pad .. "}"
+        end
+        return "{" .. table.concat(parts, sep) .. "}"
+    end
+    error("json.encode unsupported type: " .. t, 0)
+end
+
+function M.encode(v, opts)
+    local indent = type(opts) == "table" and opts.indent or 2
+    return encode_val(v, indent, 0)
+end
+
 return M

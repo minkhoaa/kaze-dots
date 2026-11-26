@@ -1,4 +1,5 @@
 local fs = require("kaze.fs")
+local hypr_user = require("kaze.hypr_user")
 
 local M = {}
 local target = "kaze-session.target"
@@ -14,27 +15,6 @@ local function owns_environment()
     return ("\n" .. env):match("\nHYPRLAND_INSTANCE_SIGNATURE=([^\n]*)") == signature
 end
 
-local function clear_clipboard()
-    local dir = fs.runtime_dir()
-    if not dir then return false end
-    local path = fs.shell_quote(dir)
-    return os.execute("[ ! -L " .. path .. " ] && rm -f -- " .. path .. "/cliphist.db " .. path .. "/cliphist.db.tmp")
-end
-
-local function clear_ephemeral_ui_state()
-    local dir = fs.runtime_dir()
-    if not dir then return end
-    local path = fs.shell_quote(dir)
-    os.execute(
-        "[ ! -L " .. path .. " ] && rm -f -- "
-            .. path .. "/notifications.json "
-            .. path .. "/dnd.state "
-            .. path .. "/perf.state "
-            .. path .. "/dismiss-guard "
-            .. path .. "/active-fuzzel"
-    )
-end
-
 local function clear_environment()
     -- The D-Bus activation API can overwrite values, but only systemd can unset them.
     local dbus_ok = os.execute(dbus_env .. "WAYLAND_DISPLAY= XDG_CURRENT_DESKTOP= HYPRLAND_INSTANCE_SIGNATURE=")
@@ -44,7 +24,7 @@ end
 
 local entry, read_entry = fs.env_entry, fs.read_env_entry
 
-function M.render_environment(cfg, theme, previous)
+function M.render_environment(cfg, previous)
     local base = previous and previous:match("^(.-\n)XCURSOR_THEME=")
     if previous then assert(base, "invalid session.env; start a new Kaze login") end
     base = base or table.concat({
@@ -53,7 +33,6 @@ function M.render_environment(cfg, theme, previous)
         entry("XDG_CACHE_HOME", fs.cache_dir()),
         entry("PATH", os.getenv("PATH") or fs.home() .. "/.local/bin:/usr/bin"),
     })
-    -- Keep the login's locale and PATH, even when the reload is invoked over SSH.
     if not read_entry(base, "LC_CTYPE") then
         local lang, all, ctype = fs.utf8_locale()
         base = base .. entry("LANG", lang) .. entry("LC_ALL", all) .. entry("LC_CTYPE", ctype)
@@ -65,23 +44,14 @@ function M.render_environment(cfg, theme, previous)
         end
     end
 
-    local wallpaper = cfg.wallpaper_expanded
-    if type(wallpaper) ~= "string" or wallpaper == "" or not fs.file_exists(wallpaper) then
-        wallpaper = ""
-    end
     local cursor_size = type(cfg.cursor_size) == "number" and math.tointeger(cfg.cursor_size)
     assert(cursor_size and cursor_size > 0, "cursor_size must be a positive integer")
     local profile = cfg.profile == "full" and "full" or "minimal"
-    local enable_polkit = (cfg.polkit == true or (cfg.polkit ~= false and profile == "full")) and "1" or "0"
     local enable_fcitx5 = (cfg.fcitx5 == true or (cfg.fcitx5 ~= false and profile == "full")) and "1" or "0"
     local tail = {
         entry("XCURSOR_THEME", cfg.cursor_theme),
         entry("XCURSOR_SIZE", tostring(cursor_size)),
-        entry("KAZE_WALLPAPER", wallpaper),
-        entry("KAZE_WALLPAPER_COLOR", "#" .. theme.bg),
-        entry("KAZE_NIGHT_TEMP", tostring(cfg.night_temp)),
         entry("KAZE_PROFILE", profile),
-        entry("KAZE_ENABLE_POLKIT", enable_polkit),
         entry("KAZE_ENABLE_FCITX5", enable_fcitx5),
     }
     if enable_fcitx5 == "1" then
@@ -90,28 +60,19 @@ function M.render_environment(cfg, theme, previous)
     return base .. table.concat(tail)
 end
 
-function M.read_appearance(contents)
-    local wallpaper = assert(read_entry(contents, "KAZE_WALLPAPER"), "session.env has no wallpaper setting")
-    local color = assert(read_entry(contents, "KAZE_WALLPAPER_COLOR"), "session.env has no wallpaper color")
-    return {
-        wallpaper = wallpaper ~= "" and wallpaper or color,
-        has_image = wallpaper ~= "",
-        cursor_theme = assert(read_entry(contents, "XCURSOR_THEME"), "session.env has no cursor theme"),
-        cursor_size = assert(read_entry(contents, "XCURSOR_SIZE"), "session.env has no cursor size"),
-        enable_polkit = (read_entry(contents, "KAZE_ENABLE_POLKIT") or "0") == "1",
-        enable_fcitx5 = (read_entry(contents, "KAZE_ENABLE_FCITX5") or "0") == "1",
-    }
-end
-
-function M.set_cursor(appearance)
-    local q = fs.shell_quote
-    local out = fs.capture("timeout 3s hyprctl setcursor " .. q(appearance.cursor_theme) .. " " .. q(appearance.cursor_size))
-    if not (out and out:match("^%s*ok%s*$")) then
-        error("hyprctl setcursor failed" .. (out and (": " .. out) or ""), 0)
+function M.write_environment(cfg)
+    local rdir = fs.private_runtime_dir()
+    if not rdir then
+        return nil, "cannot prepare $XDG_RUNTIME_DIR/kaze"
     end
+    local ok, err = pcall(fs.write_atomic, rdir .. "/session.env", M.render_environment(cfg or hypr_user.load()))
+    if not ok then
+        return nil, tostring(err)
+    end
+    return true
 end
 
-function M.start(sync_cmd)
+function M.start()
     for key in session_vars:gmatch("%S+") do
         local value = os.getenv(key)
         if not value or value == "" then
@@ -124,10 +85,10 @@ function M.start(sync_cmd)
         if owns_environment() then return true end
         return nil, target .. " already belongs to another session"
     end
-    if not os.execute(fs.shell_quote(sync_cmd) .. " --session-start") then
-        return nil, "could not generate session configs"
+    local env_written, env_err = M.write_environment(hypr_user.load())
+    if not env_written then
+        return nil, env_err or "could not write session environment"
     end
-    if not clear_clipboard() then return nil, "could not remove stale session clipboard" end
     if not os.execute(dbus_env .. "--systemd " .. session_vars) then
         clear_environment()
         return nil, "could not export the Wayland activation environment"
@@ -147,8 +108,7 @@ function M.stop()
     local owns = owns_environment()
     if owns == nil then return nil, "cannot read systemd's activation environment" end
     if not owns then return true end
-    -- Finish the MP4 while the compositor still exists. Do not take the
-    -- recorder CLI's lock here: it may be held by an interactive slurp.
+    -- Finish the MP4 while the compositor still exists.
     local recorder = "kaze-record.service"
     local status = fs.capture(ctl .. "show -p ActiveState --value " .. recorder)
     if status and status ~= "inactive\n" and status ~= "failed\n" then
@@ -159,66 +119,24 @@ function M.stop()
     if not os.execute(ctl .. "stop " .. target) then
         return nil, "could not stop " .. target
     end
-    local clipboard_ok = clear_clipboard()
-    clear_ephemeral_ui_state()
     local env_ok = clear_environment()
-    if not clipboard_ok then return nil, "could not remove the session clipboard" end
     if not env_ok then return nil, "could not clear the Wayland activation environment" end
     return true
 end
 
 function M.lock()
-    -- A request from SSH must target the graphical login, not the SSH session.
-    -- hypridle subscribes to the display session from its systemd user unit.
+    if fs.command_exists("noctalia") then
+        if os.execute("noctalia msg session lock >/dev/null 2>&1") then
+            return true
+        end
+    end
     local id = fs.capture('loginctl show-user "$(id -u)" -p Display --value')
     id = id and id:match("^([%w_-]+)\n?$")
-    if not id then return nil, "could not find the display session in logind" end
+    if not id then return nil, "could not lock session via noctalia or logind" end
     if not os.execute("loginctl lock-session " .. fs.shell_quote(id)) then
         return nil, "logind refused the lock request"
     end
-    -- loginctl lock-session always exits 0 even if hypridle is dead; fall back
-    -- directly to kaze-lock.service when hypridle is not active.
-    if not os.execute(ctl .. "is-active --quiet kaze-hypridle.service") then
-        if not os.execute(ctl .. "start kaze-lock.service") then
-            return nil, "hypridle is inactive and direct lock failed"
-        end
-    end
     return true
-end
-
-function M.screen_off()
-    -- Hyprland's native wake-on-key also handles releases. Don't let the key
-    -- that accepted the Fuzzel selection immediately wake the displays again.
-    local code = [[
-local function turn_off()
-    hl.dispatch(hl.dsp.dpms({ action = "off" }))
-end
-local function accept_key_held()
-    for _, key in ipairs({ "Return", "KP_Enter", "Tab", "y", "Control_L", "Control_R", "Shift_L", "Shift_R" }) do
-        if hl.is_key_down(key) then return true end
-    end
-    return false
-end
-if not accept_key_held() then
-    turn_off()
-else
-    local release
-    release = hl.on("input.keyboard.key", function(_, _, state)
-        if state ~= 0 then return end
-        -- Run after Hyprland processes the release and its DPMS wake handling.
-        hl.timer(function()
-            if release:is_active() and not accept_key_held() then
-                release:remove()
-                turn_off()
-            end
-        end, { timeout = 1, type = "oneshot" })
-    end)
-    hl.timer(function() release:remove() end, { timeout = 10000, type = "oneshot" })
-end
-]]
-    local out = fs.capture("hyprctl eval " .. fs.shell_quote(code))
-    if out and out:match("^%s*ok%s*$") then return true end
-    return nil, "could not turn off the displays"
 end
 
 function M.wake_displays()

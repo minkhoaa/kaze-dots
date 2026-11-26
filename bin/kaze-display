@@ -17,7 +17,7 @@ local function setup_path()
     local base = (resolved or script):match("^(.*)/[^/]+$")
     if base then
         local repo_lua = base .. "/../lua"
-        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+        local f = io.open(repo_lua .. "/kaze/fs.lua", "r")
         if f then
             f:close()
             paths[#paths + 1] = repo_lua .. "/?.lua"
@@ -34,7 +34,6 @@ setup_path()
 
 local display = require("kaze.display")
 local fs = require("kaze.fs")
-local notify_store = require("kaze.notify")
 local popups = require("kaze.popups")
 
 local function usage(out)
@@ -50,13 +49,6 @@ local function notify(title, body, urgency)
     if not cmd_exists("notify-send") then
         return
     end
-    notify_store.record({
-        app = "kaze-display",
-        icon = "󰍹",
-        urgency = urgency or "low",
-        summary = title,
-        body = body,
-    })
     os.execute(string.format(
         "notify-send -a kaze-display -t 2200 -u %s -h string:x-canonical-private-synchronous:kaze-display %s %s >/dev/null 2>&1 || true",
         fs.shell_quote(urgency or "low"),
@@ -101,14 +93,6 @@ if mode == "--list" then
 end
 
 if mode == "--menu" then
-    if popups.toggle_existing_fuzzel("kaze-display") then
-        os.exit(0)
-    end
-    if not cmd_exists("fuzzel") then
-        io.stderr:write("kaze-display: fuzzel not found in PATH\n")
-        os.exit(1)
-    end
-
     local internal, externals = display.pick_roles(monitors)
     local ext = externals[1]
     local entries = {}
@@ -130,13 +114,7 @@ if mode == "--menu" then
     end
 
     local choice, dmenu_err = popups.run_dmenu(labels, {
-        flags = popups.active_right_flags(),
-        width = 46,
-        lines = #labels,
-        minimal_lines = true,
-        line_height = 32,
         prompt = "Display > ",
-        tag = "kaze-display",
     })
     if not choice then
         io.stderr:write("kaze-display: " .. tostring(dmenu_err) .. "\n")

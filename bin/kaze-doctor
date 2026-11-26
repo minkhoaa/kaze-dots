@@ -17,7 +17,7 @@ local function setup_path()
     local base = (resolved or script):match("^(.*)/[^/]+$")
     if base then
         local repo_lua = base .. "/../lua"
-        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+        local f = io.open(repo_lua .. "/kaze/fs.lua", "r")
         if f then
             f:close()
             paths[#paths + 1] = repo_lua .. "/?.lua"
@@ -32,9 +32,8 @@ end
 
 setup_path()
 
-local config = require("kaze.config")
 local fs = require("kaze.fs")
-local state = require("kaze.state")
+local hypr_user = require("kaze.hypr_user")
 
 local function usage(out)
     out:write("Usage: kaze-doctor [--offline] [--profile minimal|full] [-h|--help]\n")
@@ -75,17 +74,17 @@ if cli_profile and cli_profile ~= "minimal" and cli_profile ~= "full" then
     os.exit(2)
 end
 
-local ok_Count, warn_Count, fail_Count = 0, 0, 0
+local ok_count, warn_count, fail_count = 0, 0, 0
 local function report_ok(msg)
-    ok_Count = ok_Count + 1
+    ok_count = ok_count + 1
     io.stdout:write("[OK]   " .. msg .. "\n")
 end
 local function report_warn(msg)
-    warn_Count = warn_Count + 1
+    warn_count = warn_count + 1
     io.stdout:write("[WARN] " .. msg .. "\n")
 end
 local function report_fail(msg)
-    fail_Count = fail_Count + 1
+    fail_count = fail_count + 1
     io.stdout:write("[FAIL] " .. msg .. "\n")
 end
 
@@ -94,49 +93,26 @@ local function cmd_exists(bin)
     return ok == true or ok == 0
 end
 
-local function is_executable_file(path)
-    local ok = os.execute("[ -x " .. fs.shell_quote(path) .. " ] && [ ! -d " .. fs.shell_quote(path) .. " ]")
-    return ok == true or ok == 0
-end
-
-local function peek_raw_state_profile(path)
-    if not fs.file_exists(path) then
-        return nil
-    end
-    local chunk = loadfile(path, "t", {})
-    if not chunk then
-        return nil
-    end
-    local ok, tbl = pcall(chunk)
-    if ok and type(tbl) == "table" and type(tbl.profile) == "string" and tbl.profile ~= "" then
-        return tbl.profile
-    end
-    return nil
-end
-
-local cfg = config.load({ strict = false })
-local raw_state_profile = peek_raw_state_profile(state.path())
-local profile = cli_profile or cfg.profile or raw_state_profile or "minimal"
+local cfg = hypr_user.load()
+local profile = cli_profile or cfg.profile or "minimal"
 if profile ~= "minimal" and profile ~= "full" then
     report_fail(string.format("profile: invalid configured profile '%s' (expected minimal or full)", tostring(profile)))
     profile = "minimal"
 else
-    report_ok(string.format("profile: %s (layout=%s, theme=%s)", profile, tostring(cfg.layout), tostring(cfg.theme)))
+    report_ok(string.format("profile: %s (Noctalia native)", profile))
 end
 
 -- 1. Required binaries in PATH for active profile
 local MINIMAL_BINS = {
-    "hyprland", "hyprctl", "hypridle", "hyprlock",
-    "waybar", "swaybg", "fuzzel", "fnott", "notify-send",
-    "foot", "footclient", "wl-copy", "wl-paste", "cliphist",
-    "grim", "slurp", "wpctl", "brightnessctl", "playerctl",
+    "hyprland", "hyprctl", "noctalia", "notify-send",
+    "foot", "footclient", "wl-copy", "wl-paste",
+    "wpctl", "brightnessctl", "playerctl",
     "lua", "busctl", "systemctl", "flock",
 }
 
 local FULL_EXTRA_BINS = {
-    "swappy", "wf-recorder", "ffprobe", "hyprpicker",
-    "hyprsunset", "matugen", "yazi", "imv", "zathura",
-    "gnome-keyring-daemon", "fcitx5",
+    "slurp", "wf-recorder", "ffprobe", "hyprpicker",
+    "yazi", "imv", "zathura", "gnome-keyring-daemon", "fcitx5",
 }
 
 local missing_minimal = {}
@@ -151,7 +127,6 @@ else
     report_fail("binaries (minimal): missing in PATH: " .. table.concat(missing_minimal, ", "))
 end
 
-local enable_polkit = (cfg.polkit == true) or (cfg.polkit ~= false and profile == "full")
 local enable_fcitx5 = (cfg.fcitx5 == true) or (cfg.fcitx5 ~= false and profile == "full")
 
 if profile == "full" then
@@ -161,19 +136,8 @@ if profile == "full" then
             missing_full[#missing_full + 1] = bin
         end
     end
-    local polkit_override = os.getenv("KAZE_POLKIT_AGENT")
-    local polkit_default = "/usr/lib/mate-polkit/polkit-mate-authentication-agent-1"
-    local polkit_ok
-    if polkit_override and polkit_override ~= "" then
-        polkit_ok = is_executable_file(polkit_override)
-    else
-        polkit_ok = is_executable_file(polkit_default) or cmd_exists("polkit-mate-authentication-agent-1")
-    end
-    if not polkit_ok then
-        missing_full[#missing_full + 1] = polkit_override or polkit_default
-    end
     if #missing_full == 0 then
-        report_ok("binaries (full): all full-profile tools and mate-polkit agent found")
+        report_ok("binaries (full): all full-profile tools found")
     else
         report_fail("binaries (full): missing: " .. table.concat(missing_full, ", "))
     end
@@ -186,15 +150,13 @@ do
     local bin_home = fs.home() .. "/.local/bin"
     local q = fs.shell_quote
 
-    -- Pure POSIX sh loop: requires zero external binaries in PATH.
     local scan_script = string.format([[
-for p in %s/hypr/*.lua %s/hypr/hypridle.conf \
+for p in %s/hypr/*.lua \
+         %s/foot/foot.ini \
          %s/systemd/user/kaze-* \
-         %s/systemd/user/fnott.service.d/*.conf \
          %s/systemd/user/foot-server.service.d/*.conf \
          %s/systemd/user/foot-server.socket.d/*.conf \
          %s/kaze-dots/lua/kaze \
-         %s/dbus-1/services/org.freedesktop.Notifications.service \
          %s/kaze-*; do
     if [ -L "$p" ] && [ ! -e "$p" ]; then
         printf 'BROKEN\t%%s\n' "$p"
@@ -203,12 +165,11 @@ for p in %s/hypr/*.lua %s/hypr/hypridle.conf \
     fi
 done
 ]],
-        q(config_home), q(config_home),
         q(config_home),
         q(config_home),
         q(config_home),
         q(config_home),
-        q(data_home),
+        q(config_home),
         q(data_home),
         q(bin_home)
     )
@@ -229,11 +190,12 @@ done
     local required_links = {
         data_home .. "/kaze-dots/lua/kaze",
         config_home .. "/hypr/hyprland.lua",
+        config_home .. "/foot/foot.ini",
         config_home .. "/systemd/user/kaze-session.target",
-        bin_home .. "/kaze-sync",
+        config_home .. "/systemd/user/kaze-noctalia.service",
+        bin_home .. "/kaze-session",
     }
     if profile == "full" then
-        required_links[#required_links + 1] = config_home .. "/systemd/user/kaze-polkit.service"
         required_links[#required_links + 1] = config_home .. "/systemd/user/kaze-fcitx5.service"
     end
 
@@ -256,7 +218,36 @@ done
     end
 end
 
--- 3. UTF-8 locale check
+-- 3. Native config syntax checks (Noctalia + Foot)
+do
+    local noc_cfg = fs.config_dir() .. "/noctalia/config.toml"
+    if cmd_exists("noctalia") and fs.file_exists(noc_cfg) then
+        local ok_val = os.execute("noctalia config validate " .. fs.shell_quote(noc_cfg) .. " >/dev/null 2>&1")
+        if ok_val == true or ok_val == 0 then
+            report_ok("noctalia: config.toml validated cleanly")
+        else
+            report_fail("noctalia: config.toml failed validation")
+        end
+    elseif offline then
+        report_warn("noctalia: skipped config.toml validation (not present or noctalia unavailable)")
+    else
+        report_fail("noctalia: missing " .. noc_cfg)
+    end
+
+    local foot_cfg = fs.config_dir() .. "/foot/foot.ini"
+    if cmd_exists("foot") and fs.file_exists(foot_cfg) then
+        local ok_foot = os.execute("foot --check-config --config " .. fs.shell_quote(foot_cfg) .. " >/dev/null 2>&1")
+        if ok_foot == true or ok_foot == 0 then
+            report_ok("foot: foot.ini validated cleanly")
+        else
+            report_fail("foot: foot.ini failed validation")
+        end
+    elseif offline then
+        report_warn("foot: skipped foot.ini validation (not present or foot unavailable)")
+    end
+end
+
+-- 4. UTF-8 locale check
 do
     local lc_all = os.getenv("LC_ALL")
     local lc_ctype = os.getenv("LC_CTYPE")
@@ -274,14 +265,13 @@ do
     end
 end
 
--- 4. Live session checks (when not --offline and HYPRLAND_INSTANCE_SIGNATURE is non-empty)
+-- 5. Live session checks (when not --offline and HYPRLAND_INSTANCE_SIGNATURE is non-empty)
 local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
 if offline then
     report_ok("session: skipped live compositor/systemd/D-Bus checks (--offline)")
 elseif not hypr_sig or hypr_sig == "" then
     report_warn("session: HYPRLAND_INSTANCE_SIGNATURE not set; skipped live session checks")
 else
-    -- 4a. hyprctl configerrors
     local err_proc = io.popen("hyprctl configerrors 2>&1")
     local err_out = err_proc and err_proc:read("*a") or nil
     local err_ok = err_proc and err_proc:close()
@@ -292,7 +282,6 @@ else
         report_fail("hyprctl: configerrors non-empty or failed: " .. trimmed)
     end
 
-    -- 4b. systemctl --user show-environment
     local env_out = fs.capture("systemctl --user show-environment 2>/dev/null")
     if not env_out then
         report_fail("systemd-env: failed to read systemctl --user show-environment")
@@ -319,7 +308,6 @@ else
         end
     end
 
-    -- 4c. Passive portal check via busctl --user --activatable (NEVER activate portals)
     local act_out = fs.capture("busctl --user --activatable 2>/dev/null")
     if not act_out then
         report_fail("portals: busctl --user --activatable failed")
@@ -356,7 +344,6 @@ else
         end
     end
 
-    -- 4d. PipeWire / WirePlumber active check
     local missing_audio = {}
     for _, unit in ipairs({ "pipewire.service", "wireplumber.service" }) do
         local ok_u = os.execute("systemctl --user is-active --quiet " .. fs.shell_quote(unit) .. " >/dev/null 2>&1")
@@ -370,22 +357,10 @@ else
         report_fail("audio: inactive user service(s): " .. table.concat(missing_audio, ", "))
     end
 
-    -- 4e. Singleton core daemon PIDs
     local expected_daemons = {
-        { name = "waybar",   count = 1 },
-        { name = "swaybg",   count = 1 },
+        { name = "noctalia", count = 1 },
         { name = "foot",     count = 1 },
-        { name = "fnott",    count = 1 },
-        { name = "hypridle", count = 1 },
-        { name = "wl-paste", count = 2 },
     }
-    if enable_polkit then
-        expected_daemons[#expected_daemons + 1] = {
-            name = "polkit-mate-authentication-agent-1",
-            comm_prefix = "polkit-mate-aut",
-            count = 1,
-        }
-    end
     if enable_fcitx5 then
         expected_daemons[#expected_daemons + 1] = { name = "fcitx5", count = 1 }
     end
@@ -404,7 +379,7 @@ else
                 local argv0 = args_str:match("^(%S+)") or comm
                 local argv0_base = argv0:match("([^/]+)$") or argv0
                 for _, d in ipairs(expected_daemons) do
-                    if comm == d.name or argv0_base == d.name or (d.comm_prefix and comm == d.comm_prefix) then
+                    if comm == d.name or argv0_base == d.name then
                         counts[d.name] = counts[d.name] + 1
                     end
                 end
@@ -418,21 +393,20 @@ else
             end
         end
         if #daemon_issues == 0 then
-            report_ok(string.format("daemons (%s): all core singleton/watcher PID counts match", profile))
+            report_ok(string.format("daemons (%s): all core singleton PID counts match", profile))
         else
             report_fail("daemons: PID count mismatch: " .. table.concat(daemon_issues, ", "))
         end
     end
 end
 
--- 5. Informational footer on opt-in user integrations
 io.stdout:write("\nOpt-in user integrations (user-managed, not auto-enabled by Kaze):\n")
 io.stdout:write("  - Secret Service keyring: gnome-keyring or keepassxc\n")
 io.stdout:write("  - Bluetooth media keys:   mpris-proxy (bluez-utils)\n")
 io.stdout:write("  - USB automounting:       udisks2 / udiskie\n")
-io.stdout:write(string.format("\nDoctor summary: %d OK, %d WARN, %d FAIL\n", ok_Count, warn_Count, fail_Count))
+io.stdout:write(string.format("\nDoctor summary: %d OK, %d WARN, %d FAIL\n", ok_count, warn_count, fail_count))
 
-if fail_Count > 0 then
+if fail_count > 0 then
     os.exit(1)
 end
 os.exit(0)

@@ -1,61 +1,30 @@
-# GOAL.md — Vision, Budgets, and Roadmap
+# GOAL.md — kaze-dots (Noctalia Shell v5.x Native)
 
-## 1. Vision
+## Mission
 
-Build a personal, production-grade **Arch Linux + Hyprland desktop shell configuration (`kaze-dots`)** that resolves the classic Wayland desktop trade-off between **visual polish** and **system efficiency**:
+Build a crisp, Omarchy-inspired, vertical-first **Hyprland 0.57+ + Noctalia Shell (C++ v5.x)** desktop for Arch Linux / CachyOS that stays minimal, fast, offline-first, and easy to maintain:
 
-- Rooted in a **personal vertical-first desktop workflow** (`sidebar` default `42px` left rail freeing full vertical screen space), combined with keyboard-driven floating-TUI minimalism and zero-polling native C/C++ rendering (`waybar`, `swaybg`, `fnott`, `fuzzel`, `foot --server`).
-- Make **Lua the single control plane** so switching layouts (`sidebar` ↔ `islands` ↔ `slim`) or themes (`kaze` ↔ `lavender` ↔ `tokyonight` ↔ `carbon`) is atomic, instant, and version-controllable.
+- **Native Noctalia for everything Noctalia already owns:** bar layout, themes/palettes, built-in app theming (`hyprland`, `foot`, `gtk3`, `gtk4`, `btop`), wallpaper, launcher (`noctalia dmenu`), Control Center, Settings GUI, notifications, OSD, clipboard history, idle, lockscreen, Night Light, Caffeine, Polkit, screenshots/annotation, and window switcher.
+- **Minimal Hyprland + Lua helpers only for what Noctalia does not provide:** Hyprland native Lua config (`hypr/*.lua`), systemd session lifecycle (`kaze-session`), Foot server client (`kaze-footclient`), Hyprland multi-monitor switcher (`kaze-display`), Hyprland keybind cheat-sheet (`kaze-keys`), on-demand floating `btop` TUI (`kaze-tui`), Wayland screen recorder (`kaze-record`), and health checks (`kaze-doctor`).
+- **Zero AUR core:** 20 official `[core]`/`[extra]` packages for `minimal` (+14 optional official packages for `full`).
 
-## 2. Hard Performance & Quality Budgets
+## Resource Budgets (1920×1080, Intel iGPU Arch KVM Guest)
 
-All targets are anchored against our isolated Arch Linux KVM VM benchmarks (`1920×1080`, VirGL 3D, zero host noise):
+Measured at cold boot (`T0`: 45s settle + 60s sampling via `tests/vm-idle.py --phase T0 --guest-sudo-pss`):
 
-| Metric | Typical Heavy QML Shell | Typical Light QML Bar | **`kaze-dots` Target Budget** | Gate |
-|---|---|---|---|---|
-| T0 shell stack idle PSS (`1920×1080`) | ~279–344 MiB | ~89 MiB | **≤ 60.0 MiB**, including any portal eagerly activated at login | Hard fail if > 60.0 MiB |
-| Bar (`waybar`) idle PSS | N/A | N/A | **≤ 40.0 MiB** | Hard fail if > 40.0 MiB |
-| Background idle CPU (120s window) | ~0.0–1.5% | ~0.0% | **≤ 0.20%** | Hard fail if > 0.20% |
-| Context switches/sec (all shell threads) | ~0.2–30 CS/s | ~1.0 CS/s | **≤ 5.0 CS/s** | Hard fail if > 5.0 CS/s |
-| Host dGPU (NVIDIA) wakeups | High (Vulkan/QML) | Low | **0 MiB VRAM / 0 wakeups** | Hard fail |
-| Live layout/theme switch latency | N/A | < 500 ms | **≤ 500 ms** | Target |
-| Hyprland `configerrors` count | 0 | 0 | **0 errors** | Hard fail |
-| Terminal RAM (5 windows via `footclient`) | ~482 MiB (`kitty`) | ~482 MiB (`kitty`) | **≤ 20 MiB** | Verified (~13.9 MiB) |
-| External AUR dependencies (core) | Several | AUR | **0** *(100% Arch `[extra]`)* | Hard fail |
+| Metric | Budget | Scope |
+| --- | --- | --- |
+| **Shell stack PSS** | **≤ 100 MiB** | `kaze-noctalia.service` (`noctalia` with tuned `MALLOC_CONF`) + `foot-server.service` (`foot --server`) |
+| **Shell + Session PSS** | **≤ 105 MiB** | Shell stack + passive session services (`dconf-service`) |
+| **Idle CPU** | **≤ 0.20%** | Aggregate CPU across shell stack over 60s |
+| **Context switches** | **≤ 8.0 CS/s** | Aggregate voluntary + non-voluntary CS/s across shell stack |
+| **Early portals** | **0** | No `xdg-desktop-portal*` started before first client request |
+| **Telemetry / Network** | **0** | `offline_mode = true`, `telemetry_enabled = false`, `external_ip_enabled = false`, `[weather]`/`[calendar]`/`[system.monitor]`/`[dock]`/`[desktop_widgets]` disabled, `plugins.auto_update = "none"` |
+| **Resident daemons (minimal)** | **2** | `noctalia` (1) + `foot --server` (1) |
 
-**T0** is a cold login before opening an app, sending a toast, or probing a portal. The strict gate includes any early portal in the 60.0 MiB cap. The development harness can report the exact known GTK3 failure separately, but always enforces a 55.0 MiB shell-only regression guard. Report resource use after notifications (**T1**) and after using portals (**T2**) separately; the 60.0 MiB cap is not a claim about either warm sample. List the Kaze shell, session services, known out-of-budget components, and any unclassified same-UID processes. File picking and screen sharing remain in scope even when they increase memory use.
+## Non-Goals
 
-## 3. Scope Boundaries
-
-### In Scope
-- Native **Hyprland `0.57+` Lua** configuration (`hypr/*.lua`) synchronized with active layout & theme.
-- **Pure-Lua config compiler (`kaze-sync`)** generating deterministic configs for `waybar`, `foot`, `fuzzel`, `fnott`, and `hyprlock`.
-- **3 complete, visually verified layouts**:
-  1. `sidebar` *(default)*: Sleek `42px` vertical left rail with vertical workspace pills, icon-only status stack, 2-line clock, and cohesive Hyprland framing.
-  2. `islands`: Floating top pill islands with soft corners and subtle frosted glass.
-  3. `slim`: Flat `28px` edge-to-edge ultra-minimal top bar.
-- **4 curated color presets**: `kaze`, `lavender`, `tokyonight`, `carbon`, plus user override support via `~/.config/kaze/user.lua`.
-- **On-demand Lua CLI utilities** for layout/theme, menus, Foot clients, OSD, session lifecycle, clipboard, and screen capture. Optional annotation, color picking, recording, Night Light and Caffeine do not add anything to the login process graph; no custom resident helpers.
-- **On-demand floating TUIs** (`nmtui`, `bluetui`, `wiremix`, `btop`) via `footclient` (`0 MiB` when closed).
-- **Progress-bar OSD** (volume & brightness) powered by `fnott` + `notify-send` (`0 MiB` extra daemon cost).
-- **Clean Arch installer & symlink manager** (`scripts/install-packages.sh`, `scripts/apply.sh`) and clean Arch KVM VM test harness.
-
-### Explicit Out of Scope (Non-Goals)
-- **No custom Rust/C++/QML GUI renderer**: Waybar C++ is the chosen bar renderer; we will not rewrite a Wayland bar/compositor from scratch.
-- **No heavy always-resident Control Center / Dashboard daemon** (no Quickshell, AGS/GTK4, Eww, or Electron widgets).
-- **No automatic host system modification** (`sudo`, `/etc`, display manager configs, kernel parameters) without explicit user opt-in.
-- **No X11 support**: Wayland + Hyprland only.
-- **No multi-distro package abstraction** beyond Arch Linux / CachyOS `pacman`.
-
-## 4. Milestone Roadmap
-
-- **M0 — Specification & Documentation** *(Complete)*
-  - Complete `AGENTS.md`, `GOAL.md`, `DESIGN.md`, and `docs/specs/01..05`.
-- **M1 — Core Lua Engine & Initial Layout** *(Complete)*
-  - Implement `lua/kaze/` (schema, themes, initial layout, emitters, atomic writer), `hypr/*.lua`, and `bin/kaze-{sync,tui,osd}`.
-- **M2 — Multi-Layout Engine & Interactive Switchers** *(Complete)*
-  - Implement all 3 layouts (`sidebar`, `islands`, `slim`) and `kaze-{layout,theme,menu,power}` with live hot-switch verification + `1920×1080` screenshots.
-- **M3 — Polish, Edge Cases & Arch Packaging Ergonomics** *(Complete)*
-  - Finalize `templates/user.lua.example`, `scripts/install-packages.sh`, `scripts/apply.sh`, rollback script, `scripts/launch-vm.sh`, and `tests/vm-verify.sh`.
-- **M4 — Optional Host Adoption**
-  - Only upon explicit user approval: apply cleanly to host with reversible backup/rollback.
+- No custom Lua theme compiler or layout generator duplicating Noctalia Settings GUI.
+- No Zen Mode (`kaze-perf`) or custom command menu (`kaze-menu`) duplicating Noctalia Launcher/Control Center.
+- No custom screenshot scripts (`grim`/`swappy`) duplicating Noctalia's built-in screenshot/annotation tool.
+- No Qt/QML, Electron, GTK4/AGS, wgpu/Iced, Node, or Python desktop runtimes.

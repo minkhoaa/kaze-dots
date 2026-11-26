@@ -1,95 +1,65 @@
 # kaze-dots
 
-A vertical-first Hyprland desktop for **Arch Linux and CachyOS**. Kaze puts workspaces, status and the clock in a 42 px rail on the left, leaving the height of the screen for your windows. Prefer a top bar? Switch to floating `islands` or a flush `slim` strip without logging out.
+A minimal, Omarchy-inspired, vertical-first **Hyprland 0.57+ + Noctalia Shell (C++ v5.x)** desktop for Arch Linux / CachyOS — **zero AUR packages**, **offline/zero-telemetry**, **≤ 100 MiB idle PSS**, **≤ 0.20% CPU**, and **0 early portals**.
 
-Waybar draws the bar, swaybg sets the wallpaper, and Fnott handles notifications. Wi-Fi, Bluetooth and audio controls open in floating Foot terminals. A Lua command, `kaze-sync`, generates the app configs and exits; no Kaze daemon polls in the background.
+> **Note:** The previous Waybar/swaybg/Fnott/Fuzzel/Hyprlock stack (`48.01 MiB PSS`) is preserved on the `legacy-waybar` branch.
 
-[Install](#install) · [First session](#first-session) · [Customize](#customize) · [Roll back](#roll-back) · [Documentation](#documentation)
+## Architecture
 
-## Install
+Everything Noctalia already provides stays **100% native** in Noctalia; `kaze-dots` only adds Hyprland's Lua configuration, systemd session management, Foot server integration, and the few utilities Noctalia does not cover:
 
-These dotfiles configure an existing Arch Linux or CachyOS installation. You’ll need Git and `sudo` access for `pacman`. Both profiles use official packages, including Hyprland 0.57+ (native Lua configuration) and Lua 5.5+. No AUR packages are required.
+- **Native Noctalia (`noctalia`):** bar (`42px` left sidebar by default, editable in Settings GUI), themes & wallpaper palettes, built-in app theming templates (`hyprland`, `foot`, `gtk3`, `gtk4`, `btop`), wallpaper, app launcher (`noctalia dmenu`), Control Center, notifications, OSD, clipboard history, idle/DPMS, lockscreen, Night Light, Caffeine, Polkit, screenshots & annotation, and window switcher.
+- **Hyprland 0.57+ Lua (`hypr/*.lua`):** tiling rules, smart gaps (opt-in), named scratchpads, `noctalia-no-anim` layer rules, and keybinds calling `noctalia msg ...` directly. Optional user overrides live in `~/.config/hypr/user.lua`.
+- **7 small CLIs (`bin/`):**
+  - `kaze-session` — `start` / `stop` / `lock` / `wake-displays` for `kaze-session.target`
+  - `kaze-footclient` — opens terminals via `foot --server` with live Noctalia colors
+  - `kaze-display` — Hyprland multi-monitor layout menu (`noctalia dmenu` + `hyprctl`)
+  - `kaze-keys` — searchable Hyprland shortcut sheet (`noctalia dmenu`)
+  - `kaze-tui` — floating `btop` (sysmon) drawer toggle via `footclient`
+  - `kaze-record` — Wayland full/region MP4 screen recording (`wf-recorder` + safe `SIGINT` finalization)
+  - `kaze-doctor` — checks packages, symlinks, `noctalia config validate`, `foot --check-config`, `hyprctl configerrors`, portals, audio, and singleton PIDs
 
-- **`minimal`** (default) includes the desktop, Fuzzel launcher, hypridle and hyprlock, clipboard history, screenshots, external display switching (`kaze-display`), and portals for file picking and screen sharing.
-- **`full`** adds screen recording, screenshot annotation, a color picker, Night Light, wallpaper-derived themes, the Yazi file manager, lightweight image/PDF viewers (`imv`, `zathura`), and `gnome-keyring` (D-Bus activated on demand). It also starts a Polkit authentication agent and Fcitx5 with Bamboo Vietnamese input at login.
+## Installation (Arch Linux / CachyOS)
 
-Log out of your graphical session and use a TTY as your regular user. Keep the clone in place: Kaze links back to it. Preview the package list and destination paths without applying anything:
-
-```bash
-git clone https://github.com/minkhoaa/kaze-dots.git
-cd kaze-dots
+```sh
+# Preview packages and paths without touching disk
 ./scripts/install.sh --profile minimal --dry-run
+
+# Install official [extra] packages (20 minimal / 34 full, 0 AUR) and apply with automatic backup/rollback
+./scripts/install.sh --profile minimal   # or --profile full
 ```
 
-If the plan looks right, install the same profile. The [installer](scripts/install.sh) backs up conflicting configs before linking the dotfiles and generating app configs. For the larger profile, use `--profile full` for both the preview and install.
+To roll back cleanly to your pre-install state (preserving `~/.config/hypr/user.lua`):
 
-```bash
-./scripts/install.sh --profile minimal --no-reboot
+```sh
+"$(cat ~/.config/kaze/last-backup)/rollback.sh"
 ```
 
-Already have the packages? `--skip-packages` applies just the dotfiles. Bluetooth media keys (`mpris-proxy`) and USB automounting (`udisks2`) remain user-managed (and `gnome-keyring` is optional for `minimal`).
-
-## First session
-
-Start a fresh Hyprland session from a login TTY, outside any running compositor:
-
-```bash
-Hyprland -c "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua"
-```
-
-Press **Super + Return** to open Foot and run `kaze-doctor`. It checks the installed tools, config links, portals, audio and session services. `Super` is usually the Windows key.
+## Key Shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| Tap `Super` or press `Super + Space` | Launch an app with Fuzzel |
-| `Super + Shift + Space` | Open the Kaze menu for layouts, themes, displays, system tools and capture |
-| `Super + Shift + P` / `XF86Display` | Switch external monitor layout (`kaze-display`) |
-| `Super + /` | Search shortcuts by name |
-| `Super + 1` … `Super + 0` | Select a workspace (1–10) |
-| `Super + V` | Pick from clipboard history |
-| `Super + L` | Lock the screen |
-| `Ctrl + Alt + Delete` | Open the power menu, including logout |
+| `Super` (tap) / `Super + Space` | Noctalia App Launcher |
+| `Super + A` | Noctalia Control Center |
+| `Super + N` | Noctalia Notifications |
+| `Super + I` | Noctalia Settings GUI (bar, themes, widgets, wallpaper) |
+| `Super + Shift + T` | Toggle Dark / Light Mode (`noctalia msg theme-mode-toggle`) |
+| `Super + Shift + W` | Noctalia Wallpaper Picker |
+| `Super + V` | Noctalia Clipboard History |
+| `Super + /` | Search Hyprland Shortcuts (`kaze-keys`) |
+| `Super + Shift + P` | Multi-Monitor Layout Menu (`kaze-display`) |
+| `Super + Return` / `Super + T` | Foot Terminal (`kaze-footclient`) |
+| `Ctrl + Shift + Esc` | Floating `btop` System Monitor (`kaze-tui sysmon`) |
+| `Print` / `Super + Shift + S` / `Super + Shift + Alt + S` | Noctalia Fullscreen / Region / Annotate Screenshot |
+| `Ctrl + Alt + R` / `Super + Shift + Alt + R` | Toggle Full / Region Screen Recording (`kaze-record`) |
+| `Super + L` / `Ctrl + Alt + Del` | Lock Screen / Noctalia Session Menu |
+| `Ctrl + Super + Alt + R` | Reload Noctalia & Hyprland |
 
-## Customize
+## Verification
 
-The default layout is `sidebar` and the default palette is `kaze`. Layouts and palettes are independent: for example, try the floating top bar with the monochrome palette. Both choices persist across logins.
-
-```bash
-kaze-layout islands
-kaze-theme carbon
+```sh
+find lua hypr bin tests -type f \( -name '*.lua' -o -path 'bin/kaze-*' \) -print0 | xargs -0 -r -n1 luac -p
+lua tests/run.lua
+python3 -m unittest tests/vm-idle-test.py
+shellcheck scripts/*.sh tests/vm-verify.sh tests/vm-common.sh
 ```
-
-The other built-in palettes are `lavender` and `tokyonight`. To use colors from your own wallpaper, put an image in `~/Pictures/Wallpapers/`, select it with `kaze-wall --menu`, then run `kaze-theme dynamic` (requires `matugen`, included in `full`).
-
-For personal settings, edit **`~/.config/kaze/user.lua`** (under `$XDG_CONFIG_HOME` if set). The installer creates it once from the [commented example](templates/user.lua.example). For a larger cursor and no blur, for instance:
-
-```lua
-return {
-    cursor_size = 32,
-    blur = { enabled = false },
-}
-```
-
-Run `kaze-sync --check` to validate your changes, then `kaze-sync --reload` to apply them in Kaze. Leave `layout`, `theme` and `wallpaper` unset in `user.lua` if you want to use the switchers. They manage `state.lua` for you; there’s no need to edit it or the generated app configs.
-
-## Roll back
-
-Log out of Kaze first. From a TTY or SSH session as the same user, run the rollback script recorded by the installer:
-
-```bash
-backup_dir=$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/kaze/last-backup") &&
-    "$backup_dir/rollback.sh"
-```
-
-This removes the managed links and generated configs and restores the files they replaced. It preserves `user.lua` and does **not** uninstall packages.
-
-## Footprint
-
-In a [recorded cold login](docs/specs/05-verification-and-benchmarks.md) on the stock Arch VM at 1920×1080, the shell alone used **47.93 MiB PSS** over a 120-second idle sample (CPU rounded to **0.00%**). With session services included, the figure was **85.28 MiB PSS**: GTK3 started the desktop portals when Waybar launched. Neither figure is total system RAM. The stock setup did **not** meet the [60 MiB cold-login budget](GOAL.md).
-
-## Documentation
-
-- [Commands and keyboard shortcuts](docs/specs/04-cli-and-keybinds.md) — the full reference. Run `kaze-keys --list` for a printable shortcut list.
-- [Desktop design](DESIGN.md) — the [three layouts](docs/specs/02-layouts.md) and [palette system](docs/specs/03-theming.md).
-- [Architecture and installed paths](docs/specs/01-architecture.md) — how the Lua compiler, generated files and systemd user services fit together.
-- [Verification and benchmarks](docs/specs/05-verification-and-benchmarks.md) — local checks, VM tests and measured results; see the [implementation checklist](CHECKLIST.md) for progress.

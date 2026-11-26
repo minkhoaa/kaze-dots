@@ -6,11 +6,11 @@ if data == "" then data = (os.getenv("HOME") or "") .. "/.local/share" end
 local installed = data .. "/kaze-dots/lua"
 local direct_dir = script:match("^(.*)/[^/]+$")
 local repo = direct_dir and (direct_dir .. "/../lua") or nil
-local f_repo = repo and io.open(repo .. "/kaze/defaults.lua", "r") or nil
+local f_repo = repo and io.open(repo .. "/kaze/fs.lua", "r") or nil
 if f_repo then
     f_repo:close()
 else
-    local f_inst = io.open(installed .. "/kaze/defaults.lua", "r")
+    local f_inst = io.open(installed .. "/kaze/fs.lua", "r")
     if f_inst then
         f_inst:close()
         repo = nil
@@ -37,19 +37,26 @@ local command = { "exec footclient -E" }
 local dir = fs.runtime_dir()
 if dir then command[#command + 1] = "--server-socket=" .. fs.shell_quote(fs.dirname(dir) .. "/foot.sock") end
 
--- The server keeps its startup palette. Pass the current generated palette as
--- per-window overrides so new windows can change theme without losing shells.
-local ini = io.open(fs.config_dir() .. "/foot/foot.ini", "r")
-if ini then
+local function read_overrides(path)
+    local ini = io.open(path, "r")
+    if not ini then return end
     local section
     for line in ini:lines() do
         section = line:match("^%[([^%]]+)%]$") or section
         local key, value = line:match("^([%w-]+)=(.+)$")
-        if key and (section == "colors-dark" or (section == "main" and key == "font")) then
+        if key and (section == "colors-dark" or section == "colors-light" or (section == "main" and key == "font")) then
             command[#command + 1] = "-o " .. fs.shell_quote(section .. "." .. key .. "=" .. value)
         end
     end
     ini:close()
 end
+
+-- foot --server keeps its startup palette. Pass Noctalia's live generated
+-- theme file as per-window overrides so new terminals pick up theme switches
+-- immediately without restarting the server or killing open shells.
+local cfg_dir = fs.config_dir()
+read_overrides(cfg_dir .. "/foot/foot.ini")
+read_overrides(cfg_dir .. "/foot/themes/noctalia")
+
 for _, value in ipairs(arg) do command[#command + 1] = fs.shell_quote(value) end
 os.exit(fs.exit_status(os.execute(table.concat(command, " "))))

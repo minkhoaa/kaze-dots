@@ -1,9 +1,8 @@
 [Unit]
-Description=Kaze Polkit authentication agent
+Description=Kaze Noctalia shell
 PartOf=kaze-session.target
 Requisite=kaze-session.target
 After=kaze-session.target
-ConditionFileIsExecutable=/usr/lib/mate-polkit/polkit-mate-authentication-agent-1
 StartLimitIntervalSec=30s
 StartLimitBurst=5
 
@@ -11,8 +10,8 @@ StartLimitBurst=5
 Type=exec
 Slice=session.slice
 EnvironmentFile=%t/kaze/session.env
-ExecCondition=:/usr/bin/sh -c 'test "${KAZE_ENABLE_POLKIT:-0}" = 1'
-ExecStart=/usr/lib/mate-polkit/polkit-mate-authentication-agent-1
+Environment=MALLOC_CONF=background_thread:false,narenas:1,dirty_decay_ms:1000,muzzy_decay_ms:5000,lg_tcache_max:10
+ExecStart=/usr/bin/noctalia
 Restart=on-failure
 RestartSec=250ms
 TimeoutStopSec=5s

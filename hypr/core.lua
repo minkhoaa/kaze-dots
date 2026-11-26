@@ -1,24 +1,22 @@
 local ctx = require("kaze._ctx")
-local themes = require("kaze.themes")
-
 local cfg = ctx.cfg
-local theme = ctx.theme
-local layout = ctx.layout
 
-local blur = cfg.blur or {}
-local op = cfg.opacity or {}
+local blur = type(cfg.blur) == "table" and cfg.blur or {}
+local op = type(cfg.opacity) == "table" and cfg.opacity or {}
 local active_op = tonumber(op.active) or 1.0
 local inactive_op = tonumber(op.inactive) or 1.0
 
+-- Fallback neutral colors before Noctalia's built-in Hyprland template runs.
+-- Once ~/.config/hypr/noctalia.lua exists, noctalia.apply_theme() overrides these live.
 hl.config({
     general = {
         layout = "dwindle",
         allow_tearing = false,
-        gaps_in = layout.hypr.gaps_in,
-        gaps_out = layout.hypr.gaps_out,
-        border_size = layout.hypr.border_size,
-        ["col.active_border"] = themes.hypr_rgba(theme.accent, "ee"),
-        ["col.inactive_border"] = themes.hypr_rgba(theme.border, "aa"),
+        gaps_in = tonumber(cfg.gaps_in) or 4,
+        gaps_out = tonumber(cfg.gaps_out) or 8,
+        border_size = tonumber(cfg.border_size) or 2,
+        ["col.active_border"] = "rgba(7aa2f7ee)",
+        ["col.inactive_border"] = "rgba(414868aa)",
     },
 
     dwindle = {
@@ -28,7 +26,7 @@ hl.config({
     },
 
     decoration = {
-        rounding = layout.hypr.rounding,
+        rounding = tonumber(cfg.rounding) or 0,
         active_opacity = active_op,
         inactive_opacity = inactive_op,
         fullscreen_opacity = 1.0,
@@ -47,26 +45,12 @@ hl.config({
     },
 
     group = {
-        col = {
-            border_active = themes.hypr_rgba(theme.accent, "cc"),
-            border_inactive = themes.hypr_rgba(theme.border, "88"),
-            border_locked_active = themes.hypr_rgba(theme.warn, "cc"),
-            border_locked_inactive = themes.hypr_rgba(theme.border, "aa"),
-        },
         groupbar = {
             font_family = cfg.font or "JetBrainsMono Nerd Font",
             font_size = 11,
             height = 18,
             indicator_height = 2,
             gradients = false,
-            text_color = themes.hypr_rgb(theme.fg),
-            text_color_inactive = themes.hypr_rgb(theme.fg_muted),
-            col = {
-                active = themes.hypr_rgba(theme.accent, "cc"),
-                inactive = themes.hypr_rgba(theme.surface, "cc"),
-                locked_active = themes.hypr_rgba(theme.warn, "cc"),
-                locked_inactive = themes.hypr_rgba(theme.surface, "cc"),
-            },
         },
     },
 
@@ -98,7 +82,6 @@ hl.config({
         key_press_enables_dpms = true,
         middle_click_paste = false,
         close_special_on_empty = true,
-        background_color = themes.hypr_rgb(theme.bg),
     },
 
     render = {

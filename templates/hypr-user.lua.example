@@ -1,0 +1,22 @@
+-- Optional Hyprland user overrides (~/.config/hypr/user.lua)
+-- Theme, wallpaper, bar layout, idle, lockscreen, and Night Light are configured
+-- natively in Noctalia Settings (Super + I) / ~/.config/noctalia/config.toml.
+return {
+    -- profile = "minimal", -- "minimal" or "full"
+    -- kb_layout = "us",
+    -- accel_profile = "flat",
+    -- font = "JetBrainsMono Nerd Font",
+    -- cursor_theme = "Adwaita",
+    -- cursor_size = 24,
+    -- browser = "xdg-open https://",
+    -- editor = "nvim",
+    -- files = "yazi",
+    -- smart_gaps = false,
+    -- fcitx5 = false,
+    -- monitors = {
+    --     { output = "eDP-1", mode = "1920x1080@60", position = "0x0", scale = 1 },
+    -- },
+    -- scratchpads = {
+    --     scratch = "kaze-footclient -N",
+    -- },
+}

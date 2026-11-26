@@ -14,7 +14,7 @@ for arg in "$@"; do
             ;;
         -h|--help)
             echo "Usage: $0 [--dry-run] [--yes]"
-            echo "Installs official Arch Linux [core]/[extra] packages required by kaze-dots (zero AUR dependencies)."
+            echo "Installs official Arch Linux [core]/[extra] packages required by kaze-dots + Noctalia (zero AUR dependencies)."
             exit 0
             ;;
         *)
@@ -27,31 +27,21 @@ done
 # 100% official Arch Linux [core]/[extra] packages — zero AUR dependencies
 PACKAGES=(
     hyprland
-    hypridle
-    hyprlock
+    noctalia
     xdg-desktop-portal
     xdg-desktop-portal-hyprland
     xdg-desktop-portal-gtk
     dconf
-    waybar
-    swaybg
-    fuzzel
-    fnott
     libnotify
     foot
     wl-clipboard
     xdg-utils
-    cliphist
-    grim
-    slurp
     wireplumber
     brightnessctl
     playerctl
     networkmanager
     bluez
     bluez-utils
-    bluetui
-    wiremix
     btop
     ttf-jetbrains-mono-nerd
     adwaita-cursors

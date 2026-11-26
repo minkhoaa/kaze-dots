@@ -1,13 +1,13 @@
-# Lua compiler and CLI
+# Lua helpers and CLIs
 
 ## Scope
-Keep config resolution, state and emitters in [lua/kaze/](../lua/kaze/) and executable entry points in [bin/](../bin/). Follow the [pipeline](../docs/specs/01-architecture.md) and [CLI contract](../docs/specs/04-cli-and-keybinds.md).
+Keep minimal Hyprland/session helper modules in [lua/kaze/](../lua/kaze/) and executable entry points in [bin/](../bin/). Only add helpers for capabilities Noctalia does not natively provide (Hyprland session lifecycle, Foot server client, multi-monitor layouts, Hyprland keybind lookup, on-demand TUI drawer, Wayland screen recording, and dotfiles doctor).
 
 ## Local rules
 - Use `snake_case` for Lua modules and keys; use `kebab-case` for executable names.
-- Keep emitters pure: return config contents from the resolved config, theme and layout. Perform no I/O or process calls in emitters.
-- Write generated files and persisted state atomically with `fs.write_atomic`. Quote shell arguments with `fs.shell_quote`.
-- Reject invalid layouts, themes and missing CLI dependencies with a clear message on stderr and a non-zero exit status.
+- Write runtime/state files atomically with `fs.write_atomic`. Quote shell arguments with `fs.shell_quote`.
+- Route all picker UIs (`kaze-display --menu`, `kaze-keys`) through `noctalia dmenu` via `kaze.popups`.
+- Reject invalid options and missing CLI dependencies with a clear message on stderr and a non-zero exit status.
 
 ## Verify
-Run `bin/kaze-sync --check` for a dry run of the active configuration. Expect `check ok` without file writes or daemon reloads.
+Run `lua tests/run.lua` and `bin/kaze-doctor --offline` from the repository root.

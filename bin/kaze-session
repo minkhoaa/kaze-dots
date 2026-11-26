@@ -20,14 +20,10 @@ local installed = data .. "/kaze-dots/lua"
 package.path = table.concat({ repo .. "/?.lua", repo .. "/?/init.lua",
     installed .. "/?.lua", installed .. "/?/init.lua", package.path }, ";")
 
-local fs = require("kaze.fs")
 local session = require("kaze.session")
 local ok, err
 if action == "start" then
-    local sync = bin_dir .. "/kaze-sync"
-    if not fs.file_exists(sync) then sync = fs.home() .. "/.local/bin/kaze-sync" end
-    if not fs.file_exists(sync) then sync = "kaze-sync" end
-    ok, err = session.start(sync)
+    ok, err = session.start()
 elseif action == "stop" then
     ok, err = session.stop()
 elseif action == "lock" then

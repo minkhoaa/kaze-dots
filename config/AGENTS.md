@@ -1,12 +1,13 @@
 # Native app configuration
 
 ## Scope
-Edit [Hyprland modules](../hypr/) and the [hypridle template](../templates/hypridle.conf) directly. Change generated app formats in `lua/kaze/emit_*.lua` and Waybar geometry in [layout sources](../lua/kaze/layouts/).
+Edit [Hyprland modules](../hypr/), the default [Noctalia config](noctalia/config.toml), [Foot config](foot/foot.ini), and [systemd user units](systemd/user/) directly.
 
 ## Local rules
-- Use the native `hl.*` API, not legacy compositor `.conf` rules. Write window matchers as C++ `std::regex`, not Lua patterns.
-- Use native Waybar modules or event-driven IPC. Keep `custom/menu` and `custom/power` click-only: no `exec` or `interval`. Stateful indicators may execute a single state query at startup and on their dedicated RT signal (`interval: "once"`, `exec-on-event: false`). Return empty output when inactive; no persistent scripts or polling.
-- Follow the [layout contract](../docs/specs/02-layouts.md) for bar geometry, [emitter formats](../docs/specs/03-theming.md) for app colors, and the [keybind matrix](../docs/specs/04-cli-and-keybinds.md) for shortcuts.
+- Use Hyprland's native `hl.*` Lua API, not legacy compositor `.conf` rules. Write window matchers as C++ `std::regex`, not Lua patterns.
+- Keep `require("noctalia")` in `hypr/hyprland.lua` and `include=~/.config/foot/themes/noctalia` in `config/foot/foot.ini` so Noctalia's built-in templates style Hyprland and Foot live without mutating symlinked repo files.
+- Keep the `noctalia-no-anim` layer rule active in `hypr/rules.lua` so Hyprland never double-animates Noctalia layers.
+- Keep `config/noctalia/config.toml` strictly offline and zero-polling (`offline_mode = true`, `telemetry_enabled = false`, `external_ip_enabled = false`, `[weather]`, `[calendar]`, `[system.monitor]`, `[dock]`, `[desktop_widgets]` disabled, `plugins.auto_update = "none"`).
 
 ## Verify
-In the guest session, run `kaze-sync --reload`. Require empty `hyprctl configerrors` output and the expected `wallpaper` and `waybar` geometry in `hyprctl layers`. Inspect a `grim` screenshot after visual changes, including all indicators active together (`--stage2` in the VM harness).
+In the guest session, run `noctalia config validate`, `foot --check-config`, and check that `hyprctl configerrors` is empty and `noctalia-bar-*` is present in `hyprctl layers`. Inspect a `grim` screenshot after visual changes.

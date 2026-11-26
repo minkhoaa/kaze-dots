@@ -27,14 +27,12 @@ package.path = table.concat({
     package.path,
 }, ";")
 
-local config = require("kaze.config")
-local fs = require("kaze.fs")
+local hypr_user = require("kaze.hypr_user")
 local keybinds_data = require("kaze.keybinds_data")
 local popups = require("kaze.popups")
 
 local env_home = os.getenv("HOME")
-local cfg = config.load({
-    strict = false,
+local cfg = hypr_user.load({
     home = (not env_home or env_home == "") and "/" or nil,
 })
 local rows = keybinds_data.format_rows(cfg)
@@ -44,22 +42,8 @@ if arg[1] == "--list" then
     os.exit(0)
 end
 
-if popups.toggle_existing_fuzzel("kaze-keys") then
-    os.exit(0)
-end
-
-if not fs.command_exists("fuzzel") then
-    io.stderr:write("kaze-keys: fuzzel not found in PATH\n")
-    os.exit(1)
-end
-
 local _, dmenu_err = popups.run_dmenu(rows, {
-    width = 86,
-    lines = 14,
-    minimal_lines = true,
-    line_height = 28,
     prompt = "Keys > ",
-    tag = "kaze-keys",
 })
 if dmenu_err then
     io.stderr:write("kaze-keys: " .. tostring(dmenu_err) .. "\n")

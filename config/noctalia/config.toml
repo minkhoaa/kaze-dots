@@ -1,0 +1,233 @@
+# Kaze default Noctalia configuration (Omarchy sharp flat style, offline/zero-telemetry)
+# Editable directly or via Noctalia Settings GUI (Super + I).
+
+[shell]
+offline_mode = true
+telemetry_enabled = false
+external_ip_enabled = false
+screen_time_enabled = false
+setup_wizard_enabled = false
+show_location = false
+clipboard_enabled = true
+clipboard_history_max_entries = 100
+clipboard_keep_from_closed_apps = true
+polkit_agent = false
+corner_radius_scale = 0.0
+button_borders = true
+card_borders = true
+input_borders = true
+popup_borders = true
+popup_shadows = false
+circular_avatar = false
+
+[shell.animation]
+enabled = true
+speed = 1.6
+
+[shell.launcher]
+compact = true
+categories = false
+fetch_exchange_rates = false
+layout = "simple"
+search_position = "top"
+show_session_button = false
+show_settings_button = false
+show_app_origin_indicator = false
+track_usage = false
+width = 560
+
+[shell.panel]
+borders = true
+border_color = "outline_variant"
+border_width = 2.0
+shadow = false
+transparency_mode = "solid"
+floating_offset = 8
+control_center_placement = "attached"
+control_center_position = "auto"
+launcher_placement = "floating"
+launcher_position = "center"
+clipboard_placement = "floating"
+clipboard_position = "center"
+session_placement = "floating"
+session_position = "center"
+wallpaper_placement = "attached"
+wallpaper_position = "auto"
+
+[shell.session]
+grid = true
+grid_columns = 5
+show_shortcuts = true
+
+[shell.window_switcher]
+style = "compact"
+
+[theme]
+mode = "dark"
+source = "builtin"
+builtin = "Tokyo-Night"
+wallpaper_scheme = "m3-content"
+pure_black_dark = false
+sync_color_scheme = true
+
+[theme.templates]
+enable_builtin_templates = true
+builtin_ids = [ "hyprland", "foot", "gtk3", "gtk4", "btop" ]
+enable_community_templates = false
+
+[bar]
+order = [ "default" ]
+
+[bar.default]
+enabled = true
+position = "left"
+thickness = 42
+padding = 6
+widget_spacing = 6
+margin_edge = 8
+margin_ends = 8
+margin_opposite_edge = 0
+background_opacity = 0.94
+compositor_blur = true
+border = "outline_variant"
+border_width = 2.0
+radius = 0
+radius_top_left = 0
+radius_top_right = 0
+radius_bottom_left = 0
+radius_bottom_right = 0
+concave_edge_corners = false
+shadow = false
+contact_shadow = false
+capsule = false
+capsule_border_width = 1.0
+start = [ "launcher", "ws" ]
+center = [ "vclock" ]
+end = [ "tray", "net", "vol", "bat", "notifications", "control-center", "session" ]
+
+[widget.ws]
+type = "workspaces"
+style = "minimal"
+capsule_radius = 0
+show_labels = true
+focused_color = "primary"
+occupied_color = "outline_variant"
+empty_color = "surface_container"
+
+[widget.vclock]
+type = "clock"
+vertical_format = "{:%H\n%M}"
+
+[widget.net]
+type = "network"
+show_label = false
+
+[widget.vol]
+type = "volume"
+hide_label_when_muted = true
+hide_when_inactive = true
+
+[widget.bat]
+type = "battery"
+show_label = false
+
+[idle]
+behavior_order = [ "lock", "screen-off", "lock-and-suspend" ]
+
+[idle.behavior.lock]
+action = "lock"
+enabled = true
+timeout = 300.0
+
+[idle.behavior.screen-off]
+action = "screen_off"
+enabled = true
+timeout = 420.0
+resume_command = "kaze-session wake-displays"
+
+[idle.behavior.lock-and-suspend]
+action = "lock_and_suspend"
+enabled = false
+timeout = 900.0
+
+[lockscreen]
+enabled = true
+lock_before_suspend = true
+
+[nightlight]
+enabled = false
+temperature_day = 6500
+temperature_night = 4500
+
+[dock]
+enabled = false
+
+[desktop_widgets]
+enabled = false
+
+[weather]
+enabled = false
+effects = false
+
+[location]
+auto_locate = false
+
+[calendar]
+enabled = false
+
+[calendar.reminders]
+enabled = false
+
+[system.monitor]
+enabled = false
+
+[plugins]
+auto_update = "none"
+enabled = []
+
+[[plugins.source]]
+enabled = false
+kind = "git"
+location = "https://github.com/noctalia-dev/official-plugins"
+name = "official"
+
+[[plugins.source]]
+enabled = false
+kind = "git"
+location = "https://github.com/noctalia-dev/community-plugins"
+name = "community"
+
+[notification]
+enable_daemon = true
+position = "top_right"
+border = true
+border_color = "outline_variant"
+border_width = 2.0
+offset_x = 12
+offset_y = 12
+width = 340
+background_opacity = 0.94
+
+[osd]
+enabled = true
+position = "top_right"
+border = true
+border_color = "outline_variant"
+border_width = 2.0
+offset_x = 12
+offset_y = 12
+background_opacity = 0.94
+
+[control_center]
+hidden_tabs = [ "weather", "calendar", "monitor", "screen-time" ]
+sidebar = "compact"
+show_avatar_border = true
+show_shortcut_labels = true
+width = 580
+
+[control_center.media]
+show_visualizer = false
+
+[wallpaper]
+enabled = true
+directory = "~/Pictures/Wallpapers"

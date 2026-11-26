@@ -68,12 +68,11 @@ wait_session() {
         if ssh_guest 'bash -s' <<'GUEST'
 set -euo pipefail
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-systemctl --user is-active --quiet kaze-waybar.service &&
-    systemctl --user is-active --quiet kaze-hypridle.service &&
+systemctl --user is-active --quiet kaze-noctalia.service &&
     [ -S "$XDG_RUNTIME_DIR/foot.sock" ] || exit 1
 sig=$(systemctl --user show-environment | awk -F= '$1=="HYPRLAND_INSTANCE_SIGNATURE" {print $2}')
 [[ -n "$sig" ]] && layers=$(hyprctl -i "$sig" layers 2>/dev/null) &&
-    grep -q 'namespace: wallpaper' <<< "$layers" && grep -q 'namespace: waybar' <<< "$layers" || exit 1
+    grep -q 'namespace: noctalia-bar-' <<< "$layers" || exit 1
 errors=$(hyprctl -i "$sig" configerrors)
 if [[ -n "$errors" ]]; then printf '%s\n' "$errors" >&2; exit 2; fi
 monitors=$(hyprctl -i "$sig" monitors)

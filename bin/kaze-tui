@@ -19,7 +19,7 @@ local function setup_path()
     script_dir = (resolved or script):match("^(.*)/[^/]+$")
     if script_dir then
         local repo_lua = script_dir .. "/../lua"
-        local f = io.open(repo_lua .. "/kaze/defaults.lua", "r")
+        local f = io.open(repo_lua .. "/kaze/fs.lua", "r")
         if f then
             f:close()
             paths[#paths + 1] = repo_lua .. "/?.lua"
@@ -35,15 +35,18 @@ end
 setup_path()
 
 local fs = require("kaze.fs")
-local power_profile = require("kaze.power_profile")
 
 local TOOLS = {
+    wifi = {
+        title = "Wi-Fi (nmtui)",
+        candidates = { "impala", "nmtui" },
+    },
     bluetooth = {
-        title = "Bluetooth (bluetui)",
+        title = "Bluetooth",
         candidates = { "bluetui", "bluetoothctl" },
     },
     audio = {
-        title = "Audio (wiremix)",
+        title = "Audio Mixer",
         candidates = { "wiremix", "pulsemixer", "alsamixer" },
     },
     sysmon = {
@@ -100,47 +103,12 @@ local function find_existing_tui(title)
         end
         return nil, false
     end
-
-    local cur_addr, cur_class, cur_title
-    local function check_match()
-        if cur_addr and cur_class == "kaze-tui" and cur_title == title then
-            return cur_addr
-        end
-        return nil
-    end
-
-    for line in clients_out:gmatch("[^\r\n]+") do
-        local addr = line:match("^Window%s+(%x+)%s+->")
-        if addr then
-            local matched = check_match()
-            if matched then
-                return matched, matched == active_addr
-            end
-            cur_addr = addr
-            cur_class = nil
-            cur_title = nil
-        else
-            local cls = line:match("^%s*class:%s*(.+)$")
-            if cls then
-                cur_class = cls
-            end
-            local ttl = line:match("^%s*title:%s*(.+)$")
-            if ttl then
-                cur_title = ttl
-            end
-        end
-    end
-
-    local matched = check_match()
-    if matched then
-        return matched, matched == active_addr
-    end
     return nil, false
 end
 
 local mode = arg[1]
 if mode == "-h" or mode == "--help" then
-    io.stdout:write("Usage: kaze-tui <wifi|bluetooth|audio|sysmon|power-profile>\n")
+    io.stdout:write("Usage: kaze-tui <sysmon|wifi|bluetooth|audio>\n")
     os.exit(0)
 end
 
@@ -149,44 +117,28 @@ if #arg > 1 then
     os.exit(2)
 end
 
-if mode == "power-profile" then
-    local ok, err = power_profile.menu()
-    if not ok then
-        io.stderr:write("kaze-tui: " .. tostring(err) .. "\n")
-        os.exit(1)
-    end
-    os.exit(0)
+local entry = TOOLS[mode]
+if not entry then
+    io.stderr:write(string.format(
+        "kaze-tui: invalid mode '%s' (expected: sysmon, wifi, bluetooth, audio)\n",
+        tostring(mode or "")
+    ))
+    os.exit(1)
 end
 
-local title, tool_bin
-if mode == "wifi" then
-    tool_bin, title = power_profile.wifi_tool()
-    if not tool_bin then
-        io.stderr:write("kaze-tui: none of [nmtui, impala] available in PATH\n")
-        os.exit(1)
-    end
-else
-    local entry = TOOLS[mode]
-    if not entry then
-        io.stderr:write(string.format(
-            "kaze-tui: invalid mode '%s' (expected: wifi, bluetooth, audio, sysmon, power-profile)\n",
-            tostring(mode or "")
-        ))
-        os.exit(1)
-    end
-    title = entry.title
-    for _, cand in ipairs(entry.candidates) do
-        if cmd_exists(cand) then
-            tool_bin = cand
-            break
-        end
-    end
-    if not tool_bin then
-        io.stderr:write(string.format("kaze-tui: none of [%s] found in PATH\n", table.concat(entry.candidates, ", ")))
-        os.exit(1)
+local tool_bin
+for _, cand in ipairs(entry.candidates) do
+    if cmd_exists(cand) then
+        tool_bin = cand
+        break
     end
 end
+if not tool_bin then
+    io.stderr:write(string.format("kaze-tui: none of [%s] found in PATH\n", table.concat(entry.candidates, ", ")))
+    os.exit(1)
+end
 
+local title = entry.title
 local existing_addr, is_active = find_existing_tui(title)
 if existing_addr then
     local win_arg = "'address:0x" .. existing_addr .. "'"
@@ -199,36 +151,8 @@ if existing_addr then
 end
 
 local footclient_bin = sibling_or_path("kaze-footclient")
-local env_prefix = ""
-if tool_bin == "nmtui" then
-    local newt_palette = table.concat({
-        "root=white,black",
-        "border=blue,black",
-        "window=white,black",
-        "shadow=black,black",
-        "title=blue,black",
-        "button=black,blue",
-        "actbutton=black,cyan",
-        "compactbutton=white,black",
-        "checkbox=white,black",
-        "actcheckbox=black,blue",
-        "entry=white,black",
-        "disentry=gray,black",
-        "label=white,black",
-        "listbox=white,black",
-        "actlistbox=black,blue",
-        "sellistbox=white,black",
-        "actsellistbox=black,blue",
-        "textbox=white,black",
-        "acttextbox=black,blue",
-        "emptyscale=gray,black",
-        "fullscale=black,blue",
-    }, ":")
-    env_prefix = "NEWT_COLORS=" .. fs.shell_quote(newt_palette) .. " "
-end
 local cmd = string.format(
-    "%s%s -N -o main.locked-title=yes -a kaze-tui -T %s %s",
-    env_prefix,
+    "%s -N -o main.locked-title=yes -a kaze-tui -T %s %s",
     fs.shell_quote(footclient_bin),
     fs.shell_quote(title),
     fs.shell_quote(tool_bin)
