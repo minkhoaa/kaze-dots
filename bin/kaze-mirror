@@ -1,0 +1,2318 @@
+#!/usr/bin/env lua
+
+local function get_uid_fast()
+    local p = io.popen("/usr/bin/id -u 2>/dev/null || id -u 2>/dev/null", "r")
+    if not p then return -1 end
+    local out = p:read("*l")
+    p:close()
+    return tonumber(out and out:match("%d+")) or -1
+end
+
+local CURRENT_UID = get_uid_fast()
+
+local function setup_path()
+    local paths = {}
+    local script = arg and arg[0] or ""
+    local q = "'" .. script:gsub("'", "'\\''") .. "'"
+    local p = io.popen("(/usr/bin/readlink -f -- " .. q .. " || readlink -f -- " .. q .. ") 2>/dev/null", "r")
+    local resolved = p and p:read("*l") or nil
+    if p then p:close() end
+    local base = (resolved or script):match("^(.*)/[^/]+$")
+    if base then
+        local repo_lua = base .. "/../lua"
+        local f = io.open(repo_lua .. "/kaze/fs.lua", "r")
+        if f then
+            f:close()
+            paths[#paths + 1] = repo_lua .. "/?.lua"
+            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+        end
+    end
+    -- When running as root (uid == 0), NEVER load Lua modules from untrusted XDG_DATA_HOME or LUA_PATH.
+    if CURRENT_UID ~= 0 then
+        local home = os.getenv("HOME") or ""
+        local xdg_data = os.getenv("XDG_DATA_HOME")
+        if not xdg_data or xdg_data == "" then
+            xdg_data = home .. "/.local/share"
+        end
+        paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+        paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
+        paths[#paths + 1] = package.path
+    end
+    package.path = table.concat(paths, ";")
+    return resolved or script, base
+end
+
+local SELF_PATH, SELF_DIR = setup_path()
+
+local fs = require("kaze.fs")
+local json = require("kaze.json")
+local mirror = require("kaze.mirror")
+local mirror_tui = require("kaze.mirror_tui")
+local popups = require("kaze.popups")
+local q = fs.shell_quote
+
+local function usage(out)
+    out:write([[Usage: kaze-mirror [OPTIONS]
+
+Benchmarks active Arch / CachyOS HTTPS mirrors (parsed from /etc/pacman.conf)
+using 3-stage sustained bandwidth saturation:
+  Phase 1A: 128 KiB single-process parallel curl screen (high-RTT safe)
+  Phase 1B: 8 MiB warm-up on a dynamically selected real large .pkg.tar.zst
+  Phase 2A: Sustained single-stream pipe + Q1..Q4 slow-start/burst-shaping check
+  Phase 2B: 4-stream parallel aggregate saturation (ParallelDownloads scaling)
+  Stage 3:  (--bench) real-package fakeroot pacman -Sw A/B + Pre/Post comparison
+
+Options:
+  --dry-run                Scan & rank without modifying system files (CLI default; also skips TUI auto-apply)
+  --apply                  Authenticate sudo upfront, scan, and commit updates atomically
+  --fast                   Shorter shortlist, 4 MiB warm-up, 2 sustained rounds
+  --bench                  Include real-package ParallelDownloads A/B benchmark
+  --rollback               Atomically restore the last committed transaction
+  --menu                   Open quick action menu via noctalia dmenu
+  --tui                    Launch interactive TUI (upfront sudo + auto-apply; add --dry-run to preview)
+  --tui-window             Open/focus/toggle floating kaze-mirror-tui Foot window
+  --auto-run MODE          Auto-start TUI action (fast-dry|deep-dry|bench|rollback)
+  --json                   Emit structured JSON report to stdout (logs to stderr)
+  --force                  Bypass 10% improvement hysteresis (or external-edit guard)
+  --pacman-conf PATH       Override /etc/pacman.conf path (testing)
+  -h, --help               Show this help message
+]])
+end
+
+local opts = {
+    apply = false,
+    dry_run_explicit = false,
+    fast = false,
+    bench = false,
+    rollback = false,
+    menu = false,
+    tui = false,
+    tui_window = false,
+    auto_run = nil,
+    json_out = false,
+    force = false,
+    pacman_conf = "/etc/pacman.conf",
+    commit_plan = nil,
+    commit_rollback = false,
+    test_root = nil,
+}
+
+local VALID_AUTO_RUN = {
+    ["fast-dry"] = true,
+    ["deep-dry"] = true,
+    bench = true,
+    rollback = true,
+}
+
+do
+    local i = 1
+    while i <= #arg do
+        local a = arg[i]
+        if a == "--dry-run" then
+            opts.apply = false
+            opts.dry_run_explicit = true
+        elseif a == "--apply" then
+            opts.apply = true
+        elseif a == "--fast" then
+            opts.fast = true
+        elseif a == "--bench" then
+            opts.bench = true
+        elseif a == "--rollback" then
+            opts.rollback = true
+        elseif a == "--menu" then
+            opts.menu = true
+        elseif a == "--tui" then
+            opts.tui = true
+        elseif a == "--tui-window" then
+            opts.tui_window = true
+        elseif a == "--auto-run" then
+            i = i + 1
+            opts.auto_run = arg[i]
+            if not opts.auto_run or not VALID_AUTO_RUN[opts.auto_run] then
+                io.stderr:write("kaze-mirror: --auto-run requires one of fast-dry, deep-dry, bench, rollback\n")
+                os.exit(2)
+            end
+        elseif a:sub(1, 11) == "--auto-run=" then
+            opts.auto_run = a:sub(12)
+            if not VALID_AUTO_RUN[opts.auto_run] then
+                io.stderr:write("kaze-mirror: invalid --auto-run mode '" .. tostring(opts.auto_run) .. "'\n")
+                os.exit(2)
+            end
+        elseif a == "--json" then
+            opts.json_out = true
+        elseif a == "--force" then
+            opts.force = true
+        elseif a == "--pacman-conf" then
+            i = i + 1
+            opts.pacman_conf = arg[i]
+            if not opts.pacman_conf or opts.pacman_conf == "" then
+                io.stderr:write("kaze-mirror: --pacman-conf requires a path\n")
+                os.exit(2)
+            end
+        elseif a:sub(1, 14) == "--pacman-conf=" then
+            opts.pacman_conf = a:sub(15)
+        elseif a == "--commit-plan" then
+            i = i + 1
+            opts.commit_plan = arg[i]
+            if not opts.commit_plan or opts.commit_plan == "" then
+                io.stderr:write("kaze-mirror: --commit-plan requires a path\n")
+                os.exit(2)
+            end
+        elseif a:sub(1, 14) == "--commit-plan=" then
+            opts.commit_plan = a:sub(15)
+        elseif a == "--commit-rollback" then
+            opts.commit_rollback = true
+        elseif a == "--test-root" then
+            i = i + 1
+            opts.test_root = arg[i]
+            if not opts.test_root or opts.test_root == "" then
+                io.stderr:write("kaze-mirror: --test-root requires a directory\n")
+                os.exit(2)
+            end
+        elseif a:sub(1, 12) == "--test-root=" then
+            opts.test_root = a:sub(13)
+        elseif a == "-h" or a == "--help" then
+            usage(io.stdout)
+            os.exit(0)
+        else
+            io.stderr:write("kaze-mirror: unknown option '" .. tostring(a) .. "'\n")
+            usage(io.stderr)
+            os.exit(2)
+        end
+        i = i + 1
+    end
+end
+
+if (opts.menu and (opts.apply or opts.tui or opts.tui_window or opts.rollback))
+    or (opts.tui and (opts.apply or opts.tui_window or opts.rollback))
+    or (opts.tui_window and (opts.apply or opts.rollback))
+then
+    io.stderr:write("kaze-mirror: mutually exclusive mode flags\n")
+    os.exit(2)
+end
+
+local log_stream = opts.json_out and io.stderr or io.stdout
+local function log(fmt, ...)
+    if opts.tui then return end
+    log_stream:write(string.format(fmt, ...) .. "\n")
+    log_stream:flush()
+end
+
+local function capture_any(cmd)
+    local p = io.popen(cmd, "r")
+    if not p then return "", false end
+    local out = p:read("*a") or ""
+    local ok = p:close()
+    return out, (ok == true or ok == 0)
+end
+
+local function monotonic_now()
+    local f = io.open("/proc/uptime", "r")
+    if f then
+        local line = f:read("*l")
+        f:close()
+        local up = line and tonumber(line:match("^(%d+%.?%d*)"))
+        if up then return up end
+    end
+    return os.time()
+end
+
+local function sha256_file(path)
+    local out = fs.capture("LC_ALL=C sha256sum -- " .. q(path) .. " 2>/dev/null")
+    return out and out:match("^(%x+)") or nil
+end
+
+local function sha256_string(text)
+    local tmp = fs.capture("mktemp /tmp/kaze-sha.XXXXXX 2>/dev/null")
+    tmp = tmp and tmp:gsub("[\r\n]+$", "") or nil
+    if not tmp or tmp == "" then return nil end
+    local f = io.open(tmp, "wb")
+    if not f then os.remove(tmp); return nil end
+    f:write(text)
+    f:close()
+    local h = sha256_file(tmp)
+    os.remove(tmp)
+    return h
+end
+
+local function sibling_or_path(bin)
+    if SELF_DIR and fs.file_exists(SELF_DIR .. "/" .. bin) then
+        return SELF_DIR .. "/" .. bin
+    end
+    return bin
+end
+
+local function is_pid_alive_mirror(pid_str)
+    local pid = tonumber(pid_str)
+    if not pid or pid <= 1 then return false end
+    local comm = fs.read_file("/proc/" .. tostring(pid) .. "/comm")
+    if not comm then return false end
+    local c = comm:gsub("[\r\n]+$", "")
+    return c == "lua" or c == "kaze-mirror" or c == "sh" or c == "bash"
+end
+
+local function active_pid_path()
+    local rdir = fs.private_runtime_dir()
+    if not rdir then return nil end
+    return rdir .. "/mirror-active.pid"
+end
+
+local function toml_quote(s)
+    return '"' .. tostring(s):gsub("\\", "\\\\"):gsub('"', '\\"') .. '"'
+end
+
+-- Event-driven zero-polling Noctalia bar indicator (exact kaze-record config-get guard pattern).
+local function sync_bar_indicator(active, phase_label)
+    if not fs.command_exists("noctalia") then return end
+    local wtype = fs.capture("noctalia msg config-get widget.mirror.type 2>/dev/null")
+    if not wtype then return end
+    wtype = wtype:gsub("^%s+", ""):gsub("%s+$", ""):gsub("^['\"]", ""):gsub("['\"]$", "")
+    if wtype ~= "custom_button" then return end
+
+    local glyph, color, tooltip
+    if active then
+        glyph = "refresh"
+        color = "primary"
+        tooltip = "Mirror Optimizer — " .. (phase_label or "Scanning…") .. " (Click to focus)"
+    else
+        glyph = "server"
+        color = "on_surface_variant"
+        tooltip = "Mirror Optimizer (Left: Menu, Right: TUI)"
+    end
+    os.execute("noctalia msg config-set widget.mirror.glyph " .. q(toml_quote(glyph)) .. " >/dev/null 2>&1 || true")
+    os.execute("noctalia msg config-set widget.mirror.icon_color " .. q(toml_quote(color)) .. " >/dev/null 2>&1 || true")
+    os.execute("noctalia msg config-set widget.mirror.tooltip " .. q(toml_quote(tooltip)) .. " >/dev/null 2>&1 || true")
+end
+
+local function check_active_pid_and_clean_stale()
+    local pfile = active_pid_path()
+    if not pfile or not fs.file_exists(pfile) then return false end
+    local raw = fs.read_file(pfile)
+    if raw and is_pid_alive_mirror(raw:match("%d+")) then
+        return true
+    end
+    os.remove(pfile)
+    sync_bar_indicator(false)
+    return false
+end
+
+local function manifest_path(test_root)
+    if test_root then
+        return test_root:gsub("/+$", "") .. "/var/lib/kaze-mirror/last-commit.json"
+    end
+    return "/var/lib/kaze-mirror/last-commit.json"
+end
+
+local function writer_lock_path(test_root)
+    if test_root then
+        return test_root:gsub("/+$", "") .. "/run/kaze-mirror.lock"
+    end
+    return "/run/kaze-mirror.lock"
+end
+
+local function resolve_db_path(pacman_conf, test_root)
+    if not test_root and fs.command_exists("pacman-conf") then
+        local out = fs.capture("LC_ALL=C pacman-conf -c " .. q(pacman_conf) .. " DBPath 2>/dev/null")
+        local p = out and out:match("^%s*(/[^\r\n]+)")
+        if p then return p:gsub("/+$", "") end
+    end
+    local raw = fs.read_file(pacman_conf)
+    if raw then
+        local parsed = mirror.parse_pacman_conf(raw)
+        if parsed.db_path then
+            local dp = parsed.db_path:gsub("/+$", "")
+            if test_root then
+                return test_root:gsub("/+$", "") .. dp
+            end
+            return dp
+        end
+    end
+    if test_root then
+        return test_root:gsub("/+$", "") .. "/var/lib/pacman"
+    end
+    return "/var/lib/pacman"
+end
+
+local function db_lock_exists(pacman_conf, test_root)
+    local lck = resolve_db_path(pacman_conf, test_root) .. "/db.lck"
+    local ok = os.execute("test -e " .. q(lck) .. " || test -L " .. q(lck))
+    return ok == true or ok == 0
+end
+
+local function active_mirror_services()
+    if not fs.command_exists("systemctl") then return {} end
+    local running = {}
+    for _, unit in ipairs({ "reflector.service", "cachyos-rate-mirrors.service" }) do
+        local st = fs.capture("LC_ALL=C systemctl show -p ActiveState --value " .. q(unit) .. " 2>/dev/null")
+        local state = st and st:match("^%s*(%S+)") or ""
+        if state == "active" or state == "activating" or state == "reloading" then
+            running[#running + 1] = unit
+        end
+    end
+    return running
+end
+
+local function check_active_mirror_timers()
+    if not fs.command_exists("systemctl") then return {} end
+    local active = {}
+    for _, unit in ipairs({ "reflector.timer", "cachyos-rate-mirrors.timer" }) do
+        local en = fs.capture("LC_ALL=C systemctl is-enabled " .. q(unit) .. " 2>/dev/null")
+        local en_s = en and en:match("^%s*(%S+)") or ""
+        local ac = fs.capture("LC_ALL=C systemctl is-active " .. q(unit) .. " 2>/dev/null")
+        local ac_s = ac and ac:match("^%s*(%S+)") or ""
+        if en_s == "enabled" or en_s == "enabled-runtime" or en_s == "static" or en_s == "indirect" or ac_s == "active" then
+            active[#active + 1] = unit
+        end
+    end
+    return active
+end
+
+-- ============================================================================
+-- PRIVILEGED ZERO-NETWORK ATOMIC COMMIT & ROLLBACK (root only, or --test-root)
+-- ============================================================================
+local function verify_safe_target(target, test_root)
+    if test_root then
+        local canon_root = fs.capture("realpath -e -- " .. q(test_root) .. " 2>/dev/null")
+        canon_root = canon_root and canon_root:gsub("[\r\n]+$", "") or nil
+        if not canon_root then return false, "invalid test_root" end
+        if target:sub(1, #canon_root) ~= canon_root then
+            -- Also accept non-canonical prefix if realpath matches
+            local tr_norm = test_root:gsub("/+$", "")
+            if target:sub(1, #tr_norm) ~= tr_norm then
+                return false, "target outside test_root"
+            end
+            local rel = target:sub(#tr_norm + 1)
+            if not mirror.is_allowed_commit_path(rel) then
+                return false, "path not allowlisted: " .. rel
+            end
+            target = canon_root .. rel
+        else
+            local rel = target:sub(#canon_root + 1)
+            if not mirror.is_allowed_commit_path(rel) then
+                return false, "path not allowlisted: " .. rel
+            end
+        end
+    else
+        if not mirror.is_allowed_commit_path(target) then
+            return false, "path not allowlisted: " .. target
+        end
+    end
+
+    local dir = fs.dirname(target)
+    local ok_dir = os.execute("test -d " .. q(dir) .. " && test ! -L " .. q(dir))
+    if not (ok_dir == true or ok_dir == 0) then
+        return false, "parent directory missing or symlink: " .. dir
+    end
+    local ok_nl = os.execute("test ! -L " .. q(target))
+    if not (ok_nl == true or ok_nl == 0) then
+        return false, "target is a symlink (refused): " .. target
+    end
+    local exists = os.execute("test -e " .. q(target))
+    if exists == true or exists == 0 then
+        local ok_reg = os.execute("test -f " .. q(target))
+        if not (ok_reg == true or ok_reg == 0) then
+            return false, "target is not a regular file: " .. target
+        end
+        local sz_s = fs.capture("LC_ALL=C stat -c '%s' -- " .. q(target) .. " 2>/dev/null")
+        local sz = tonumber(sz_s and sz_s:match("%d+"))
+        if not sz or sz > 524288 then
+            return false, "target file exceeds 512 KiB safety bound"
+        end
+    end
+    local rp_dir = fs.capture("realpath -e -- " .. q(dir) .. " 2>/dev/null")
+    rp_dir = rp_dir and rp_dir:gsub("[\r\n]+$", "") or ""
+    if test_root then
+        local canon_root = fs.capture("realpath -e -- " .. q(test_root) .. " 2>/dev/null"):gsub("[\r\n]+$", "")
+        if rp_dir ~= canon_root .. "/etc" and rp_dir ~= canon_root .. "/etc/pacman.d" then
+            return false, "canonical parent directory mismatch: " .. rp_dir
+        end
+    else
+        if rp_dir ~= "/etc" and rp_dir ~= "/etc/pacman.d" then
+            return false, "canonical parent directory mismatch: " .. rp_dir
+        end
+    end
+    return true, target
+end
+
+local function atomic_write_same_fs(target, content, mode_octal)
+    mode_octal = mode_octal or "0644"
+    local dir = fs.dirname(target)
+    local base = target:match("([^/]+)$")
+    local tmp = fs.capture(string.format("mktemp -p %s %s 2>/dev/null", q(dir), q("." .. base .. ".kaze.tmp.XXXXXX")))
+    tmp = tmp and tmp:gsub("[\r\n]+$", "") or nil
+    if not tmp or tmp == "" then
+        return false, "mktemp failed in " .. dir
+    end
+    local f, ferr = io.open(tmp, "wb")
+    if not f then
+        os.remove(tmp)
+        return false, "open failed: " .. tostring(ferr)
+    end
+    local wok, werr = f:write(content)
+    if wok then wok, werr = f:flush() end
+    local cok, cerr = f:close()
+    if not wok or not cok then
+        os.remove(tmp)
+        return false, "write failed: " .. tostring(werr or cerr)
+    end
+    os.execute("sync -- " .. q(tmp) .. " 2>/dev/null || true")
+    local chok = os.execute("chmod " .. mode_octal .. " -- " .. q(tmp))
+    if not (chok == true or chok == 0) then
+        os.remove(tmp)
+        return false, "chmod " .. mode_octal .. " failed on " .. tmp
+    end
+    local rok, rerr = os.rename(tmp, target)
+    if not rok then
+        os.remove(tmp)
+        return false, "atomic rename failed: " .. tostring(rerr)
+    end
+    os.execute("sync -- " .. q(dir) .. " 2>/dev/null || true")
+    return true
+end
+
+local function verify_pacman_conf_syntax(conf_path)
+    if not fs.command_exists("pacman-conf") then
+        return true
+    end
+    local out, ok = capture_any("LC_ALL=C pacman-conf -c " .. q(conf_path) .. " --repo-list 2>&1")
+    if not ok or out:find("error:", 1, true) or not out:find("%S") then
+        return false, "pacman-conf validation failed: " .. out:gsub("[\r\n]+", " ")
+    end
+    return true
+end
+
+local function acquire_writer_lock_or_reexec()
+    if os.getenv("KAZE_MIRROR_WRITER_LOCKED") == "1" then
+        return
+    end
+    if not fs.command_exists("flock") then return end
+    local lpath = writer_lock_path(opts.test_root)
+    fs.mkdir_p(fs.dirname(lpath))
+    local cmd_parts = {
+        "umask 077; exec flock -n --close -E 75",
+        q(lpath),
+        "env KAZE_MIRROR_WRITER_LOCKED=1",
+        q(SELF_PATH),
+    }
+    for i = 1, #arg do
+        cmd_parts[#cmd_parts + 1] = q(arg[i])
+    end
+    local ok, why, code = os.execute(table.concat(cmd_parts, " "))
+    local st = fs.exit_status(ok, why, code)
+    if st == 75 then
+        io.stderr:write("kaze-mirror: another privileged commit is already in progress\n")
+    end
+    os.exit(st)
+end
+
+local function prune_old_backups(target)
+    local dir = fs.dirname(target)
+    local base = target:match("([^/]+)$")
+    local ls_out = fs.capture("LC_ALL=C ls -1 -- " .. q(dir) .. " 2>/dev/null") or ""
+    local names = {}
+    for line in ls_out:gmatch("[^\r\n]+") do
+        names[#names + 1] = line
+    end
+    local prunable = mirror.select_prunable_backups(base, names, mirror.MAX_BACKUPS)
+    for _, name in ipairs(prunable) do
+        local full = dir .. "/" .. name
+        local safe_del = os.execute("test -f " .. q(full) .. " && test ! -L " .. q(full))
+        if safe_del == true or safe_del == 0 then
+            os.remove(full)
+        end
+    end
+end
+
+local function run_commit_plan_root(plan_path, test_root)
+    if CURRENT_UID == 0 and test_root then
+        io.stderr:write("kaze-mirror: --test-root is forbidden when running as root\n")
+        os.exit(2)
+    end
+    if CURRENT_UID ~= 0 and not test_root then
+        io.stderr:write("kaze-mirror: --commit-plan must be run as root\n")
+        os.exit(1)
+    end
+    acquire_writer_lock_or_reexec()
+
+    local pconf_path = test_root and (test_root:gsub("/+$", "") .. "/etc/pacman.conf") or "/etc/pacman.conf"
+    if db_lock_exists(pconf_path, test_root) then
+        io.stderr:write("kaze-mirror: refused commit while pacman db.lck is active\n")
+        os.exit(1)
+    end
+    if not test_root then
+        local svcs = active_mirror_services()
+        if #svcs > 0 then
+            io.stderr:write("kaze-mirror: refused commit while system mirror service is running: " .. table.concat(svcs, ", ") .. "\n")
+            os.exit(1)
+        end
+    end
+
+    -- Validate plan file itself before opening (! -L, -f, <= 2 MiB)
+    local ok_pf = os.execute("test -f " .. q(plan_path) .. " && test ! -L " .. q(plan_path))
+    if not (ok_pf == true or ok_pf == 0) then
+        io.stderr:write("kaze-mirror: plan file missing or symlink: " .. tostring(plan_path) .. "\n")
+        os.exit(1)
+    end
+    local psz_s = fs.capture("LC_ALL=C stat -c '%s' -- " .. q(plan_path) .. " 2>/dev/null")
+    local psz = tonumber(psz_s and psz_s:match("%d+"))
+    if not psz or psz > 2097152 then
+        io.stderr:write("kaze-mirror: plan file exceeds 2 MiB safety bound\n")
+        os.exit(1)
+    end
+    if CURRENT_UID == 0 then
+        local owner_s = fs.capture("LC_ALL=C stat -c '%u' -- " .. q(plan_path) .. " 2>/dev/null")
+        local owner = tonumber(owner_s and owner_s:match("%d+"))
+        local sudo_uid = tonumber(os.getenv("SUDO_UID") or "")
+        if owner ~= 0 and (not sudo_uid or owner ~= sudo_uid) then
+            io.stderr:write("kaze-mirror: refused plan file not owned by invoking user or root\n")
+            os.exit(1)
+        end
+    end
+
+    local raw = fs.read_file(plan_path)
+    local ok_j, plan = pcall(json.decode, raw or "")
+    if not ok_j or type(plan) ~= "table" or type(plan.files) ~= "table" or #plan.files == 0 then
+        io.stderr:write("kaze-mirror: invalid commit plan JSON\n")
+        os.exit(1)
+    end
+
+    -- Pre-validate every entry and stage exact content root-side before mutating any file
+    local staged = {}
+    for _, entry in ipairs(plan.files) do
+        if type(entry) ~= "table" or type(entry.path) ~= "string" then
+            io.stderr:write("kaze-mirror: malformed entry in commit plan\n")
+            os.exit(1)
+        end
+        local ok_t, safe_path = verify_safe_target(entry.path, test_root)
+        if not ok_t then
+            io.stderr:write("kaze-mirror: refused target path: " .. tostring(safe_path) .. "\n")
+            os.exit(1)
+        end
+        local old_bytes = fs.read_file(safe_path)
+        local old_sha = old_bytes and sha256_file(safe_path) or nil
+        if entry.before_sha256 and old_sha and entry.before_sha256 ~= old_sha then
+            io.stderr:write("kaze-mirror: target modified externally since scan (TOCTOU guard): " .. safe_path .. "\n")
+            os.exit(1)
+        end
+
+        local new_content
+        if entry.kind == "mirrorlist" then
+            if type(entry.content) ~= "string" then
+                io.stderr:write("kaze-mirror: missing mirrorlist content for " .. safe_path .. "\n")
+                os.exit(1)
+            end
+            local valid, verr = mirror.validate_mirrorlist_text(entry.content)
+            if not valid then
+                io.stderr:write("kaze-mirror: refused invalid mirrorlist for " .. safe_path .. ": " .. tostring(verr) .. "\n")
+                os.exit(1)
+            end
+            new_content = entry.content
+        elseif entry.kind == "pacman_conf" then
+            -- Least-privilege: NEVER accept raw pacman.conf text from unprivileged JSON.
+            local pd = tonumber(entry.parallel_downloads)
+            if not pd or not old_bytes then
+                io.stderr:write("kaze-mirror: pacman_conf commit requires numeric parallel_downloads and existing file\n")
+                os.exit(1)
+            end
+            local updated, uerr = mirror.update_pacman_conf_parallel_downloads(old_bytes, pd)
+            if not updated then
+                io.stderr:write("kaze-mirror: failed to update ParallelDownloads: " .. tostring(uerr) .. "\n")
+                os.exit(1)
+            end
+            new_content = updated
+        else
+            io.stderr:write("kaze-mirror: unknown file kind: " .. tostring(entry.kind) .. "\n")
+            os.exit(1)
+        end
+
+        staged[#staged + 1] = {
+            path = safe_path,
+            kind = entry.kind,
+            old_bytes = old_bytes,
+            old_sha = old_sha,
+            new_content = new_content,
+            new_sha = sha256_string(new_content),
+        }
+    end
+
+    local stamp = os.date("%Y%m%d_%H%M%S")
+    local written = {}
+    local created_baks = {}
+
+    local function revert_all(reason)
+        io.stderr:write("kaze-mirror: commit error (" .. tostring(reason) .. "); reverting transaction...\n")
+        for idx = #written, 1, -1 do
+            local st = written[idx]
+            if st.old_bytes then
+                atomic_write_same_fs(st.path, st.old_bytes, "0644")
+            else
+                os.remove(st.path)
+            end
+        end
+        for _, bp in ipairs(created_baks) do
+            os.remove(bp)
+        end
+        os.exit(1)
+    end
+
+    -- Write backups and atomically rename targets
+    for _, st in ipairs(staged) do
+        if st.old_bytes then
+            local bak = st.path .. ".kaze-bak-" .. stamp
+            local seq = 2
+            while fs.file_exists(bak) do
+                bak = st.path .. ".kaze-bak-" .. stamp .. "." .. tostring(seq)
+                seq = seq + 1
+            end
+            local bok, berr = atomic_write_same_fs(bak, st.old_bytes, "0644")
+            if not bok then revert_all("backup failed: " .. tostring(berr)) end
+            st.backup_path = bak
+            created_baks[#created_baks + 1] = bak
+        end
+        local wok, werr = atomic_write_same_fs(st.path, st.new_content, "0644")
+        if not wok then revert_all("write failed for " .. st.path .. ": " .. tostring(werr)) end
+        written[#written + 1] = st
+    end
+
+    -- Post-commit syntax verification via pacman-conf (auto-revert on any error)
+    if fs.file_exists(pconf_path) then
+        local pok, perr = verify_pacman_conf_syntax(pconf_path)
+        if not pok then
+            revert_all(perr)
+        end
+    end
+
+    -- Prune old .kaze-bak-* (keep last 5 per file) and write transactional rollback manifest
+    local tx_files = {}
+    for _, st in ipairs(written) do
+        prune_old_backups(st.path)
+        tx_files[#tx_files + 1] = {
+            path = st.path,
+            kind = st.kind,
+            backup_path = st.backup_path,
+            sha256_before = st.old_sha,
+            sha256_after = st.new_sha,
+        }
+        io.stdout:write("Committed: " .. st.path .. "\n")
+    end
+
+    local mpath = manifest_path(test_root)
+    local mdir = fs.dirname(mpath)
+    fs.mkdir_p(mdir)
+    os.execute("chmod 0755 -- " .. q(mdir) .. " 2>/dev/null || true")
+    local manifest_obj = {
+        tx_id = stamp,
+        timestamp = os.date("!%Y-%m-%d %H:%M:%S UTC"),
+        state = "active",
+        files = tx_files,
+    }
+    atomic_write_same_fs(mpath, json.encode(manifest_obj) .. "\n", "0644")
+    os.exit(0)
+end
+
+local function run_commit_rollback_root(test_root, force)
+    if CURRENT_UID == 0 and test_root then
+        io.stderr:write("kaze-mirror: --test-root is forbidden when running as root\n")
+        os.exit(2)
+    end
+    if CURRENT_UID ~= 0 and not test_root then
+        io.stderr:write("kaze-mirror: --commit-rollback must be run as root\n")
+        os.exit(1)
+    end
+    acquire_writer_lock_or_reexec()
+
+    local pconf_path = test_root and (test_root:gsub("/+$", "") .. "/etc/pacman.conf") or "/etc/pacman.conf"
+    if db_lock_exists(pconf_path, test_root) then
+        io.stderr:write("kaze-mirror: refused rollback while pacman db.lck is active\n")
+        os.exit(1)
+    end
+
+    local mpath = manifest_path(test_root)
+    local mraw = fs.read_file(mpath)
+    if not mraw then
+        io.stderr:write("kaze-mirror: no transaction manifest found at " .. mpath .. "\n")
+        os.exit(1)
+    end
+    local ok_m, manifest = pcall(json.decode, mraw)
+    if not ok_m or type(manifest) ~= "table" or type(manifest.files) ~= "table" or #manifest.files == 0 then
+        io.stderr:write("kaze-mirror: corrupted transaction manifest\n")
+        os.exit(1)
+    end
+    if manifest.state == "rolled_back" then
+        io.stderr:write("kaze-mirror: latest transaction (" .. tostring(manifest.tx_id) .. ") was already rolled back; refusing double-rollback\n")
+        os.exit(1)
+    end
+
+    local restores = {}
+    for _, entry in ipairs(manifest.files) do
+        local ok_t, safe_path = verify_safe_target(entry.path, test_root)
+        if not ok_t then
+            io.stderr:write("kaze-mirror: refused rollback target: " .. tostring(safe_path) .. "\n")
+            os.exit(1)
+        end
+        local bp = entry.backup_path
+        if not bp or not fs.file_exists(bp) then
+            io.stderr:write("kaze-mirror: backup file missing: " .. tostring(bp) .. "\n")
+            os.exit(1)
+        end
+        local ok_bp = os.execute("test -f " .. q(bp) .. " && test ! -L " .. q(bp))
+        if not (ok_bp == true or ok_bp == 0) then
+            io.stderr:write("kaze-mirror: refused symlink/non-regular backup: " .. bp .. "\n")
+            os.exit(1)
+        end
+        if CURRENT_UID == 0 then
+            local owner_s = fs.capture("LC_ALL=C stat -c '%u' -- " .. q(bp) .. " 2>/dev/null")
+            if tonumber(owner_s and owner_s:match("%d+")) ~= 0 then
+                io.stderr:write("kaze-mirror: refused backup not owned by root: " .. bp .. "\n")
+                os.exit(1)
+            end
+        end
+        local bak_sha = sha256_file(bp)
+        if entry.sha256_before and bak_sha ~= entry.sha256_before then
+            io.stderr:write("kaze-mirror: backup checksum mismatch for " .. bp .. "\n")
+            os.exit(1)
+        end
+        local live_sha = sha256_file(safe_path)
+        if not force and entry.sha256_after and live_sha and live_sha ~= entry.sha256_after then
+            io.stderr:write("kaze-mirror: " .. safe_path .. " was modified externally after commit (pass --force to overwrite)\n")
+            os.exit(1)
+        end
+        local bak_bytes = fs.read_file(bp)
+        if not bak_bytes then
+            io.stderr:write("kaze-mirror: failed to read backup: " .. bp .. "\n")
+            os.exit(1)
+        end
+        restores[#restores + 1] = {
+            path = safe_path,
+            old_live = fs.read_file(safe_path),
+            bak_bytes = bak_bytes,
+            backup_path = bp,
+        }
+    end
+
+    local done = {}
+    for _, r in ipairs(restores) do
+        local wok, werr = atomic_write_same_fs(r.path, r.bak_bytes, "0644")
+        if not wok then
+            for i = #done, 1, -1 do
+                if done[i].old_live then atomic_write_same_fs(done[i].path, done[i].old_live, "0644") end
+            end
+            io.stderr:write("kaze-mirror: rollback write failed: " .. tostring(werr) .. "\n")
+            os.exit(1)
+        end
+        done[#done + 1] = r
+        io.stdout:write("Restored: " .. r.path .. " <- " .. r.backup_path .. "\n")
+    end
+
+    manifest.state = "rolled_back"
+    manifest.rolled_back_at = os.date("!%Y-%m-%d %H:%M:%S UTC")
+    atomic_write_same_fs(mpath, json.encode(manifest) .. "\n", "0644")
+    os.exit(0)
+end
+
+if opts.commit_plan then
+    run_commit_plan_root(opts.commit_plan, opts.test_root)
+end
+if opts.commit_rollback then
+    run_commit_rollback_root(opts.test_root, opts.force)
+end
+
+if CURRENT_UID == 0 and not opts.test_root then
+    io.stderr:write("kaze-mirror: run as your regular user (network probing stays unprivileged; sudo is invoked only for atomic commit).\n")
+    os.exit(1)
+end
+
+-- ============================================================================
+-- MENU & FLOATING TUI WINDOW TOGGLE (--menu, --tui-window)
+-- ============================================================================
+local function read_rollback_manifest()
+    local mraw = fs.read_file(manifest_path(opts.test_root))
+    if not mraw then return nil end
+    local ok, m = pcall(json.decode, mraw)
+    if ok and type(m) == "table" and m.state == "active" and type(m.files) == "table" and #m.files > 0 then
+        return m
+    end
+    return nil
+end
+
+local function count_available_backups(parsed_conf)
+    local total = 0
+    for _, grp in ipairs(parsed_conf.groups or {}) do
+        local dir = fs.dirname(grp.path)
+        local ls_out = fs.capture("LC_ALL=C ls -1 -- " .. q(dir) .. " 2>/dev/null") or ""
+        local names = {}
+        for line in ls_out:gmatch("[^\r\n]+") do names[#names + 1] = line end
+        local _, matched = mirror.select_prunable_backups(grp.basename, names, mirror.MAX_BACKUPS)
+        total = total + #matched
+    end
+    return total
+end
+
+local function find_existing_mirror_window()
+    local sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
+    if not sig or sig == "" then return nil, false end
+    local act_out = fs.capture("hyprctl -j activewindow 2>/dev/null") or ""
+    local ok_a, act = pcall(json.decode, act_out)
+    local active_addr = (ok_a and type(act) == "table" and type(act.address) == "string")
+        and act.address:gsub("^0x", "") or nil
+    local cli_out = fs.capture("hyprctl -j clients 2>/dev/null") or ""
+    local ok_c, clients = pcall(json.decode, cli_out)
+    if ok_c and type(clients) == "table" then
+        for _, c in ipairs(clients) do
+            if type(c) == "table" and c.class == "kaze-mirror-tui" and type(c.address) == "string" then
+                local addr = c.address:gsub("^0x", "")
+                return addr, addr == active_addr
+            end
+        end
+    end
+    return nil, false
+end
+
+if opts.menu then
+    local running = check_active_pid_and_clean_stale()
+    local base_txt = fs.read_file(opts.pacman_conf) or ""
+    local parsed = mirror.parse_pacman_conf(base_txt, { read_file = fs.read_file })
+    local entries = mirror.menu_entries({
+        active_running = running,
+        backup_count = count_available_backups(parsed),
+    })
+    local labels = {}
+    local by_label = {}
+    for _, e in ipairs(entries) do
+        labels[#labels + 1] = e.label
+        by_label[e.label] = e.id
+    end
+    local picked = popups.run_dmenu(labels, { prompt = "Mirror > " })
+    if not picked or picked == "" then os.exit(0) end
+    local id = by_label[picked]
+    if not id then os.exit(0) end
+    local self_q = q(SELF_PATH)
+    if id == "focus" or id == "tui" then
+        popups.exec_detached(self_q .. " --tui-window")
+    else
+        popups.exec_detached(self_q .. " --tui-window --auto-run " .. q(id))
+    end
+    os.exit(0)
+end
+
+if opts.tui_window then
+    local running = check_active_pid_and_clean_stale()
+    local addr, is_active = find_existing_mirror_window()
+    if addr then
+        local win_arg = "'address:0x" .. addr .. "'"
+        if is_active and not opts.auto_run and not running then
+            os.execute("hyprctl dispatch " .. q("hl.dsp.window.close({ window = " .. win_arg .. " })") .. " >/dev/null 2>&1")
+        else
+            os.execute("hyprctl dispatch " .. q("hl.dsp.focus({ window = " .. win_arg .. " })") .. " >/dev/null 2>&1")
+        end
+        os.exit(0)
+    end
+    local foot_bin = sibling_or_path("kaze-footclient")
+    local cmd_parts = {
+        q(foot_bin), "-N", "-o", "main.locked-title=yes",
+        "-a", "kaze-mirror-tui", "-T", q("Mirror Optimizer"),
+        q(SELF_PATH), "--tui",
+    }
+    if opts.auto_run then
+        cmd_parts[#cmd_parts + 1] = "--auto-run"
+        cmd_parts[#cmd_parts + 1] = q(opts.auto_run)
+    end
+    if opts.pacman_conf ~= "/etc/pacman.conf" then
+        cmd_parts[#cmd_parts + 1] = "--pacman-conf"
+        cmd_parts[#cmd_parts + 1] = q(opts.pacman_conf)
+    end
+    if opts.test_root then
+        cmd_parts[#cmd_parts + 1] = "--test-root"
+        cmd_parts[#cmd_parts + 1] = q(opts.test_root)
+    end
+    if not os.execute(table.concat(cmd_parts, " ")) then
+        io.stderr:write("kaze-mirror: failed to launch kaze-mirror-tui window via kaze-footclient\n")
+        os.exit(1)
+    end
+    os.exit(0)
+end
+
+-- ============================================================================
+-- OUTER POSIX SH SUPERVISOR: flock -n + SIGNAL TRAP (EXIT / INT / TERM / HUP)
+-- ============================================================================
+if os.getenv("KAZE_MIRROR_SUPERVISED") ~= "1" and not opts.rollback then
+    if fs.command_exists("flock") then
+        local rdir = fs.private_runtime_dir()
+        local lock_path = rdir and (rdir .. "/mirror.lock") or "/tmp/kaze-mirror.lock"
+        local pid_file = active_pid_path() or ""
+        local tmp_base = os.getenv("TMPDIR")
+        if not tmp_base or tmp_base:sub(1, 1) ~= "/" then tmp_base = "/tmp" end
+
+        local inner_args = { q(SELF_PATH) }
+        for i = 1, #arg do inner_args[#inner_args + 1] = q(arg[i]) end
+        local inner_cmd = table.concat(inner_args, " ")
+
+        local sup_script = string.format([[
+set -u
+LOCK_PATH=%s
+PID_FILE=%s
+TMP_BASE=%s
+ORIG_STTY=""
+if [ -t 0 ] && [ -e /dev/tty ]; then
+    ORIG_STTY="$(stty -g </dev/tty 2>/dev/null || true)"
+fi
+WORKDIR="$(mktemp -d "$TMP_BASE/kaze-mirror.XXXXXX")" || exit 1
+cleanup() {
+    rm -rf -- "$WORKDIR" 2>/dev/null || true
+    if [ -n "$PID_FILE" ]; then rm -f -- "$PID_FILE" 2>/dev/null || true; fi
+    if [ -n "$ORIG_STTY" ] && [ -e /dev/tty ]; then
+        stty "$ORIG_STTY" </dev/tty 2>/dev/null || true
+        printf '\033[?25h\033[?1049l\033[?2026l' >/dev/tty 2>/dev/null || true
+    fi
+    if command -v noctalia >/dev/null 2>&1; then
+        case "$(noctalia msg config-get widget.mirror.type 2>/dev/null || true)" in
+            *custom_button*)
+                noctalia msg config-set widget.mirror.glyph '"server"' >/dev/null 2>&1 || true
+                noctalia msg config-set widget.mirror.icon_color '"on_surface_variant"' >/dev/null 2>&1 || true
+                noctalia msg config-set widget.mirror.tooltip '"Mirror Optimizer (Left: Menu, Right: TUI)"' >/dev/null 2>&1 || true
+                ;;
+        esac
+    fi
+}
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
+trap 'cleanup; exit 129' HUP
+if [ -n "$PID_FILE" ]; then printf '%%s\n' "$$" > "$PID_FILE"; fi
+KAZE_MIRROR_SUPERVISED=1 KAZE_MIRROR_WORKDIR="$WORKDIR" %s
+rc=$?
+exit "$rc"
+]], q(lock_path), q(pid_file), q(tmp_base), inner_cmd)
+
+        local exec_cmd = string.format("umask 077; exec flock -n --close -E 75 %s /bin/sh -c %s", q(lock_path), q(sup_script))
+        local ok, why, code = os.execute(exec_cmd)
+        local st = fs.exit_status(ok, why, code)
+        if st == 75 then
+            io.stderr:write("kaze-mirror: another scan/TUI instance is already running\n")
+        end
+        os.exit(st)
+    end
+end
+
+-- ============================================================================
+-- NETWORK PROBING & 3-STAGE SATURATION ENGINE (100% UNPRIVILEGED, LC_ALL=C)
+-- ============================================================================
+local function get_work_dir()
+    local wd = os.getenv("KAZE_MIRROR_WORKDIR")
+    if wd and wd ~= "" then
+        fs.mkdir_p(wd)
+        return wd, false
+    end
+    local d = fs.capture("mktemp -d /tmp/kaze-mirror.XXXXXX 2>/dev/null")
+    d = d and d:gsub("[\r\n]+$", "") or nil
+    if not d or d == "" then error("failed to create temp workdir") end
+    return d, true
+end
+
+local function check_network_egress()
+    if not fs.command_exists("ip") then
+        return true, false
+    end
+    local v4_ok = os.execute("LC_ALL=C ip -4 route get 1.1.1.1 >/dev/null 2>&1")
+    local v6_ok = os.execute("LC_ALL=C ip -6 route get 2606:4700:4700::1111 >/dev/null 2>&1")
+    local has_v4 = (v4_ok == true or v4_ok == 0)
+    local has_v6 = (v6_ok == true or v6_ok == 0)
+    if not has_v4 and not has_v6 then
+        return false, false
+    end
+    return true, (has_v4 and not has_v6)
+end
+
+local function avail_kib(dir)
+    local out = fs.capture("LC_ALL=C df -Pk -- " .. q(dir) .. " 2>/dev/null | awk 'NR==2{print $4}'")
+    return tonumber(out and out:match("%d+")) or 0
+end
+
+local function read_file_head_and_size(path, max_head)
+    local f = io.open(path, "rb")
+    if not f then return "", 0 end
+    local size = f:seek("end") or 0
+    f:seek("set", 0)
+    local head = f:read(max_head or 512) or ""
+    f:close()
+    return head, size
+end
+
+local function fetch_feed(url, ipv4_only)
+    local cmd = string.format(
+        "LC_ALL=C curl -q -fsL %s --proto =https --proto-redir =https --max-redirs 3 --connect-timeout 4 --max-time 10 --max-filesize 2097152 --user-agent %s -- %s 2>/dev/null",
+        ipv4_only and "-4" or "", q(mirror.USER_AGENT), q(url)
+    )
+    local out = fs.capture(cmd)
+    if not out or out == "" then return nil end
+    return out
+end
+
+-- Phase 1A: 128 KiB single-process parallel curl with streaming line updates
+local function screen_phase1a(work_dir, group, candidates, ipv4_only, on_line)
+    local items, by_id = {}, {}
+    local sample_dir = work_dir .. "/p1a"
+    fs.mkdir_p(sample_dir)
+
+    for idx, tmpl in ipairs(candidates) do
+        local out_path = string.format("%s/%d.bin", sample_dir, idx)
+        items[#items + 1] = {
+            id = idx,
+            template = tmpl,
+            url = mirror.expand_db_url(tmpl, group.representative_repo, group.base_arch),
+            output = out_path,
+        }
+        by_id[idx] = items[#items]
+    end
+
+    local cfg_path = work_dir .. "/p1a.curlrc"
+    fs.write_atomic(cfg_path, mirror.build_parallel_curl_config(items, {
+        limit = mirror.SCREEN_BYTES,
+        max_filesize = mirror.SCREEN_BYTES,
+        connect_timeout = 3,
+        max_time = 5,
+        speed_time = 3,
+        speed_limit = 16384,
+        ipv4_only = ipv4_only,
+    }))
+
+    local cmd = string.format(
+        "LC_ALL=C curl -q --parallel --parallel-immediate --parallel-max 24 -K %s 2>/dev/null",
+        q(cfg_path)
+    )
+    local samples = {}
+    local done_n, valid_n = 0, 0
+    local p = io.popen(cmd, "r")
+    if p then
+        for line in p:lines() do
+            done_n = done_n + 1
+            local parsed = mirror.parse_probe_line(line)
+            if parsed and by_id[parsed.id] then
+                local item = by_id[parsed.id]
+                local head, sz = read_file_head_and_size(item.output, 512)
+                os.remove(item.output)
+                local validated = mirror.validate_probe_sample(parsed, sz, head, mirror.SCREEN_BYTES, 5)
+                if validated then
+                    valid_n = valid_n + 1
+                    samples[item.template] = validated
+                end
+            end
+            if on_line then on_line(done_n, #candidates, valid_n) end
+        end
+        p:close()
+    end
+    os.execute("rm -rf -- " .. q(sample_dir) .. " " .. q(cfg_path))
+    return samples
+end
+
+-- Download representative <repo>.db once into work_dir/db/sync/ and parse packages via bsdtar
+local function fetch_repo_db_and_packages(work_dir, group, shortlist, ipv4_only)
+    local db_dir = work_dir .. "/db/sync"
+    fs.mkdir_p(db_dir)
+    local db_path = db_dir .. "/" .. group.representative_repo .. ".db"
+    local got = false
+    for i = 1, math.min(3, #shortlist) do
+        local url = mirror.expand_db_url(shortlist[i], group.representative_repo, group.base_arch)
+        local ok = os.execute(string.format(
+            "LC_ALL=C curl -q -fsL %s --proto =https --proto-redir =https --max-redirs 3 --connect-timeout 3 --max-time 15 --max-filesize 25165824 --user-agent %s -o %s -- %s 2>/dev/null",
+            ipv4_only and "-4" or "", q(mirror.USER_AGENT), q(db_path), q(url)
+        ))
+        local head, sz = read_file_head_and_size(db_path, 512)
+        if (ok == true or ok == 0) and sz > 1024 and mirror.is_valid_pacman_db_magic(head) then
+            got = true
+            break
+        end
+        os.remove(db_path)
+    end
+    if not got then
+        local local_db = resolve_db_path(opts.pacman_conf, opts.test_root) .. "/sync/" .. group.representative_repo .. ".db"
+        if fs.file_exists(local_db) then
+            os.execute("cp -f -- " .. q(local_db) .. " " .. q(db_path) .. " 2>/dev/null")
+            got = fs.file_exists(db_path)
+        end
+    end
+    if not got or not fs.command_exists("bsdtar") then
+        return nil, nil
+    end
+    local desc_out = fs.capture("LC_ALL=C bsdtar -xOf " .. q(db_path) .. " --include='*/desc' 2>/dev/null")
+    if not desc_out or desc_out == "" then
+        return db_path, nil
+    end
+    return db_path, mirror.parse_bsdtar_desc(desc_out)
+end
+
+-- Phase 1B: Warm-up slice on real large package (eliminates tiny 0.52 MiB cachyos.db distortion)
+local function probe_warmup_pkg(work_dir, group, tmpl, pkg, limit, ipv4_only)
+    local sample_path = work_dir .. "/p1b.bin"
+    os.remove(sample_path)
+    local url = pkg
+        and mirror.expand_pkg_url(tmpl, group.representative_repo, group.base_arch, pkg.filename)
+        or mirror.expand_db_url(tmpl, group.representative_repo, group.base_arch)
+    local actual_limit = pkg and math.min(limit, pkg.csize) or limit
+    local fmt = "1\\t" .. mirror.EXTENDED_WRITE_OUT_TEMPLATE
+    local cmd = string.format(
+        "LC_ALL=C curl -q -sS -L %s --proto =https --proto-redir =https --max-redirs 3 --connect-timeout 2.5 --max-time 2.5 --speed-time 2 --speed-limit 32768 --user-agent %s --range 0-%d --max-filesize %d -o %s -w %s -- %s 2>/dev/null",
+        ipv4_only and "-4" or "", q(mirror.USER_AGENT), actual_limit - 1, actual_limit, q(sample_path), q(fmt), q(url)
+    )
+    local line = capture_any(cmd):gsub("[\r\n]+$", "")
+    local parsed = mirror.parse_probe_line(line)
+    local head, sz = read_file_head_and_size(sample_path, 512)
+    os.remove(sample_path)
+    return mirror.validate_probe_sample(parsed, sz, head, actual_limit, 2.5, { allow_timeout = true })
+end
+
+-- Phase 2A: Sustained single-stream pipe into Lua (256 KiB chunks, 0 disk writes) + Q1..Q4 quartile analysis
+local function probe_sustained_stream(work_dir, group, tmpl, single_pkgs, max_time, ipv4_only)
+    local targets = {}
+    for _, pkg in ipairs(single_pkgs or {}) do
+        targets[#targets + 1] = {
+            url = mirror.expand_pkg_url(tmpl, group.representative_repo, group.base_arch, pkg.filename),
+            csize = pkg.csize,
+        }
+    end
+    if #targets == 0 then
+        targets[1] = {
+            url = mirror.expand_db_url(tmpl, group.representative_repo, group.base_arch),
+            csize = 8 * 1024 * 1024,
+        }
+    end
+
+    local meta_path = work_dir .. "/p2a-meta.txt"
+    for attempt = 1, math.min(2, #targets) do
+        local tgt = targets[attempt]
+        os.remove(meta_path)
+        local range_flag = ""
+        if tgt.csize and tgt.csize > mirror.SINGLE_CAP_BYTES then
+            range_flag = string.format("--range 0-%d", mirror.SINGLE_CAP_BYTES - 1)
+        end
+        local write_out = "%output{" .. meta_path .. "}1\\t" .. mirror.EXTENDED_WRITE_OUT_TEMPLATE
+        local cmd = string.format(
+            "LC_ALL=C curl -q -sS -N -L %s --proto =https --proto-redir =https --max-redirs 3 --connect-timeout 3 --max-time %.1f --speed-time 2 --speed-limit 65536 --user-agent %s %s -o - -w %s -- %s 2>/dev/null",
+            ipv4_only and "-4" or "", max_time, q(mirror.USER_AGENT), range_flag, q(write_out), q(tgt.url)
+        )
+
+        local p = io.popen(cmd, "r")
+        local total_bytes = 0
+        local head_buf = ""
+        local checkpoints = {}
+        local t_first = nil
+        if p then
+            while true do
+                local chunk = p:read(262144) -- 256 KiB chunks (~22.7 Gbps Lua pipe throughput, 0 /tmp writes)
+                if not chunk or #chunk == 0 then break end
+                local now = monotonic_now()
+                if not t_first then t_first = now end
+                if #head_buf < 512 then
+                    head_buf = head_buf .. chunk:sub(1, 512 - #head_buf)
+                end
+                total_bytes = total_bytes + #chunk
+                checkpoints[#checkpoints + 1] = { t = now - t_first, bytes = total_bytes }
+            end
+            p:close()
+        end
+
+        local meta_line = (fs.read_file(meta_path) or ""):gsub("[\r\n]+$", "")
+        os.remove(meta_path)
+        local parsed = mirror.parse_probe_line(meta_line)
+        if parsed and parsed.code == 404 and attempt < #targets then
+            -- Fallback to next stable package if mirror slightly behind on package 1
+        elseif parsed and total_bytes >= 65536 and parsed.size_download == total_bytes then
+            local validated = mirror.validate_probe_sample(parsed, total_bytes, head_buf, nil, max_time, { allow_timeout = true })
+            if validated then
+                local qres = mirror.analyze_stream_quartiles(checkpoints, validated.wire_dt, total_bytes)
+                validated.steady_mbps = qres.steady_mbps
+                validated.quartiles = qres.quartiles
+                validated.burst_ratio = qres.burst_ratio
+                validated.burst_throttled = qres.burst_throttled
+                validated.intra_jitter = qres.intra_jitter
+                return validated
+            end
+        elseif parsed and total_bytes > 0 and parsed.size_download == total_bytes and (tgt.csize or 0) < 65536 then
+            local validated = mirror.validate_probe_sample(parsed, total_bytes, head_buf, nil, max_time, { allow_timeout = true })
+            if validated then
+                validated.steady_mbps = validated.wire_mbps
+                return validated
+            end
+        end
+    end
+    return nil
+end
+
+-- Phase 2B: 4-stream parallel aggregate saturation via single curl -Z --parallel-max 4
+local function probe_multi_stream_4x(work_dir, group, tmpl, multi_pkgs, max_time, ipv4_only)
+    if not multi_pkgs or #multi_pkgs < 2 then return nil end
+    local items = {}
+    local max_pkg_sz = mirror.MULTI_CAP_BYTES
+    for i = 1, math.min(4, #multi_pkgs) do
+        local pkg = multi_pkgs[i]
+        if pkg.csize > max_pkg_sz then max_pkg_sz = pkg.csize end
+        items[#items + 1] = {
+            id = i,
+            url = mirror.expand_pkg_url(tmpl, group.representative_repo, group.base_arch, pkg.filename),
+            output = "/dev/null",
+        }
+    end
+    local cfg_path = work_dir .. "/p2b.curlrc"
+    fs.write_atomic(cfg_path, mirror.build_parallel_curl_config(items, {
+        limit = mirror.MULTI_CAP_BYTES,
+        max_filesize = max_pkg_sz + 65536, -- allow non-Range mirrors to stream 200 OK under --max-time
+        connect_timeout = 3,
+        max_time = max_time,
+        speed_time = 2,
+        speed_limit = 32768,
+        ipv4_only = ipv4_only,
+    }))
+    local out = capture_any(string.format(
+        "LC_ALL=C curl -q --parallel --parallel-immediate --parallel-max 4 -K %s 2>/dev/null",
+        q(cfg_path)
+    ))
+    os.remove(cfg_path)
+
+    local sum_bytes = 0
+    local min_start, max_total = nil, nil
+    local ok_streams = 0
+    for line in (out .. "\n"):gmatch("(.-)\r?\n") do
+        local parsed = mirror.parse_probe_line(line)
+        if parsed and (parsed.exitcode == 0 or parsed.exitcode == 28)
+            and parsed.ssl_verify == 0
+            and (parsed.code == 200 or parsed.code == 206)
+            and (parsed.content_encoding == "" or parsed.content_encoding == "identity")
+            and parsed.size_download > 65536
+        then
+            ok_streams = ok_streams + 1
+            sum_bytes = sum_bytes + parsed.size_download
+            local st = math.max(0, parsed.ttfb - parsed.time_queue)
+            local tot = math.max(st, parsed.elapsed - parsed.time_queue)
+            if not min_start or st < min_start then min_start = st end
+            if not max_total or tot > max_total then max_total = tot end
+        end
+    end
+    if ok_streams < 2 or not min_start or not max_total then
+        return nil
+    end
+    local span = math.max(0.05, max_total - min_start)
+    return (sum_bytes * 8.0) / (span * 1e6)
+end
+
+-- Verify secondary repos (core, multilib, cachyos-core-v3...) checking BOTH freshness AND DB size!
+local function verify_secondary_repos_batch(work_dir, group, candidate_urls, ipv4_only)
+    local sec_repos = {}
+    for _, r in ipairs(group.repos) do
+        if r ~= group.representative_repo then sec_repos[#sec_repos + 1] = r end
+    end
+    if #sec_repos == 0 or #candidate_urls == 0 then
+        local all_ok = {}
+        for _, u in ipairs(candidate_urls) do all_ok[u] = true end
+        return all_ok
+    end
+
+    local per_repo_obs = {}
+    for _, repo in ipairs(sec_repos) do
+        local items, by_id = {}, {}
+        for idx, tmpl in ipairs(candidate_urls) do
+            items[#items + 1] = {
+                id = idx,
+                template = tmpl,
+                url = mirror.expand_db_url(tmpl, repo, group.base_arch),
+                output = "/dev/null",
+            }
+            by_id[idx] = items[#items]
+        end
+        local cfg_path = work_dir .. "/sec-" .. repo .. ".curlrc"
+        fs.write_atomic(cfg_path, mirror.build_parallel_curl_config(items, {
+            head_only = true,
+            connect_timeout = 3,
+            max_time = 5,
+            ipv4_only = ipv4_only,
+        }))
+        local out = capture_any(string.format(
+            "LC_ALL=C curl -q --parallel --parallel-immediate --parallel-max 12 -K %s 2>/dev/null",
+            q(cfg_path)
+        ))
+        os.remove(cfg_path)
+
+        local obs = {}
+        local need_range_fallback = {}
+        for line in (out .. "\n"):gmatch("(.-)\r?\n") do
+            local parsed = mirror.parse_probe_line(line)
+            if parsed and by_id[parsed.id] then
+                local tmpl = by_id[parsed.id].template
+                if parsed.exitcode == 0 and parsed.ssl_verify == 0 and parsed.code == 200 then
+                    obs[tmpl] = {
+                        total_bytes = parsed.content_length,
+                        modified = mirror.parse_http_date(parsed.last_modified),
+                    }
+                elseif parsed.code == 405 or parsed.code == 403 then
+                    need_range_fallback[#need_range_fallback + 1] = tmpl
+                end
+            end
+        end
+
+        -- Fallback GET --range 0-511 for S3/object-storage mirrors blocking HEAD
+        for _, tmpl in ipairs(need_range_fallback) do
+            local url = mirror.expand_db_url(tmpl, repo, group.base_arch)
+            local fmt = "1\\t" .. mirror.EXTENDED_WRITE_OUT_TEMPLATE
+            local line = capture_any(string.format(
+                "LC_ALL=C curl -q -sS -L %s --proto =https --proto-redir =https --max-redirs 3 --connect-timeout 3 --max-time 5 --user-agent %s --range 0-511 -o /dev/null -w %s -- %s 2>/dev/null",
+                ipv4_only and "-4" or "", q(mirror.USER_AGENT), q(fmt), q(url)
+            )):gsub("[\r\n]+$", "")
+            local parsed = mirror.parse_probe_line(line)
+            if parsed and parsed.exitcode == 0 and parsed.ssl_verify == 0 and (parsed.code == 200 or parsed.code == 206) then
+                local _, tot = mirror.parse_content_range(parsed.content_range)
+                obs[tmpl] = {
+                    total_bytes = tot or parsed.content_length,
+                    modified = mirror.parse_http_date(parsed.last_modified),
+                }
+            end
+        end
+
+        -- Validate freshness & median size across observed secondary DBs
+        local valid_list, sizes = {}, {}
+        for u, o in pairs(obs) do
+            valid_list[#valid_list + 1] = { url = u, sample = o }
+            if o.total_bytes and o.total_bytes > 0 then sizes[#sizes + 1] = o.total_bytes end
+        end
+        local freshest = mirror.compute_freshest_timestamp(valid_list)
+        local med_sz = #sizes >= 2 and mirror.median(sizes) or nil
+        local passed = {}
+        for u, o in pairs(obs) do
+            local fresh_ok = (freshest == nil) or (o.modified ~= nil and o.modified >= freshest - mirror.STALE_WINDOW_SEC)
+            local size_ok = (med_sz == nil) or (not o.total_bytes) or (o.total_bytes >= med_sz * (1 - mirror.SIZE_TOLERANCE) and o.total_bytes <= med_sz * (1 + mirror.SIZE_TOLERANCE))
+            if fresh_ok and size_ok then
+                passed[u] = true
+            end
+        end
+        per_repo_obs[repo] = passed
+    end
+
+    local verified = {}
+    for _, tmpl in ipairs(candidate_urls) do
+        local ok = true
+        for _, repo in ipairs(sec_repos) do
+            if not (per_repo_obs[repo] and per_repo_obs[repo][tmpl]) then
+                ok = false
+                break
+            end
+        end
+        if ok then verified[tmpl] = true end
+    end
+    return verified
+end
+
+-- Stage 3 (--bench): Real-package fakeroot pacman -Sw A/B + Pre/Post comparison
+local function run_stage3_bench(work_dir, base_conf_text, parsed_conf, pkgs_by_repo, staged_overrides, best_eff_mbps, fast_mode, on_progress)
+    if db_lock_exists(opts.pacman_conf, opts.test_root) then
+        return { ok = false, reason = "pacman db.lck exists" }, nil
+    end
+    if not fs.command_exists("pacman") or not fs.command_exists("fakeroot") then
+        return { ok = false, reason = "requires pacman and fakeroot in PATH" }, nil
+    end
+
+    local target_bytes = math.max(32 * 1024 * 1024, math.min(96 * 1024 * 1024, (best_eff_mbps or 150) * 1e6 / 8.0 * 2.5))
+    local batch, expected_bytes = mirror.select_bench_batch(pkgs_by_repo, target_bytes)
+    if not batch or #batch < 8 then
+        return { ok = false, reason = "insufficient real packages in fresh repo DBs for --bench" }, nil
+    end
+
+    -- Tmpfs safety guard: use ~/.cache/kaze-mirror-bench if /tmp has < 512 MiB free
+    local bench_root = work_dir .. "/bench"
+    local cleanup_alt_bench = false
+    if avail_kib(work_dir) < math.floor((expected_bytes * 1.5) / 1024) + 65536 then
+        local cache_dir = fs.cache_dir() .. "/kaze-mirror-bench"
+        fs.mkdir_p(cache_dir)
+        if avail_kib(cache_dir) < math.floor((expected_bytes * 1.5) / 1024) + 65536 then
+            return { ok = false, reason = "insufficient free space in /tmp and ~/.cache for --bench" }, nil
+        end
+        bench_root = cache_dir .. "/run-" .. tostring(os.time())
+        cleanup_alt_bench = true
+    end
+    fs.mkdir_p(bench_root)
+
+    -- Ensure all repo .db files exist in work_dir/db/sync/ (copy missing from host DBPath)
+    local sync_src = work_dir .. "/db/sync"
+    local host_sync = resolve_db_path(opts.pacman_conf, opts.test_root) .. "/sync"
+    os.execute("cp -n -- " .. q(host_sync) .. "/*.db " .. q(sync_src) .. "/ 2>/dev/null || true")
+
+    local target_args = {}
+    for _, item in ipairs(batch) do
+        target_args[#target_args + 1] = q(item.repo .. "/" .. item.name)
+    end
+    local targets_str = table.concat(target_args, " ")
+
+    local function run_pacman_trial(label, pd, overrides, print_only)
+        local tdir = bench_root .. "/" .. label
+        local dbpath = tdir .. "/db"
+        local cachedir = tdir .. "/cache"
+        fs.mkdir_p(dbpath .. "/sync")
+        fs.mkdir_p(dbpath .. "/local")
+        fs.mkdir_p(cachedir)
+        os.execute("cp -al -- " .. q(sync_src) .. "/*.db " .. q(dbpath .. "/sync/") .. " 2>/dev/null || cp -f -- " .. q(sync_src) .. "/*.db " .. q(dbpath .. "/sync/") .. " 2>/dev/null")
+        local cpath = tdir .. "/pacman.conf"
+        fs.write_atomic(cpath, mirror.build_temp_pacman_conf(base_conf_text, pd, overrides))
+
+        local flag = print_only and "-Sp" or "-Sw"
+        local cmd = string.format(
+            "LC_ALL=C timeout 90s fakeroot -- pacman %s --noconfirm --nodeps --nodeps --config %s --dbpath %s --cachedir %s --logfile /dev/null %s >/dev/null 2>&1",
+            flag, q(cpath), q(dbpath), q(cachedir), targets_str
+        )
+        local t0 = monotonic_now()
+        local ok = os.execute(cmd)
+        local dt = monotonic_now() - t0
+        local dl_bytes, dl_count = 0, 0
+        if not print_only then
+            local ls_out = fs.capture("LC_ALL=C find " .. q(cachedir) .. " -maxdepth 1 -type f \\( -name '*.zst' -o -name '*.xz' -o -name '*.gz' \\) -printf '%s\\n' 2>/dev/null") or ""
+            for sz_s in ls_out:gmatch("%d+") do
+                dl_bytes = dl_bytes + tonumber(sz_s)
+                dl_count = dl_count + 1
+            end
+        end
+        os.execute("rm -rf -- " .. q(tdir))
+        return (ok == true or ok == 0), dt, dl_bytes, dl_count
+    end
+
+    -- Subtract libalpm startup/DB-resolve overhead (zero network)
+    local sp_dts = {}
+    for i = 1, 3 do
+        local ok, dt = run_pacman_trial("sp_" .. i, 5, nil, true)
+        if ok then sp_dts[#sp_dts + 1] = dt end
+    end
+    local t_startup = mirror.median(sp_dts) or 0.20
+
+    local cur_pd = parsed_conf.parallel_downloads or 5
+    local rounds = fast_mode and 1 or 3
+
+    -- Pre-baseline: current mirrors + cur_pd
+    local pre_mbps_list = {}
+    for r = 1, rounds do
+        if on_progress then
+            on_progress(
+                78 + r * 2,
+                string.format("Stage 3: Pre-baseline pacman -Sw (%d/%d)", r, rounds),
+                nil,
+                string.format("Stage 3: pre-baseline round %d/%d (PD=%d)", r, rounds, cur_pd)
+            )
+        end
+        local ok, dt, bytes, cnt = run_pacman_trial("pre_" .. r, cur_pd, nil, false)
+        if ok and cnt == #batch and bytes >= expected_bytes * 0.90 then
+            local net_dt = math.max(0.05, dt - t_startup)
+            pre_mbps_list[#pre_mbps_list + 1] = (bytes * 8.0) / (net_dt * 1e6)
+        end
+    end
+    local pre_res = {
+        current_pd = cur_pd,
+        net_mbps = mirror.median(pre_mbps_list),
+        t_startup = t_startup,
+        batch_count = #batch,
+        batch_mib = expected_bytes / (1024 * 1024),
+    }
+
+    -- A/B on staged winning mirrorlists across {3, 5, 8, 12} (+ cur_pd if different)
+    local candidates = { 3, 5, 8, 12 }
+    local has_cur = false
+    for _, c in ipairs(candidates) do if c == cur_pd then has_cur = true end end
+    if not has_cur then
+        candidates[#candidates + 1] = cur_pd
+        table.sort(candidates)
+    end
+
+    local samples_by_pd = {}
+    for _, pd in ipairs(candidates) do samples_by_pd[pd] = {} end
+
+    log("\n[Bench] ParallelDownloads A/B: %d real pkgs (%.1f MiB, startup=%.2fs), candidates={%s}",
+        #batch, expected_bytes / (1024 * 1024), t_startup, table.concat(candidates, ", "))
+
+    local step_i, total_steps = 0, rounds * #candidates
+    for r = 1, rounds do
+        local order = {}
+        if r % 2 == 1 then
+            for i = 1, #candidates do order[#order + 1] = candidates[i] end
+        else
+            for i = #candidates, 1, -1 do order[#order + 1] = candidates[i] end
+        end
+        for _, pd in ipairs(order) do
+            step_i = step_i + 1
+            local bench_pct = 84 + math.floor((step_i / total_steps) * 14)
+            local bench_phase = string.format("Stage 3: ParallelDownloads=%d (round %d/%d)", pd, r, rounds)
+            if on_progress then
+                on_progress(bench_pct, bench_phase)
+            end
+            local ok, dt, bytes, cnt = run_pacman_trial(string.format("ab_%d_r%d", pd, r), pd, staged_overrides, false)
+            if ok and cnt == #batch and bytes >= expected_bytes * 0.90 then
+                local net_dt = math.max(0.05, dt - t_startup)
+                local mbps = (bytes * 8.0) / (net_dt * 1e6)
+                samples_by_pd[pd][#samples_by_pd[pd] + 1] = mbps
+                log("  round %d | PD=%-2d -> %.1f Mbps net (%.2fs wall)", r, pd, mbps, dt)
+                if on_progress then
+                    on_progress(bench_pct, bench_phase, nil, string.format("PD=%-2d (round %d/%d): %.1f Mbps", pd, r, rounds, mbps))
+                end
+            else
+                log("  round %d | PD=%-2d -> failed", r, pd)
+                if on_progress then
+                    on_progress(bench_pct, bench_phase, nil, string.format("PD=%-2d (round %d/%d): failed", pd, r, rounds))
+                end
+            end
+        end
+    end
+
+    if cleanup_alt_bench then
+        os.execute("rm -rf -- " .. q(bench_root))
+    end
+
+    local results = {}
+    local cur_mbps = nil
+    for _, pd in ipairs(candidates) do
+        local med = mirror.median(samples_by_pd[pd])
+        if med then
+            results[#results + 1] = { pd = pd, mbps = med, samples = #samples_by_pd[pd] }
+            if pd == cur_pd then cur_mbps = med end
+        end
+    end
+    table.sort(results, function(a, b) return a.mbps > b.mbps end)
+    if #results == 0 then
+        return { ok = false, reason = "all pacman -Sw trials failed" }, pre_res
+    end
+
+    local best = results[1]
+    local recommend_pd = cur_pd
+    local changed = false
+    if best.pd ~= cur_pd then
+        if opts.force or not cur_mbps or best.mbps >= cur_mbps * (1.0 + mirror.IMPROVEMENT_MARGIN) then
+            recommend_pd = best.pd
+            changed = true
+        end
+    end
+    return {
+        ok = true,
+        current_pd = cur_pd,
+        current_mbps = cur_mbps,
+        recommended_pd = recommend_pd,
+        best_mbps = best.mbps,
+        changed = changed,
+        results = results,
+    }, pre_res
+end
+
+local function has_sudo_cached()
+    if opts.test_root then return true end
+    local ok = os.execute("sudo -n true >/dev/null 2>&1")
+    return ok == true or ok == 0
+end
+
+local function authenticate_sudo_upfront()
+    if opts.test_root then return true end
+    if has_sudo_cached() then return true end
+    if not fs.command_exists("sudo") then
+        return false, "sudo not found in PATH"
+    end
+    local ok = os.execute("sudo -v")
+    if ok == true or ok == 0 then
+        return true
+    end
+    return false, "sudo authentication cancelled or failed"
+end
+
+local function commit_plan_privileged(plan, quiet)
+    local rdir = fs.private_runtime_dir()
+    local plan_dir = rdir and (rdir .. "/mirror") or fs.capture("mktemp -d /tmp/kaze-mirror-plan.XXXXXX 2>/dev/null"):gsub("[\r\n]+$", "")
+    fs.mkdir_p(plan_dir)
+    local plan_path = fs.capture(string.format("umask 077; mktemp -p %s kaze-mirror-plan.XXXXXX.json 2>/dev/null", q(plan_dir))):gsub("[\r\n]+$", "")
+    local f = assert(io.open(plan_path, "wb"))
+    f:write(json.encode(plan) .. "\n")
+    f:close()
+
+    local cmd
+    if opts.test_root then
+        cmd = string.format("lua %s --commit-plan %s --test-root %s", q(SELF_PATH), q(plan_path), q(opts.test_root))
+    else
+        cmd = string.format("sudo %s-- %s --commit-plan %s", quiet and "-n " or "", q(SELF_PATH), q(plan_path))
+    end
+    local ok, err_msg
+    if quiet then
+        local out, cap_ok = capture_any(cmd .. " 2>&1")
+        ok = cap_ok
+        if not ok then
+            err_msg = out:gsub("^%s+", ""):gsub("%s+$", "")
+        end
+    else
+        local rc = os.execute(cmd)
+        ok = (rc == true or rc == 0)
+    end
+    os.remove(plan_path)
+    return ok, err_msg
+end
+
+local function commit_rollback_privileged(force)
+    local cmd
+    if opts.test_root then
+        cmd = string.format("lua %s --commit-rollback --test-root %s%s",
+            q(SELF_PATH), q(opts.test_root), force and " --force" or "")
+    else
+        cmd = string.format("sudo -- %s --commit-rollback%s",
+            q(SELF_PATH), force and " --force" or "")
+    end
+    local ok = os.execute(cmd)
+    return ok == true or ok == 0
+end
+
+-- Core full scan orchestrator shared by CLI and TUI
+local function execute_scan(scan_opts, on_progress)
+    local t_start = monotonic_now()
+    local fast_mode = scan_opts.fast == true
+    local do_bench = scan_opts.bench == true
+    local force_mode = scan_opts.force == true
+
+    if not fs.command_exists("curl") then
+        error("curl is required in PATH")
+    end
+    local has_net, ipv4_only = check_network_egress()
+    if not has_net then
+        error("network unreachable (no IPv4 or IPv6 default route)")
+    end
+
+    local work_dir, owned_wd = get_work_dir()
+    local min_kib = do_bench and 131072 or 65536
+    if avail_kib(work_dir) < min_kib then
+        if owned_wd then os.execute("rm -rf -- " .. q(work_dir)) end
+        error("insufficient free space in " .. work_dir .. " (need >= " .. tostring(min_kib // 1024) .. " MiB)")
+    end
+
+    local base_conf_text = fs.read_file(opts.pacman_conf)
+    if not base_conf_text then
+        if owned_wd then os.execute("rm -rf -- " .. q(work_dir)) end
+        error("cannot read " .. opts.pacman_conf)
+    end
+    local host_arch = (fs.capture("uname -m 2>/dev/null") or "x86_64"):match("^%s*(%S+)") or "x86_64"
+    local parsed_conf = mirror.parse_pacman_conf(base_conf_text, {
+        arch = host_arch,
+        read_file = fs.read_file,
+    })
+    if #parsed_conf.groups == 0 then
+        if owned_wd then os.execute("rm -rf -- " .. q(work_dir)) end
+        error("no managed Arch/CachyOS mirrorlists found in " .. opts.pacman_conf)
+    end
+
+    sync_bar_indicator(true, "Scanning mirrors…")
+
+    local arch_feed_cache, cachy_feed_cache = nil, nil
+    local raw_groups = {}
+    local pkgs_by_repo = {}
+    local staged_overrides = {}
+    local staged_dir = work_dir .. "/staged"
+    fs.mkdir_p(staged_dir)
+    local best_eff_overall = 100
+    local zero_healthy_groups = 0
+
+    local group_status = {}
+    for i, grp in ipairs(parsed_conf.groups) do
+        group_status[i] = { name = grp.basename, state = "pending", detail = "" }
+    end
+
+    local function emit_prog(pct, phase, leaders, log_line)
+        if not on_progress then return end
+        if type(pct) == "table" then
+            local evt = pct
+            pct = evt.pct
+            phase = evt.phase
+            leaders = evt.leaders
+            log_line = evt.log_line
+        end
+        on_progress({
+            pct = pct,
+            phase = phase,
+            elapsed = monotonic_now() - t_start,
+            group_status = group_status,
+            leaders = leaders,
+            log_line = log_line,
+        })
+    end
+
+    local ok_run, err_run = pcall(function()
+        local deep_rounds = fast_mode and 2 or 3
+        local multi_rounds = fast_mode and 1 or 2
+        local max_time_2a = fast_mode and 2.5 or 4.0
+        local max_time_2b = fast_mode and 2.5 or 3.5
+        local warmup_bytes = fast_mode and mirror.WARMUP_BYTES_FAST or mirror.WARMUP_BYTES
+        local n_groups = #parsed_conf.groups
+
+        for gi, grp in ipairs(parsed_conf.groups) do
+            local base_pct = math.floor(((gi - 1) / n_groups) * (do_bench and 75 or 95))
+            local span_pct = math.floor((1 / n_groups) * (do_bench and 75 or 95))
+            group_status[gi].state = "active"
+            group_status[gi].detail = "fetching feed…"
+            sync_bar_indicator(true, grp.basename)
+            emit_prog(base_pct + 1, grp.basename .. " — Fetching official HTTPS mirror feed…", nil, grp.basename .. ": fetching HTTPS mirror feed")
+
+            local current_text = fs.read_file(grp.path) or ""
+            local cur_active, cur_commented = mirror.parse_mirrorlist_servers(current_text)
+            local pacnew_text = fs.read_file(grp.path .. ".pacnew") or ""
+            local pacnew_active, pacnew_commented = mirror.parse_mirrorlist_servers(pacnew_text)
+
+            local feed_urls = {}
+            if grp.kind == "arch" and grp.base_arch == "x86_64" then
+                if arch_feed_cache == nil then
+                    log("[%s] Fetching official Arch HTTPS mirror feed...", grp.basename)
+                    local raw = fetch_feed(mirror.ARCH_FEED_URL, ipv4_only)
+                    arch_feed_cache = raw and mirror.parse_arch_feed(raw) or false
+                end
+                if arch_feed_cache then
+                    feed_urls = arch_feed_cache
+                else
+                    log("[%s] [WARN] Arch feed unreachable; falling back to local mirrorlist + .pacnew", grp.basename)
+                end
+            elseif grp.kind == "cachyos" then
+                if cachy_feed_cache == nil then
+                    log("[%s] Fetching official CachyOS HTTPS mirror feed...", grp.basename)
+                    cachy_feed_cache = fetch_feed(mirror.CACHYOS_FEED_URL, ipv4_only) or false
+                end
+                if cachy_feed_cache then
+                    feed_urls = mirror.parse_cachyos_feed(cachy_feed_cache, grp.arch_var)
+                else
+                    log("[%s] [WARN] CachyOS feed unreachable; falling back to local mirrorlist + .pacnew", grp.basename)
+                end
+            end
+
+            local candidates = mirror.merge_candidates(cur_active, feed_urls, pacnew_active, pacnew_commented, cur_commented)
+            log("[%s] Phase 1A: screening %d HTTPS mirrors (128 KiB, single curl -Z)...", grp.basename, #candidates)
+            emit_prog(base_pct + 2, grp.basename .. " — Phase 1A: 128 KiB screen", nil, grp.basename .. ": screening " .. #candidates .. " mirrors")
+
+            local screened = screen_phase1a(work_dir, grp, candidates, ipv4_only, function(done_n, tot_n, val_n)
+                group_status[gi].detail = string.format("1A %d/%d (%d ok)", done_n, tot_n, val_n)
+                emit_prog(base_pct + math.floor((done_n / math.max(tot_n, 1)) * (span_pct * 0.25)),
+                    string.format("%s — Phase 1A (%d/%d)", grp.basename, done_n, tot_n))
+            end)
+
+            local wide_n = fast_mode and (grp.kind == "arch" and 12 or 8) or (grp.kind == "arch" and 24 or 12)
+            local force_inc = {}
+            if cur_active[1] then force_inc[#force_inc + 1] = cur_active[1] end
+            if cur_active[2] then force_inc[#force_inc + 1] = cur_active[2] end
+            local wide_list, meta = mirror.filter_and_shortlist(screened, {
+                shortlist = wide_n,
+                force_include = force_inc,
+            })
+
+            log("[%s] Phase 1A: %d eligible (%d stale, %d size-outlier) -> wide shortlist %d",
+                grp.basename, meta.eligible_count or 0, meta.rejected_stale or 0, meta.rejected_size or 0, #wide_list)
+
+            -- Fetch fresh <rep_repo>.db once & select real large stable packages
+            group_status[gi].detail = "selecting probe pkgs…"
+            emit_prog(base_pct + math.floor(span_pct * 0.25),
+                grp.basename .. " — Selecting real large probe packages…",
+                nil, grp.basename .. ": fetching " .. grp.representative_repo .. ".db")
+            local _, repo_pkgs = fetch_repo_db_and_packages(work_dir, grp, wide_list, ipv4_only)
+            if repo_pkgs and #repo_pkgs > 0 then
+                pkgs_by_repo[grp.representative_repo] = repo_pkgs
+            end
+            local probe_pkgs = mirror.select_probe_packages(repo_pkgs or {})
+            local p_single_1 = probe_pkgs.singles[1]
+            if p_single_1 then
+                log("[%s] Selected dynamic probe pkg: %s (%.1f MiB)", grp.basename, p_single_1.filename, p_single_1.csize / (1024 * 1024))
+            end
+
+            -- Phase 1B: warm-up slice on real large package (sequential, 8 MiB / 4 MiB)
+            local warm_scores = {}
+            for wi, url in ipairs(wide_list) do
+                group_status[gi].detail = string.format("1B warmup %d/%d", wi, #wide_list)
+                emit_prog(base_pct + math.floor(span_pct * (0.25 + 0.20 * (wi / math.max(#wide_list, 1)))),
+                    string.format("%s — Phase 1B: warm-up (%d/%d)", grp.basename, wi, #wide_list))
+                local ws = probe_warmup_pkg(work_dir, grp, url, p_single_1, warmup_bytes, ipv4_only)
+                if ws then
+                    warm_scores[#warm_scores + 1] = { url = url, wire_mbps = ws.wire_mbps, ttfb_ms = ws.ttfb_ms }
+                end
+            end
+            table.sort(warm_scores, function(a, b) return a.wire_mbps > b.wire_mbps end)
+
+            local final_n = fast_mode and 3 or (grp.kind == "arch" and 5 or 4)
+            local finalists, seen_f = {}, {}
+            for i = 1, math.min(final_n, #warm_scores) do
+                finalists[#finalists + 1] = warm_scores[i].url
+                seen_f[warm_scores[i].url] = true
+            end
+            if cur_active[1] and not seen_f[cur_active[1]] and screened[cur_active[1]] then
+                finalists[#finalists + 1] = cur_active[1]
+                seen_f[cur_active[1]] = true
+            end
+
+            -- Phase 2A: Sustained single-stream pipe + Q1..Q4 burst-shaping decomposition
+            local deep_by_url = {}
+            for _, u in ipairs(finalists) do deep_by_url[u] = {} end
+            local p2a_step, p2a_total = 0, deep_rounds * math.max(#finalists, 1)
+            for r = 1, deep_rounds do
+                local order = {}
+                if r % 2 == 1 then
+                    for i = 1, #finalists do order[#order + 1] = finalists[i] end
+                else
+                    for i = #finalists, 1, -1 do order[#order + 1] = finalists[i] end
+                end
+                for _, url in ipairs(order) do
+                    p2a_step = p2a_step + 1
+                    local h = mirror.canonical_host(url)
+                    group_status[gi].detail = string.format("2A stream %d/%d (%s)", p2a_step, p2a_total, h)
+                    local s = probe_sustained_stream(work_dir, grp, url, probe_pkgs.singles, max_time_2a, ipv4_only)
+                    if s then
+                        deep_by_url[url][#deep_by_url[url] + 1] = s
+                        local leaders = {}
+                        for _, u2 in ipairs(finalists) do
+                            local rs = deep_by_url[u2]
+                            if rs and #rs > 0 then
+                                leaders[#leaders + 1] = { host = mirror.canonical_host(u2), mbps = rs[#rs].steady_mbps or rs[#rs].mbps, ttfb_ms = rs[#rs].ttfb_ms }
+                            end
+                        end
+                        table.sort(leaders, function(a, b) return a.mbps > b.mbps end)
+                        while #leaders > 3 do leaders[#leaders] = nil end
+                        emit_prog(base_pct + math.floor(span_pct * (0.45 + 0.35 * (p2a_step / p2a_total))),
+                            string.format("%s — Phase 2A: sustained (%d/%d)", grp.basename, p2a_step, p2a_total),
+                            leaders,
+                            string.format("%s: %.1f Mbps steady (%.0fms%s)", h, s.steady_mbps or s.mbps, s.ttfb_ms, s.burst_throttled and ", BURST" or ""))
+                    end
+                end
+            end
+
+            -- Phase 2B: 4-stream parallel aggregate saturation on all Phase 2A finalists (apples-to-apples)
+            local p2a_rank = mirror.rank_deep_results(deep_by_url, cur_active, {
+                force = true, min_samples = fast_mode and 1 or 2, parallel_downloads = 1,
+            })
+            local multi_targets, seen_mt = {}, {}
+            for _, item in ipairs(p2a_rank.ranked or {}) do
+                if not seen_mt[item.url] then
+                    multi_targets[#multi_targets + 1] = item.url
+                    seen_mt[item.url] = true
+                end
+            end
+            if cur_active[1] and not seen_mt[cur_active[1]] and deep_by_url[cur_active[1]] and #deep_by_url[cur_active[1]] > 0 then
+                multi_targets[#multi_targets + 1] = cur_active[1]
+            end
+
+            local multi_by_url = {}
+            for _, u in ipairs(multi_targets) do multi_by_url[u] = {} end
+            local p2b_step, p2b_total = 0, multi_rounds * math.max(#multi_targets, 1)
+            for r = 1, multi_rounds do
+                local order = {}
+                if r % 2 == 1 then
+                    for i = 1, #multi_targets do order[#order + 1] = multi_targets[i] end
+                else
+                    for i = #multi_targets, 1, -1 do order[#order + 1] = multi_targets[i] end
+                end
+                for _, url in ipairs(order) do
+                    p2b_step = p2b_step + 1
+                    group_status[gi].detail = string.format("2B 4x-stream %d/%d", p2b_step, p2b_total)
+                    local b4 = probe_multi_stream_4x(work_dir, grp, url, probe_pkgs.multis, max_time_2b, ipv4_only)
+                    if b4 then
+                        multi_by_url[url][#multi_by_url[url] + 1] = b4
+                        emit_prog(base_pct + math.floor(span_pct * (0.80 + 0.15 * (p2b_step / p2b_total))),
+                            string.format("%s — Phase 2B: 4x saturation (%d/%d)", grp.basename, p2b_step, p2b_total),
+                            nil, string.format("%s: 4x aggregate %.1f Mbps", mirror.canonical_host(url), b4))
+                    end
+                end
+            end
+
+            -- Verify secondary repos (freshness + median size)
+            group_status[gi].detail = "verifying repos…"
+            emit_prog(base_pct + math.floor(span_pct * 0.95),
+                grp.basename .. " — Verifying secondary repos…",
+                nil, grp.basename .. ": checking secondary repo freshness")
+            local sec_ok = verify_secondary_repos_batch(work_dir, grp, finalists, ipv4_only)
+            local verified_deep = {}
+            for url, runs in pairs(deep_by_url) do
+                if #runs >= (fast_mode and 1 or 2) and sec_ok[url] then
+                    verified_deep[url] = runs
+                end
+            end
+
+            local rank_res = mirror.rank_deep_results(verified_deep, cur_active, {
+                force = force_mode,
+                min_samples = fast_mode and 1 or 2,
+                multi_by_url = multi_by_url,
+                parallel_downloads = parsed_conf.parallel_downloads or 5,
+            })
+
+            if not rank_res.ranked or #rank_res.ranked == 0 then
+                zero_healthy_groups = zero_healthy_groups + 1
+                group_status[gi].state = "done"
+                group_status[gi].detail = "0 healthy mirrors"
+            else
+                if rank_res.best_mbps and rank_res.best_mbps > best_eff_overall then
+                    best_eff_overall = rank_res.best_mbps
+                end
+                group_status[gi].state = "done"
+                group_status[gi].detail = string.format("#1 %s (%.1f Mbps)", mirror.canonical_host(rank_res.ranked[1].url), rank_res.best_mbps or 0)
+                local staged_path = staged_dir .. "/" .. grp.basename
+                fs.write_atomic(staged_path, mirror.render_mirrorlist(grp, rank_res, cur_active))
+                staged_overrides[grp.path] = staged_path
+            end
+
+            log("\n%s\n", mirror.format_group_table(grp, rank_res))
+
+            raw_groups[#raw_groups + 1] = {
+                group = grp,
+                current_servers = cur_active,
+                deep_by_url = verified_deep,
+                multi_by_url = multi_by_url,
+                min_samples = fast_mode and 1 or 2,
+                rank_res = rank_res,
+            }
+        end
+    end)
+
+    if not ok_run then
+        sync_bar_indicator(false)
+        if owned_wd then os.execute("rm -rf -- " .. q(work_dir)) end
+        error(err_run, 0)
+    end
+
+    local pd_res, pre_res = nil, nil
+    if do_bench then
+        sync_bar_indicator(true, "Benchmarking ParallelDownloads…")
+        pd_res, pre_res = run_stage3_bench(work_dir, base_conf_text, parsed_conf, pkgs_by_repo, staged_overrides, best_eff_overall, fast_mode, emit_prog)
+    end
+
+    sync_bar_indicator(false)
+    if owned_wd then os.execute("rm -rf -- " .. q(work_dir)) end
+
+    return {
+        parsed_conf = parsed_conf,
+        base_conf_text = base_conf_text,
+        raw_groups = raw_groups,
+        pd_result = pd_res,
+        bench_pre = pre_res,
+        timers = check_active_mirror_timers(),
+        zero_healthy_groups = zero_healthy_groups,
+    }
+end
+
+local function build_commit_plan_from_items(items)
+    local files = {}
+    for _, item in ipairs(items) do
+        if item.kind == "mirrorlist" then
+            local rendered = mirror.render_mirrorlist(item.group, item.rank_res, item.current_servers)
+            local ok_v, verr = mirror.validate_mirrorlist_text(rendered)
+            if not ok_v then error("invalid mirrorlist: " .. tostring(verr)) end
+            files[#files + 1] = {
+                path = item.path,
+                kind = "mirrorlist",
+                content = rendered,
+                before_sha256 = sha256_file(item.path),
+            }
+        elseif item.kind == "pacman_conf" then
+            files[#files + 1] = {
+                path = item.path,
+                kind = "pacman_conf",
+                parallel_downloads = item.parallel_downloads,
+                before_sha256 = sha256_file(item.path),
+            }
+        end
+    end
+    return { files = files }
+end
+
+-- ============================================================================
+-- INTERACTIVE TUI ENTRY (--tui)
+-- ============================================================================
+if opts.tui then
+    local function load_snapshot()
+        local base_txt = fs.read_file(opts.pacman_conf) or ""
+        local host_arch = (fs.capture("uname -m 2>/dev/null") or "x86_64"):match("^%s*(%S+)") or "x86_64"
+        local parsed = mirror.parse_pacman_conf(base_txt, { arch = host_arch, read_file = fs.read_file })
+        local groups_view = {}
+        for _, grp in ipairs(parsed.groups) do
+            local active = mirror.parse_mirrorlist_servers(fs.read_file(grp.path) or "")
+            groups_view[#groups_view + 1] = {
+                basename = grp.basename,
+                path = grp.path,
+                repos = grp.repos,
+                primary_host = active[1] and mirror.canonical_host(active[1]) or "(none)",
+                server_count = #active,
+            }
+        end
+        return {
+            force = opts.force,
+            groups = groups_view,
+            skipped_repos = parsed.skipped_repos,
+            parallel_downloads = parsed.parallel_downloads or 5,
+            timers = check_active_mirror_timers(),
+            backup_count = count_available_backups(parsed),
+            rollback_tx = read_rollback_manifest(),
+        }
+    end
+
+    local function build_auto_commit_items(scan_res, force_flag)
+        local items = {}
+        for _, g in ipairs(scan_res.raw_groups or {}) do
+            local rr = g.rank_res
+            if force_flag and g.deep_by_url then
+                rr = mirror.rank_deep_results(g.deep_by_url, g.current_servers, {
+                    force = true,
+                    min_samples = g.min_samples or 2,
+                    multi_by_url = g.multi_by_url,
+                    parallel_downloads = (scan_res.parsed_conf and scan_res.parsed_conf.parallel_downloads) or 5,
+                })
+            end
+            if rr and #(rr.ranked or {}) > 0 then
+                local rendered = mirror.render_mirrorlist(g.group, rr, g.current_servers)
+                if rr.changed or mirror.mirrorlist_servers_changed(rendered, g.current_servers) then
+                    items[#items + 1] = {
+                        kind = "mirrorlist",
+                        path = g.group.path,
+                        group = g.group,
+                        rank_res = rr,
+                        current_servers = g.current_servers,
+                    }
+                end
+            end
+        end
+        local pd = scan_res.pd_result
+        if pd and pd.ok then
+            local want_pd = pd.changed
+            local target_pd = pd.recommended_pd
+            if not want_pd and force_flag and type(pd.results) == "table" and pd.results[1] and pd.results[1].pd ~= pd.current_pd then
+                want_pd = true
+                target_pd = pd.results[1].pd
+            end
+            if want_pd then
+                items[#items + 1] = {
+                    kind = "pacman_conf",
+                    path = opts.pacman_conf,
+                    parallel_downloads = target_pd,
+                }
+            end
+        end
+        return items
+    end
+
+    local ok_tui = mirror_tui.run_interactive({
+        auto_run = opts.auto_run,
+        dry_run = opts.dry_run_explicit,
+        load_snapshot = load_snapshot,
+        needs_sudo_prompt = function()
+            return not has_sudo_cached()
+        end,
+        authenticate = authenticate_sudo_upfront,
+        keepalive_sudo = function()
+            if not opts.test_root and fs.command_exists("sudo") then
+                os.execute("sudo -n -v >/dev/null 2>&1 || true")
+            end
+        end,
+        run_scan = function(mode, force_flag, on_progress)
+            local res = execute_scan({
+                fast = (mode == "fast-dry"),
+                bench = (mode == "bench"),
+                force = force_flag,
+            }, on_progress)
+            return {
+                parsed_conf = res.parsed_conf,
+                raw_groups = res.raw_groups,
+                pd_result = res.pd_result,
+                bench_pre = res.bench_pre,
+                zero_healthy_groups = res.zero_healthy_groups or 0,
+                msg = "Dry-run complete (no files modified).",
+                kind = "ok",
+            }
+        end,
+        auto_commit = function(scan_res, force_flag, tty_leave, tty_enter)
+            if (scan_res.zero_healthy_groups or 0) > 0 then
+                return {
+                    applied = false,
+                    msg = "Skipped auto-apply: " .. tostring(scan_res.zero_healthy_groups) .. " group(s) returned 0 healthy mirrors.",
+                    kind = "warn",
+                }
+            end
+            local items = build_auto_commit_items(scan_res, force_flag)
+            if #items == 0 then
+                return {
+                    applied = false,
+                    done = true,
+                    msg = "Scan complete — already optimal (no file changes needed).",
+                    kind = "ok",
+                }
+            end
+            local ok_p, plan_or_err = pcall(build_commit_plan_from_items, items)
+            if not ok_p then
+                return { applied = false, msg = "Auto-apply plan failed: " .. tostring(plan_or_err), kind = "err" }
+            end
+            if #(plan_or_err.files or {}) == 0 then
+                return { applied = false, done = true, msg = "Scan complete — nothing to write.", kind = "ok" }
+            end
+
+            local prompted = false
+            if not has_sudo_cached() and tty_leave then
+                prompted = true
+                tty_leave()
+                io.stdout:write("kaze-mirror: sudo credential expired; authenticating to apply updates...\n")
+                io.stdout:flush()
+            end
+            local ok_c, cerr = commit_plan_privileged(plan_or_err, not prompted)
+            if prompted and tty_enter then
+                tty_enter()
+            end
+            if ok_c then
+                if fs.command_exists("notify-send") then
+                    os.execute("notify-send -a kaze-mirror -t 3000 'Mirror Optimizer' 'Updated " .. tostring(#plan_or_err.files) .. " file(s) atomically.' >/dev/null 2>&1 || true")
+                end
+                return {
+                    applied = true,
+                    done = true,
+                    msg = "Auto-applied " .. tostring(#plan_or_err.files) .. " file(s) atomically (backup saved).",
+                    kind = "ok",
+                    snapshot = load_snapshot(),
+                }
+            end
+            return {
+                applied = false,
+                msg = "Auto-apply failed: " .. tostring(cerr and cerr ~= "" and cerr or "sudo commit cancelled or failed"),
+                kind = "err",
+            }
+        end,
+        commit_apply = function(items)
+            local ok_p, plan_or_err = pcall(build_commit_plan_from_items, items)
+            if not ok_p then return false, plan_or_err end
+            if #(plan_or_err.files or {}) == 0 then return false, "nothing to commit" end
+            local ok_c, cerr = commit_plan_privileged(plan_or_err, false)
+            if ok_c then
+                if fs.command_exists("notify-send") then
+                    os.execute("notify-send -a kaze-mirror -t 3000 'Mirror Optimizer' 'Updated mirrorlists atomically.' >/dev/null 2>&1 || true")
+                end
+                return true, "Committed " .. #plan_or_err.files .. " file(s) atomically."
+            end
+            return false, (cerr and cerr ~= "" and cerr) or "sudo commit cancelled or failed"
+        end,
+        commit_rollback = function(force_flag)
+            if commit_rollback_privileged(force_flag) then
+                return true, "Rolled back last transaction atomically."
+            end
+            return false, "sudo rollback cancelled or failed"
+        end,
+    })
+    os.exit(ok_tui and 0 or 1)
+end
+
+-- ============================================================================
+-- CLI ROLLBACK & CLI SCAN MODES
+-- ============================================================================
+if opts.rollback then
+    local tx = read_rollback_manifest()
+    if not tx then
+        io.stderr:write("kaze-mirror: no active committed transaction found to roll back\n")
+        os.exit(1)
+    end
+    for _, f in ipairs(tx.files) do
+        log("Rollback target: %s <- %s", f.path, tostring(f.backup_path))
+    end
+    if not commit_rollback_privileged(opts.force) then
+        io.stderr:write("kaze-mirror: rollback failed\n")
+        os.exit(1)
+    end
+    log("Rollback completed cleanly.")
+    os.exit(0)
+end
+
+if opts.apply then
+    local ok_auth, auth_err = authenticate_sudo_upfront()
+    if not ok_auth then
+        io.stderr:write("kaze-mirror: " .. tostring(auth_err or "sudo authentication failed") .. "\n")
+        os.exit(1)
+    end
+end
+
+local ok_exec, scan_or_err = pcall(execute_scan, {
+    fast = opts.fast,
+    bench = opts.bench,
+    force = opts.force,
+})
+if not ok_exec then
+    io.stderr:write("kaze-mirror: " .. tostring(scan_or_err) .. "\n")
+    os.exit(1)
+end
+
+local scan = scan_or_err
+local commit_items = {}
+local json_groups = {}
+for _, g in ipairs(scan.raw_groups) do
+    local rr = g.rank_res
+    if rr and #rr.ranked > 0 then
+        local rendered = mirror.render_mirrorlist(g.group, rr, g.current_servers)
+        if rr.changed or (opts.apply and mirror.mirrorlist_servers_changed(rendered, g.current_servers)) then
+            commit_items[#commit_items + 1] = {
+                kind = "mirrorlist",
+                path = g.group.path,
+                group = g.group,
+                rank_res = rr,
+                current_servers = g.current_servers,
+            }
+        end
+    end
+    json_groups[#json_groups + 1] = {
+        path = g.group.path,
+        basename = g.group.basename,
+        repos = g.group.repos,
+        current_primary = rr.current_primary,
+        current_mbps = rr.current_mbps,
+        best_mbps = rr.best_mbps,
+        gain_pct = rr.gain_pct,
+        changed = rr.changed,
+        urgent = rr.urgent,
+        kept_current = rr.kept_current,
+        ranked = rr.ranked,
+    }
+end
+
+if scan.pd_result and scan.pd_result.ok then
+    log("[Bench] ParallelDownloads recommendation: %d (best %.1f Mbps net, current=%d)",
+        scan.pd_result.recommended_pd, scan.pd_result.best_mbps, scan.pd_result.current_pd)
+    if scan.pd_result.changed then
+        commit_items[#commit_items + 1] = {
+            kind = "pacman_conf",
+            path = opts.pacman_conf,
+            parallel_downloads = scan.pd_result.recommended_pd,
+        }
+    end
+elseif scan.pd_result then
+    log("[WARN] Skipped ParallelDownloads benchmark: %s", tostring(scan.pd_result.reason))
+end
+
+if #(scan.timers or {}) > 0 then
+    log("[NOTE] Active mirror timer(s): %s (they may overwrite mirrorlists on schedule; kaze-mirror does not auto-disable system timers).",
+        table.concat(scan.timers, ", "))
+end
+
+local report = {
+    version = mirror.VERSION,
+    mode = opts.apply and "apply" or "dry-run",
+    fast = opts.fast,
+    bench = opts.bench,
+    pacman_conf = opts.pacman_conf,
+    groups = json_groups,
+    skipped_repos = scan.parsed_conf.skipped_repos,
+    parallel_downloads = scan.pd_result,
+    bench_pre = scan.bench_pre,
+    active_timers = scan.timers,
+    planned_writes = #commit_items,
+}
+
+if opts.apply then
+    if scan.zero_healthy_groups > 0 then
+        io.stderr:write("kaze-mirror: refused --apply because " .. scan.zero_healthy_groups .. " group(s) returned 0 healthy mirrors\n")
+        os.exit(1)
+    end
+    if #commit_items == 0 then
+        log("No changes needed; existing configuration is already optimal.")
+    else
+        local plan = build_commit_plan_from_items(commit_items)
+        log("Committing %d updated file(s) atomically via sudo...", #plan.files)
+        if not commit_plan_privileged(plan) then
+            io.stderr:write("kaze-mirror: privileged commit failed\n")
+            os.exit(1)
+        end
+        report.applied = true
+        log("Applied cleanly. Run 'kaze-mirror --rollback' anytime to restore the previous transaction.")
+    end
+else
+    if #commit_items > 0 then
+        log("Dry-run only (no files modified). Run 'kaze-mirror --apply%s' to write %d update(s).",
+            opts.bench and " --bench" or "", #commit_items)
+    else
+        log("Dry-run complete: no mirror updates recommended.")
+    end
+end
+
+if opts.json_out then
+    io.stdout:write(json.encode(report) .. "\n")
+end

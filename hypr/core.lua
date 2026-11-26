@@ -1,19 +1,17 @@
 local ctx = require("kaze._ctx")
+local hypr_user = require("kaze.hypr_user")
 local cfg = ctx.cfg
 
-local blur = type(cfg.blur) == "table" and cfg.blur or {}
-local op = type(cfg.opacity) == "table" and cfg.opacity or {}
-local active_op = tonumber(op.active) or 1.0
-local inactive_op = tonumber(op.inactive) or 1.0
+local vis = hypr_user.visual_config(cfg)
 
 -- Fallback neutral colors before Noctalia's built-in Hyprland template runs.
 -- Once ~/.config/hypr/noctalia.lua exists, noctalia.apply_theme() overrides these live.
 hl.config({
     general = {
         layout = "dwindle",
-        allow_tearing = false,
-        gaps_in = tonumber(cfg.gaps_in) or 4,
-        gaps_out = tonumber(cfg.gaps_out) or 8,
+        allow_tearing = vis.general.allow_tearing,
+        gaps_in = vis.general.gaps_in,
+        gaps_out = vis.general.gaps_out,
         border_size = tonumber(cfg.border_size) or 2,
         ["col.active_border"] = "rgba(7aa2f7ee)",
         ["col.inactive_border"] = "rgba(414868aa)",
@@ -26,22 +24,20 @@ hl.config({
     },
 
     decoration = {
-        rounding = tonumber(cfg.rounding) or 0,
-        active_opacity = active_op,
-        inactive_opacity = inactive_op,
+        rounding = vis.decoration.rounding,
+        active_opacity = vis.decoration.active_opacity,
+        inactive_opacity = vis.decoration.inactive_opacity,
         fullscreen_opacity = 1.0,
         blur = {
-            enabled = blur.enabled ~= false,
-            size = blur.size or 3,
-            passes = blur.passes or 1,
-            xray = blur.xray ~= false,
+            enabled = vis.decoration.blur.enabled,
+            size = vis.decoration.blur.size,
+            passes = vis.decoration.blur.passes,
+            xray = vis.decoration.blur.xray,
             new_optimizations = true,
             ignore_opacity = true,
             popups = false,
         },
-        shadow = {
-            enabled = cfg.shadow == true,
-        },
+        shadow = vis.decoration.shadow,
     },
 
     group = {

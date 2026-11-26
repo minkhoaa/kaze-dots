@@ -69,7 +69,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             assert_true(full_ok, "full --dry-run exit 0")
             for _, pkg in ipairs({
                 "noctalia", "slurp", "wf-recorder", "ffmpeg", "hyprpicker",
-                "yazi", "zathura", "zathura-pdf-poppler", "fcitx5", "fcitx5-bamboo",
+                "thunar", "adw-gtk-theme", "yazi", "zathura", "zathura-pdf-poppler", "fcitx5", "fcitx5-bamboo",
                 "fzf", "zoxide", "eza", "bat", "ripgrep", "fd", "starship", "wl-mirror",
             }) do
                 assert_contains(full_out, "  " .. pkg .. "\n", "full includes " .. pkg)
@@ -85,9 +85,13 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             assert_true(not bad_ok)
 
             -- Invoking via POSIX `sh scripts/install.sh` re-execs cleanly under bash
-            local sh_out, sh_ok = read_all(env .. " sh " .. installer .. " --profile minimal --dry-run 2>&1")
+            local sh_out, sh_ok = read_all(env .. " sh " .. installer .. " --profile minimal --style floating-islands --dry-run 2>&1")
             assert_true(sh_ok, "sh scripts/install.sh --dry-run should succeed: " .. sh_out)
             assert_contains(sh_out, "Kaze profile: minimal")
+            assert_contains(sh_out, "Kaze style: floating-islands")
+            assert_contains(sh_out, "style=floating-islands")
+            local _, bad_style_ok = read_all(env .. " " .. installer .. " --style bogus --dry-run 2>&1")
+            assert_true(not bad_style_ok)
         end)
         rm_rf(tmp)
         if not ok_test then error(err_test, 0) end
@@ -128,16 +132,27 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
                 cfg .. "/hypr/xdph.conf",
                 cfg .. "/foot/foot.ini",
                 cfg .. "/starship.toml",
+                cfg .. "/yazi/yazi.toml",
+                cfg .. "/yazi/theme.toml",
+                cfg .. "/yazi/keymap.toml",
+                cfg .. "/zathura/zathurarc",
+                cfg .. "/imv/config",
+                cfg .. "/mimeapps.list",
+                data .. "/applications/yazi.desktop",
                 home .. "/.zshrc",
                 home .. "/.zprofile",
                 cfg .. "/zsh/conf.d",
                 home .. "/.local/bin/kaze-doctor",
+                home .. "/.local/bin/kaze-project",
+                home .. "/.local/bin/kaze-style",
                 data .. "/kaze-dots/lua/kaze",
             }) do
                 assert_true(os.execute("[ -L " .. q(link_path) .. " ] && [ -e " .. q(link_path) .. " ]"), "expected symlink: " .. link_path)
             end
             assert_eq(fs.read_file(prof_file), "full\n")
+            assert_eq(fs.read_file(cfg .. "/kaze/style"), "dynamic-island\n")
             assert_contains(assert(fs.read_file(cfg .. "/noctalia/config.toml")), "polkit_agent = true\n")
+            assert_contains(assert(fs.read_file(cfg .. "/noctalia/config.toml")), 'id = "island"\n')
 
             local backup_dir = assert(fs.read_file(cfg .. "/kaze/last-backup")):gsub("\n$", "")
             local rb_out, rb_ok = read_all(env .. " " .. q(backup_dir .. "/rollback.sh") .. " --yes 2>&1")
@@ -152,15 +167,43 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
                 cfg .. "/hypr/xdph.conf",
                 cfg .. "/foot/foot.ini",
                 cfg .. "/starship.toml",
+                cfg .. "/yazi/yazi.toml",
+                cfg .. "/zathura/zathurarc",
+                cfg .. "/imv/config",
+                cfg .. "/mimeapps.list",
+                data .. "/applications/yazi.desktop",
                 home .. "/.zshrc",
                 home .. "/.zprofile",
                 cfg .. "/zsh/conf.d",
                 home .. "/.local/bin/kaze-doctor",
+                home .. "/.local/bin/kaze-project",
+                home .. "/.local/bin/kaze-style",
                 prof_file,
+                cfg .. "/kaze/style",
                 cfg .. "/kaze/last-backup",
             }) do
                 assert_true(os.execute("[ ! -e " .. q(gone) .. " ] && [ ! -L " .. q(gone) .. " ]"), "rollback must remove " .. gone)
             end
+
+            -- Non-default --style installs active preset + rollback restores pre-existing style file
+            fs.write_atomic(cfg .. "/kaze/style", "concave-notch\n")
+            local st_out, st_ok = read_all(env .. " " .. installer .. " --profile full --style dynamic-island --skip-packages --yes 2>&1")
+            assert_true(st_ok, "install.sh --style dynamic-island failed: " .. st_out)
+            assert_eq(fs.read_file(cfg .. "/kaze/style"), "dynamic-island\n")
+            local st_cfg = assert(fs.read_file(cfg .. "/noctalia/config.toml"))
+            assert_contains(st_cfg, "polkit_agent = true\n")
+            assert_contains(st_cfg, 'id = "island"\n')
+            assert_contains(st_cfg, 'position = "top_center"\n')
+            assert_contains(st_cfg, "offset_y = 6\n")
+
+            local doc = q(repo_dir .. "/bin/kaze-doctor")
+            local diff_dyn, diff_dyn_ok = read_all(env .. " " .. doc .. " --diff --template " .. q(repo_dir .. "/config/noctalia/config.toml") .. " 2>&1")
+            assert_true(diff_dyn_ok, "kaze-doctor --diff failed on dynamic-island: " .. diff_dyn)
+            assert_contains(diff_dyn, "Status: up to date")
+
+            local rb2_dir = assert(fs.read_file(cfg .. "/kaze/last-backup")):gsub("\n$", "")
+            assert(read_all(env .. " " .. q(rb2_dir .. "/rollback.sh") .. " --yes 2>&1"))
+            assert_eq(fs.read_file(cfg .. "/kaze/style"), "concave-notch\n")
         end)
         rm_rf(tmp)
         if not ok_test then error(err_test, 0) end
@@ -244,8 +287,8 @@ if [ "${DUP_NOC:-0}" = 1 ]; then printf '  199 noctalia /usr/bin/noctalia\n'; fi
             assert_contains(full_miss_out, "fzf, zoxide, eza, bat, rg, fd, starship, wl-mirror")
 
             for _, b in ipairs({
-                "slurp", "wf-recorder", "ffprobe", "hyprpicker",
-                "yazi", "imv", "zathura", "gnome-keyring-daemon", "fcitx5",
+                "slurp", "wf-recorder", "ffmpeg", "ffprobe", "hyprpicker",
+                "thunar", "yazi", "imv", "zathura", "gnome-keyring-daemon", "fcitx5",
                 "fzf", "zoxide", "eza", "bat", "rg", "fd", "starship", "wl-mirror",
             }) do
                 write_stub(stub_bin, b, "exit 0")
@@ -1030,7 +1073,7 @@ fi
         -- Simulated older user config missing [widget.display], [widget.display.actions], popup_shadows, and "display" widget
         local older = tpl
             :gsub('popup_shadows = false\n', '')
-            :gsub('"tray", "display", "net"', '"tray",\n  "net"')
+            :gsub('"tray", "display", "mirror"', '"tray",\n  "mirror"')
             :gsub('%[widget%.display%].-%[widget%.vclock%]', '[widget.vclock]')
         local drifted = toml_diff.diff(tpl, older)
         assert_true(drifted.has_drift, "older config must report drift")
@@ -1094,6 +1137,384 @@ fi
             -- Invalid --template flag without value -> exit 2
             local _, bad_tpl_ok = read_all(env .. " " .. doctor .. " --diff --template 2>&1")
             assert_true(not bad_tpl_ok, "--template without path must fail")
+        end)
+        rm_rf(tmp)
+        if not ok_cli then error(err_cli, 0) end
+    end)
+
+    test("kaze.mirror, kaze.mirror_tui & kaze-mirror: saturation math, edge cases, security commit/rollback, TUI & menu", function()
+        local mirror = require("kaze.mirror")
+        local mirror_tui = require("kaze.mirror_tui")
+        local json = require("kaze.json")
+
+        -- 1. Parse /etc/pacman.conf: Arch + CachyOS (incl. znver4), multi-arch first token, unmanaged & conflict skips
+        local conf = mirror.parse_pacman_conf([[
+[options]
+Architecture = x86_64 x86_64_v3
+ParallelDownloads = 15
+[cachyos-v3]
+Include = /etc/pacman.d/cachyos-v3-mirrorlist
+[cachyos-extra-v3]
+Include = /etc/pacman.d/cachyos-v3-mirrorlist
+[cachyos-znver4]
+Include = /etc/pacman.d/cachyos-v4-mirrorlist
+[cachyos-extra-znver4]
+Include = /etc/pacman.d/cachyos-v4-mirrorlist
+[cachyos]
+Include = /etc/pacman.d/cachyos-mirrorlist
+[core]
+Include = /etc/pacman.d/mirrorlist
+[extra]
+Include = /etc/pacman.d/mirrorlist
+[multilib]
+Include = /etc/pacman.d/mirrorlist
+[chaotic-aur]
+Include = /etc/pacman.d/chaotic-mirrorlist
+[custom-inline]
+Server = https://inline.example/$repo
+Include = /etc/pacman.d/custom-mirrorlist
+[extra-testing]
+Include = /etc/pacman.d/mirror*
+]], { arch = "x86_64" })
+        assert_eq(conf.architecture, "x86_64", "extracts first Architecture token only")
+        assert_eq(conf.parallel_downloads, 15)
+        assert_eq(#conf.groups, 4, "only managed non-conflicting mirrorlists (v3, v4/znver4, cachyos, arch)")
+        assert_eq(conf.groups[1].basename, "cachyos-v3-mirrorlist")
+        assert_eq(conf.groups[1].arch_var, "$arch_v3")
+        assert_eq(conf.groups[1].representative_repo, "cachyos-extra-v3")
+        assert_eq(conf.groups[2].basename, "cachyos-v4-mirrorlist")
+        assert_eq(conf.groups[2].arch_var, "$arch_v4")
+        assert_eq(conf.groups[2].representative_repo, "cachyos-extra-znver4")
+        assert_eq(conf.groups[4].basename, "mirrorlist")
+        assert_eq(conf.groups[4].representative_repo, "extra")
+        assert_true(#conf.skipped_repos >= 3, "chaotic-aur, custom-inline, and glob extra-testing must be skipped")
+
+        -- 2. URL safety (blocks private/loopback/traversal/http) + libalpm exact $arch expansion
+        assert_true(mirror.is_safe_https_url("https://mirrors.aliyun.com/archlinux/$repo/os/$arch"))
+        assert_true(not mirror.is_safe_https_url("http://insecure.example/$repo/os/$arch"))
+        assert_true(not mirror.is_safe_https_url("https://127.0.0.1/arch/$repo/os/$arch"))
+        assert_true(not mirror.is_safe_https_url("https://192.168.1.1/arch/$repo/os/$arch"))
+        assert_true(not mirror.is_safe_https_url("https://localhost/arch/$repo/os/$arch"))
+        assert_true(not mirror.is_safe_https_url("https://bad.example/foo/../bar"))
+        assert_eq(mirror.expand_db_url("https://cdn77.cachyos.org/repo/$arch_v3/$repo", "cachyos-extra-v3", "x86_64"),
+            "https://cdn77.cachyos.org/repo/x86_64_v3/cachyos-extra-v3/cachyos-extra-v3.db")
+
+        -- Single-# alternates included, ## maintainer-disabled excluded
+        local act_s, comm_s = mirror.parse_mirrorlist_servers("Server = https://a.example/$arch/$repo\n# Server = https://b.example/$arch/$repo\n## Server = https://broken.example/$arch/$repo\n")
+        assert_eq(#act_s, 1)
+        assert_eq(#comm_s, 1)
+        assert_eq(comm_s[1], "https://b.example/$arch/$repo")
+
+        -- 3. Dynamic bsdtar */desc parsing & large package selection (zero hardcoded names)
+        local now_ts = 1795700000
+        local old_bd = now_ts - (20 * 86400)
+        local new_bd = now_ts - 3600
+        local fake_desc = table.concat({
+            "%FILENAME%\npkg-big-64m-1-x86_64.pkg.tar.zst\n\n%NAME%\npkg-big-64m\n\n%CSIZE%\n67108864\n\n%BUILDDATE%\n" .. old_bd .. "\n",
+            "%FILENAME%\npkg-fresh-64m-1-x86_64.pkg.tar.zst\n\n%NAME%\npkg-fresh-64m\n\n%CSIZE%\n67108864\n\n%BUILDDATE%\n" .. new_bd .. "\n",
+            "%FILENAME%\npkg-m1-32m-1-x86_64.pkg.tar.zst\n\n%NAME%\npkg-m1\n\n%CSIZE%\n33554432\n\n%BUILDDATE%\n" .. old_bd .. "\n",
+            "%FILENAME%\npkg-m2-30m-1-x86_64.pkg.tar.zst\n\n%NAME%\npkg-m2\n\n%CSIZE%\n31457280\n\n%BUILDDATE%\n" .. old_bd .. "\n",
+            "%FILENAME%\npkg-m3-28m-1-x86_64.pkg.tar.zst\n\n%NAME%\npkg-m3\n\n%CSIZE%\n29360128\n\n%BUILDDATE%\n" .. old_bd .. "\n",
+            "%FILENAME%\npkg-m4-26m-1-x86_64.pkg.tar.zst\n\n%NAME%\npkg-m4\n\n%CSIZE%\n27262976\n\n%BUILDDATE%\n" .. old_bd .. "\n",
+        }, "\n")
+        local parsed_pkgs = mirror.parse_bsdtar_desc(fake_desc)
+        assert_eq(#parsed_pkgs, 6)
+        local sel_pkgs = mirror.select_probe_packages(parsed_pkgs, now_ts)
+        assert_eq(sel_pkgs.singles[1].name, "pkg-big-64m", "prefers stable >=7d 64 MiB pkg over 1h-old pkg")
+        assert_eq(#sel_pkgs.multis, 4)
+
+        -- 4. Extended 18-field curl probe validation (rejects exitcode=63 chunked truncation & bad SSL)
+        local ext_ok = assert(mirror.parse_probe_line(
+            "1\t0\t206\t0\t0.010\t0.020\t0.040\t0.060\t0.080\t0.180\t131072\t2\t1.2.3.4\thttps://m1.example/extra.db\t131072\tbytes 0-131071/8000000\t\tThu, 26 Nov 2026 14:22:10 GMT"
+        ))
+        local good_s = assert(mirror.validate_probe_sample(ext_ok, 131072, "\40\181\47\253xxxx", 131072, 5))
+        assert_eq(good_s.total_bytes, 8000000)
+        assert_true(good_s.wire_mbps > good_s.mbps, "wire_mbps excludes handshake/TTFB")
+
+        local ext_trunc63 = assert(mirror.parse_probe_line(
+            "1\t63\t200\t0\t0.000\t0.010\t0.020\t0.040\t0.050\t0.100\t131072\t2\t1.2.3.4\thttps://m1.example/extra.db\t\t\t\tThu, 26 Nov 2026 14:22:10 GMT"
+        ))
+        assert_true(mirror.validate_probe_sample(ext_trunc63, 131072, "\40\181\47\253xxxx", 131072, 5) == nil, "must reject exitcode=63 chunked truncation")
+
+        local ext_timeout28 = assert(mirror.parse_probe_line(
+            "1\t28\t200\t0\t0.000\t0.010\t0.020\t0.040\t0.050\t4.000\t40000000\t2\t1.2.3.4\thttps://m1.example/pkg.zst\t67108864\t\t\tThu, 26 Nov 2026 14:22:10 GMT"
+        ))
+        assert_true(mirror.validate_probe_sample(ext_timeout28, 40000000, "\40\181\47\253xxxx", nil, 4.0, { allow_timeout = false }) == nil)
+        assert_true(mirror.validate_probe_sample(ext_timeout28, 40000000, "\40\181\47\253xxxx", nil, 4.0, { allow_timeout = true }) ~= nil, "accepts exitcode=28 on timed stream")
+        local p_cfg = mirror.build_parallel_curl_config({ { id = 1, url = "https://a.example/extra.db", output = "/tmp/a" } }, { speed_time = 2.5 })
+        assert_contains(p_cfg, "speed-time = 3\n", "curl speed-time must be integer")
+
+        -- 5. Q1..Q4 quartile decomposition: discards slow-start Q1 AND detects burst-shaping!
+        local steady_cps = {
+            { t = 0.5, bytes = 2 * 1024 * 1024 },   -- Q1 slow-start (~33 Mbps)
+            { t = 1.0, bytes = 6 * 1024 * 1024 },
+            { t = 2.0, bytes = 56 * 1024 * 1024 },  -- Q2 (~419 Mbps)
+            { t = 3.0, bytes = 106 * 1024 * 1024 }, -- Q3 (~419 Mbps)
+            { t = 4.0, bytes = 156 * 1024 * 1024 }, -- Q4 (~419 Mbps)
+        }
+        local q_steady = mirror.analyze_stream_quartiles(steady_cps, 4.0, 156 * 1024 * 1024)
+        assert_true(not q_steady.burst_throttled)
+        assert_true(q_steady.steady_mbps > 380, "steady_mbps discards slow-start Q1")
+
+        local burst_cps = {
+            { t = 1.0, bytes = 30 * 1024 * 1024 }, -- Q1 burst (~251 Mbps)
+            { t = 2.0, bytes = 34 * 1024 * 1024 }, -- Q2 throttled (~33 Mbps)
+            { t = 3.0, bytes = 37 * 1024 * 1024 }, -- Q3 throttled (~25 Mbps)
+            { t = 4.0, bytes = 40 * 1024 * 1024 }, -- Q4 throttled (~25 Mbps)
+        }
+        local q_burst = mirror.analyze_stream_quartiles(burst_cps, 4.0, 40 * 1024 * 1024)
+        assert_true(q_burst.burst_throttled, "must detect CDN burst-shaping after Q1")
+        assert_true(q_burst.steady_mbps < 40)
+
+        -- 6. Future clock-skew guard + B1/B4 weighted scoring + urgent incumbent replacement
+        local ts1 = assert(mirror.parse_http_date("Thu, 26 Nov 2026 14:22:10 GMT"))
+        local ts2 = assert(mirror.parse_http_date("Thu, 26 Nov 2026 15:22:10 GMT"))
+        local ts_future = ts2 + (365 * 86400) -- bogus +1 year clock skew
+        local u_cur = "https://cur.example/$repo/os/$arch"
+        local u_fast = "https://fast.example/$repo/os/$arch"
+        local u_skew = "https://skew.example/$repo/os/$arch"
+        local sl, meta = mirror.filter_and_shortlist({
+            [u_cur]  = { wire_mbps = 80, ttfb_ms = 30, total_bytes = 8000000, modified = ts2 },
+            [u_fast] = { wire_mbps = 95, ttfb_ms = 25, total_bytes = 8050000, modified = ts1 },
+            [u_skew] = { wire_mbps = 90, ttfb_ms = 20, total_bytes = 8000000, modified = ts_future },
+        }, { shortlist = 4, now_ts = ts2 + 60 })
+        assert_eq(meta.freshest, ts2, "future clock skew must not poison freshest timestamp")
+        assert_eq(#sl, 3)
+
+        -- Urgent switch when incumbent is missing/dead from verified_deep
+        local urg_res = mirror.rank_deep_results({
+            [u_fast] = { { steady_mbps = 400, ttfb_ms = 40, total_bytes = 64000000 }, { steady_mbps = 420, ttfb_ms = 38, total_bytes = 64000000 } },
+        }, { u_cur }, { multi_by_url = { [u_fast] = { 580, 600 } }, parallel_downloads = 8 })
+        assert_true(urg_res.urgent and urg_res.changed, "dead incumbent triggers urgent switch")
+        assert_eq(urg_res.ranked[1].url, u_fast)
+        assert_true(urg_res.ranked[1].b4_mbps > 550)
+
+        -- 7. Strict commit path allowlist & backup rotation
+        assert_true(mirror.is_allowed_commit_path("/etc/pacman.d/mirrorlist"))
+        assert_true(mirror.is_allowed_commit_path("/etc/pacman.conf"))
+        for _, bad_p in ipairs({
+            "/etc/pacman.d/.", "/etc/pacman.d/.hidden", "/etc/pacman.d/mirrorlist.pacnew",
+            "/etc/pacman.d/mirrorlist.kaze-bak-20261127_010000", "/etc/pacman.d/gnupg",
+            "/etc/pacman.d/../shadow", "/tmp/mirrorlist",
+        }) do
+            assert_true(not mirror.is_allowed_commit_path(bad_p), "must refuse path: " .. bad_p)
+        end
+
+        local prunable = mirror.select_prunable_backups("mirrorlist", {
+            "mirrorlist.kaze-bak-20261127_010001", "mirrorlist.kaze-bak-20261127_010002",
+            "mirrorlist.kaze-bak-20261127_010003", "mirrorlist.kaze-bak-20261127_010004",
+            "mirrorlist.kaze-bak-20261127_010005", "mirrorlist.kaze-bak-20261127_010006",
+            "mirrorlist.pacnew", "mirrorlist.bak-20261120_010000",
+        }, 5)
+        assert_eq(#prunable, 1)
+        assert_eq(prunable[1], "mirrorlist.kaze-bak-20261127_010001", "only prunes oldest .kaze-bak-* beyond 5")
+
+        -- 8. Pure-Lua 5-screen Omarchy TUI state machine, key parser, and responsive ANSI invariants
+        assert_eq(mirror_tui.parse_key_sequence("\27[A"), "UP")
+        assert_eq(mirror_tui.parse_key_sequence("\27[Z"), "SHIFT_TAB")
+        assert_eq(mirror_tui.parse_key_sequence("\27"), "ESC")
+        assert_eq(mirror_tui.parse_key_sequence("j"), "DOWN")
+
+        local tstate = mirror_tui.initial_state({
+            groups = { { basename = "mirrorlist", path = "/etc/pacman.d/mirrorlist", primary_host = "cur.example", server_count = 3 } },
+            parallel_downloads = 5,
+            backup_count = 2,
+            rollback_tx = { tx_id = "20261127_010000", state = "active", files = { { path = "/etc/pacman.d/mirrorlist", backup_path = "/etc/pacman.d/mirrorlist.kaze-bak-20261127_010000" } } },
+        })
+        local _, eff1 = mirror_tui.reduce(tstate, { type = "key", key = "1" })
+        assert_eq(tstate.screen, "progress")
+        assert_eq(eff1.kind, "start_scan")
+        mirror_tui.reduce(tstate, { type = "progress", pct = 50, phase = "Phase 2A", log_line = "fast.example: 420 Mbps" })
+        -- Guard against malformed non-numeric pct (regression for Stage 3 table-vs-number crash)
+        mirror_tui.reduce(tstate, { type = "progress", pct = { phase = "bad", pct = 80 }, phase = "Stage 3" })
+        assert_eq(tstate.progress.pct, 50)
+        mirror_tui.reduce(tstate, { type = "progress", pct = 86, phase = "Stage 3: ParallelDownloads=8 (round 1/3)" })
+        assert_eq(tstate.progress.pct, 86)
+        mirror_tui.reduce(tstate, {
+            type = "scan_complete",
+            raw_groups = {
+                {
+                    group = conf.groups[4],
+                    current_servers = { u_cur },
+                    deep_by_url = {
+                        [u_cur]  = { { steady_mbps = 100, ttfb_ms = 30, total_bytes = 64000000 }, { steady_mbps = 100, ttfb_ms = 30, total_bytes = 64000000 } },
+                        [u_fast] = { { steady_mbps = 105, ttfb_ms = 30, total_bytes = 64000000 }, { steady_mbps = 105, ttfb_ms = 30, total_bytes = 64000000 } },
+                    },
+                    min_samples = 2,
+                },
+            },
+        })
+        assert_eq(tstate.screen, "results")
+        assert_true(not tstate.results.tabs[1].rank_res.changed, "5% gain kept before force")
+
+        -- mirrorlist_servers_changed detects fallback/order refreshes even when #1 stays same
+        local kept_render = mirror.render_mirrorlist(conf.groups[4], {
+            ranked = {
+                { url = u_cur, score = 100, b1_mbps = 100, ttfb_ms = 30 },
+                { url = u_fast, score = 105, b1_mbps = 105, ttfb_ms = 30 },
+            },
+        }, { u_cur })
+        assert_true(mirror.mirrorlist_servers_changed(kept_render, { u_cur }), "detects new verified fallback servers")
+        assert_true(not mirror.mirrorlist_servers_changed(kept_render, { u_cur, u_fast }), "idempotent when servers & order match")
+
+        -- auto_applied flag displays 'v 4 Applied', removes manual checkboxes/Apply prompt, and ignores redundant 'a'
+        local auto_state = mirror_tui.initial_state({ groups = {} })
+        mirror_tui.reduce(auto_state, {
+            type = "scan_complete",
+            auto_applied = true,
+            auto_done = true,
+            msg = "Auto-applied 2 file(s) atomically (backup saved).",
+            kind = "ok",
+            raw_groups = {},
+            pd_result = { ok = true, current_pd = 5, recommended_pd = 8, best_mbps = 500, changed = true, results = { { pd = 8, mbps = 500 } } },
+        })
+        local _, auto_frame = mirror_tui.render(auto_state, { cols = 100, rows = 32 }, { no_color = true, ascii_only = true })
+        assert_contains(auto_frame, "v 3 Results")
+        assert_contains(auto_frame, "v 4 Applied")
+        assert_contains(auto_frame, "[1:ParallelDL*]")
+        assert_contains(auto_frame, "v Applied ParallelDownloads: 5 -> 8")
+        assert_true(not auto_frame:find("Space Toggle", 1, true), "auto-applied results must not prompt manual Space Toggle")
+        assert_true(not auto_frame:find("a Apply", 1, true), "auto-applied results must not prompt manual Apply")
+        mirror_tui.reduce(auto_state, { type = "key", key = "a" })
+        assert_eq(auto_state.screen, "results", "auto-applied results must not open redundant confirm screen")
+
+        -- auto_done (already optimal) shows 'v 4 Up-to-date'; sudo_skipped shows 'o 4 Dry-run'
+        local opt_state = mirror_tui.initial_state({ groups = {} })
+        mirror_tui.reduce(opt_state, {
+            type = "scan_complete",
+            auto_applied = false,
+            auto_done = true,
+            msg = "Scan complete — already optimal (no file changes needed).",
+            kind = "ok",
+            raw_groups = {},
+            pd_result = { ok = true, current_pd = 5, recommended_pd = 5, best_mbps = 500, changed = false, results = { { pd = 5, mbps = 500 } } },
+        })
+        local _, opt_frame = mirror_tui.render(opt_state, { cols = 100, rows = 32 }, { no_color = true, ascii_only = true })
+        assert_contains(opt_frame, "v 4 Up-to-date")
+
+        local dry_state = mirror_tui.initial_state({ groups = {} })
+        mirror_tui.reduce(dry_state, {
+            type = "scan_complete",
+            sudo_skipped = true,
+            msg = "Dry-run complete (sudo skipped — no system files modified).",
+            kind = "warn",
+            raw_groups = {},
+            pd_result = { ok = true, current_pd = 5, recommended_pd = 8, best_mbps = 500, changed = true, results = { { pd = 8, mbps = 500 } } },
+        })
+        local _, dry_frame = mirror_tui.render(dry_state, { cols = 100, rows = 32 }, { no_color = true, ascii_only = true })
+        assert_contains(dry_frame, "o 4 Dry-run")
+        assert_contains(dry_frame, "sudo skipped")
+        -- Pressing 'f' re-ranks in memory immediately without re-probing!
+        mirror_tui.reduce(tstate, { type = "key", key = "f" })
+        assert_true(tstate.force and tstate.results.tabs[1].rank_res.changed, "in-memory force toggle flips changed=true")
+        mirror_tui.reduce(tstate, { type = "key", key = "a" })
+        assert_eq(tstate.screen, "confirm")
+        mirror_tui.reduce(tstate, { type = "commit_failed", err = "sudo cancelled" })
+        assert_eq(tstate.screen, "confirm", "commit_failed preserves results for retry")
+        assert_contains(tstate.confirm.error_msg, "sudo cancelled")
+
+        -- Render invariant checks across all 3 breakpoints (wide, medium, compact)
+        for _, dim in ipairs({ { cols = 140, rows = 42 }, { cols = 84, rows = 30 }, { cols = 64, rows = 24 } }) do
+            local flushed, raw_frame = mirror_tui.render(tstate, dim, { no_color = false, ascii_only = false })
+            assert_contains(flushed, "\27[?2026h\27[H")
+            assert_contains(flushed, "\27[J\27[?2026l")
+            assert_true(not raw_frame:find("\27%[38;") and not raw_frame:find("\27%[48;"), "16-color ANSI only (no 24-bit/256)")
+            local expected_w = nil
+            for line in raw_frame:gmatch("[^\n]+") do
+                local w = mirror_tui.display_width(line)
+                if not expected_w then expected_w = w else assert_eq(w, expected_w, "exact UTF-8 box width alignment") end
+            end
+            local _, plain_ascii = mirror_tui.render(tstate, dim, { no_color = true, ascii_only = true })
+            assert_true(not plain_ascii:find("\27%["), "NO_COLOR has zero ANSI escapes")
+            assert_true(not plain_ascii:find("[\128-\255]"), "ASCII fallback has zero non-ASCII bytes")
+        end
+
+        -- 9. End-to-end CLI tests in isolated --test-root: atomic commit, symlink/db.lck refusal, rollback & double-rollback, --menu, --tui-window
+        local tmp = make_tmp_dir()
+        local ok_cli, err_cli = pcall(function()
+            local root = tmp .. "/root"
+            local pd = root .. "/etc/pacman.d"
+            local vdb = root .. "/var/lib/pacman"
+            fs.mkdir_p(pd)
+            fs.mkdir_p(vdb)
+            local ml_path = pd .. "/mirrorlist"
+            local pc_path = root .. "/etc/pacman.conf"
+            fs.write_atomic(ml_path, "Server = https://cur.example/$repo/os/$arch\n")
+            fs.write_atomic(pc_path, "[options]\nArchitecture = x86_64\nParallelDownloads = 5\n[extra]\nInclude = " .. ml_path .. "\n")
+
+            local bin = q(repo_dir .. "/bin/kaze-mirror")
+            local rendered = mirror.render_mirrorlist(conf.groups[4], urg_res, { u_cur })
+            local plan_path = tmp .. "/plan.json"
+            fs.write_atomic(plan_path, json.encode({
+                files = {
+                    { path = ml_path, kind = "mirrorlist", content = rendered },
+                    { path = pc_path, kind = "pacman_conf", parallel_downloads = 10 },
+                },
+            }))
+
+            -- Refuse when db.lck exists
+            fs.write_atomic(vdb .. "/db.lck", "")
+            local lck_out, lck_ok = read_all(bin .. " --commit-plan " .. q(plan_path) .. " --test-root " .. q(root) .. " 2>&1")
+            assert_true(not lck_ok, "must refuse commit while db.lck exists")
+            assert_contains(lck_out, "db.lck")
+            os.remove(vdb .. "/db.lck")
+
+            -- Atomic commit succeeds for mirrorlist + least-privilege pacman_conf
+            local c_out, c_ok = read_all(bin .. " --commit-plan " .. q(plan_path) .. " --test-root " .. q(root) .. " 2>&1")
+            assert_true(c_ok, "--commit-plan failed: " .. c_out)
+            assert_contains(assert(fs.read_file(ml_path)), "Server = " .. u_fast)
+            assert_contains(assert(fs.read_file(pc_path)), "ParallelDownloads = 10\n")
+            assert_true(fs.file_exists(root .. "/var/lib/kaze-mirror/last-commit.json"), "writes transactional manifest")
+            local mdir_mode = read_all("LC_ALL=C stat -c '%a' -- " .. q(root .. "/var/lib/kaze-mirror") .. " 2>/dev/null"):gsub("%s+", "")
+            assert_eq(mdir_mode, "755", "manifest directory must remain readable by unprivileged user for rollback detection")
+
+            -- Refuse symlink target
+            local sym_path = pd .. "/sym-mirrorlist"
+            os.execute("ln -s /etc/hosts " .. q(sym_path))
+            local sym_plan = tmp .. "/sym-plan.json"
+            fs.write_atomic(sym_plan, json.encode({ files = { { path = sym_path, kind = "mirrorlist", content = rendered } } }))
+            local sym_out, sym_ok = read_all(bin .. " --commit-plan " .. q(sym_plan) .. " --test-root " .. q(root) .. " 2>&1")
+            assert_true(not sym_ok, "must refuse symlink target")
+            assert_contains(sym_out, "symlink")
+
+            -- Transactional rollback restores both files & refuses double-rollback
+            local rb_out, rb_ok = read_all(bin .. " --commit-rollback --test-root " .. q(root) .. " 2>&1")
+            assert_true(rb_ok, "--commit-rollback failed: " .. rb_out)
+            assert_eq(fs.read_file(ml_path), "Server = https://cur.example/$repo/os/$arch\n")
+            assert_contains(assert(fs.read_file(pc_path)), "ParallelDownloads = 5\n")
+
+            local rb2_out, rb2_ok = read_all(bin .. " --commit-rollback --test-root " .. q(root) .. " 2>&1")
+            assert_true(not rb2_ok, "double-rollback must be refused")
+            assert_contains(rb2_out, "double-rollback")
+
+            -- Stubbed --menu and --tui-window integration
+            local stub_bin = tmp .. "/stubs"
+            fs.mkdir_p(stub_bin)
+            link_host_bin(stub_bin, "lua")
+            write_stub(stub_bin, "noctalia", [[
+if [ "$1" = "dmenu" ]; then
+    cat > "$HOME/mirror-menu.txt"
+    exit 0
+fi
+exit 0
+]])
+            write_stub(stub_bin, "hyprctl", [[
+if [ "$1" = "-j" ] && [ "$2" = "clients" ]; then printf '[]\n';
+elif [ "$1" = "-j" ] && [ "$2" = "activewindow" ]; then printf '{}\n'; fi
+]])
+            write_stub(stub_bin, "footclient", [[printf '%s\n' "$@" > "$HOME/mirror-tui-args"]])
+            local senv = string.format("HOME=%s XDG_RUNTIME_DIR=%s HYPRLAND_INSTANCE_SIGNATURE=sig-1 PATH=%s:$PATH",
+                q(tmp), q(tmp .. "/rt"), q(stub_bin))
+            fs.mkdir_p(tmp .. "/rt")
+            local _, m_ok = read_all(senv .. " " .. bin .. " --menu --pacman-conf " .. q(pc_path) .. " 2>&1")
+            assert_true(m_ok, "--menu Esc cancel exits 0")
+            assert_contains(assert(fs.read_file(tmp .. "/mirror-menu.txt")), "Open Mirror Optimizer (TUI)")
+
+            local _, tw_ok = read_all(senv .. " " .. bin .. " --tui-window --auto-run fast-dry --pacman-conf " .. q(pc_path) .. " 2>&1")
+            assert_true(tw_ok, "--tui-window launch exits 0")
+            local tw_args = assert(fs.read_file(tmp .. "/mirror-tui-args"))
+            assert_contains(tw_args, "-a\nkaze-mirror-tui\n")
+            assert_contains(tw_args, "--tui\n--auto-run\nfast-dry\n")
         end)
         rm_rf(tmp)
         if not ok_cli then error(err_cli, 0) end

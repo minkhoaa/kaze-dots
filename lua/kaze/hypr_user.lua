@@ -4,13 +4,29 @@ local fs = require("kaze.fs")
 
 local M = {}
 
+local DEFAULT_SCRATCHPADS = {
+    scratch = "kaze-footclient -N",
+    music = "sh -c 'for app in spotify-launcher spotify ncspot rmpc cmus ncmpcpp amberol lollypop elisa; do "
+        .. "if command -v \"$app\" >/dev/null 2>&1; then case \"$app\" in ncspot|rmpc|cmus|ncmpcpp) exec kaze-footclient -N -e \"$app\" ;; *) exec \"$app\" ;; esac; fi; "
+        .. "done; command -v notify-send >/dev/null 2>&1 && notify-send -a kaze -t 3000 \"Music scratchpad\" \"Install a player or set scratchpads.music in ~/.config/hypr/user.lua\"'",
+    communication = "sh -c 'for app in vesktop discord telegram-desktop signal-desktop element-desktop slack thunderbird; do "
+        .. "if command -v \"$app\" >/dev/null 2>&1; then exec \"$app\"; fi; "
+        .. "done; command -v notify-send >/dev/null 2>&1 && notify-send -a kaze -t 3000 \"Communication scratchpad\" \"Install a chat app or set scratchpads.communication in ~/.config/hypr/user.lua\"'",
+    todo = "sh -c 'docs=$(xdg-user-dir DOCUMENTS 2>/dev/null || true); "
+        .. "[ -n \"$docs\" ] && [ \"$docs\" != \"$HOME\" ] || docs=\"$HOME/Documents\"; "
+        .. "mkdir -p -- \"$docs\"; todo=\"$docs/todo.md\"; ed=\"${EDITOR:-}\"; "
+        .. "if [ -z \"$ed\" ] || ! command -v \"$ed\" >/dev/null 2>&1; then for c in nvim vim nano; do if command -v \"$c\" >/dev/null 2>&1; then ed=\"$c\"; break; fi; done; fi; "
+        .. "if [ -n \"$ed\" ]; then exec kaze-footclient -N -e \"$ed\" \"$todo\"; "
+        .. "else command -v notify-send >/dev/null 2>&1 && notify-send -a kaze -t 3000 \"Todo scratchpad\" \"Install nvim or set scratchpads.todo in ~/.config/hypr/user.lua\"; fi'",
+}
+
 local DEFAULTS = {
     profile = "minimal",
     font = "JetBrainsMono Nerd Font",
     terminal = "kaze-footclient",
     browser = "xdg-open https://",
     editor = "nvim",
-    files = "yazi",
+    files = "thunar",
     cursor_theme = "Adwaita",
     cursor_size = 24,
     kb_layout = "us",
@@ -37,10 +53,14 @@ local DEFAULTS = {
         active = 1.0,
         inactive = 1.0,
     },
-    monitors = nil,
-    scratchpads = {
-        scratch = "kaze-footclient -N",
+    focus_mode = {
+        allow_tearing = false,
+        hide_bar = false,
     },
+    project_dirs = nil,
+    project_mode = "shell",
+    monitors = nil,
+    scratchpads = DEFAULT_SCRATCHPADS,
 }
 
 local function deepcopy(v)
@@ -67,6 +87,37 @@ end
 
 function M.defaults()
     return deepcopy(DEFAULTS)
+end
+
+-- Resolved visual settings shared between hypr/core.lua and Focus/Game Mode restore.
+function M.visual_config(cfg)
+    cfg = cfg or DEFAULTS
+    local blur = type(cfg.blur) == "table" and cfg.blur or {}
+    local op = type(cfg.opacity) == "table" and cfg.opacity or {}
+    return {
+        general = {
+            allow_tearing = false,
+            gaps_in = tonumber(cfg.gaps_in) or 4,
+            gaps_out = tonumber(cfg.gaps_out) or 8,
+        },
+        decoration = {
+            rounding = tonumber(cfg.rounding) or 0,
+            active_opacity = tonumber(op.active) or 1.0,
+            inactive_opacity = tonumber(op.inactive) or 1.0,
+            blur = {
+                enabled = blur.enabled ~= false,
+                size = blur.size or 3,
+                passes = blur.passes or 1,
+                xray = blur.xray ~= false,
+            },
+            shadow = {
+                enabled = cfg.shadow == true,
+            },
+        },
+        animations = {
+            enabled = true,
+        },
+    }
 end
 
 function M.user_path(home)

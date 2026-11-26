@@ -93,11 +93,19 @@ local function register_tests(test, assert_eq, assert_true, assert_contains, rep
         assert_eq(by_chord["SUPER + SHIFT + S"].cmd, "noctalia msg screenshot-region")
         assert_eq(by_chord["SUPER + SHIFT + ALT + S"].cmd, "noctalia msg screenshot-annotate")
         assert_contains(by_chord["SUPER + SHIFT + C"].cmd, "hyprpicker")
+        assert_contains(by_chord["SUPER + E"].cmd, "exec thunar")
         assert_eq(by_chord["CTRL + ALT + R"].cmd, "kaze-record")
+        assert_eq(by_chord["SUPER + SHIFT + R"].cmd, "kaze-record --menu")
+        assert_eq(by_chord["SUPER + SHIFT + I"].cmd, "kaze-style --menu")
+        assert_eq(by_chord["SUPER + O"].cmd, "kaze-project")
+        assert_eq(by_chord["SUPER + SHIFT + O"].cmd, "kaze-project --split")
         assert_eq(by_chord["SUPER + slash"].cmd, "kaze-keys")
         assert_eq(by_chord["SUPER + ALT + P"].cmd, "kaze-display toggle-window-share")
         assert_eq(by_chord["CTRL + SUPER + P"].cmd, "kaze-display toggle-control")
-        assert_eq(by_chord["SUPER + SHIFT + Z"], nil, "Zen Mode keybind must be removed")
+        assert_eq(by_chord["SUPER + SHIFT + Z"].kind, "focus_mode", "Focus / Game Mode keybind registered")
+        assert_eq(by_chord["SUPER + ALT + M"].kind, "window_move")
+        assert_eq(by_chord["SUPER + ALT + D"].kind, "window_move")
+        assert_eq(by_chord["SUPER + ALT + R"].kind, "window_move")
         assert_eq(by_chord["SUPER + SHIFT + L"], nil, "kaze-layout keybind must be removed")
         assert_eq(by_chord["SUPER + SHIFT + SPACE"], nil, "kaze-menu keybind must be removed")
         assert_eq(by_chord["CTRL + SUPER + ALT + R"].cmd, "noctalia msg config-reload && hyprctl reload")
@@ -157,9 +165,12 @@ printf '%s\n' "$@" > "$HOME/noc-args"
         assert_eq(seen_core.configs[1].input.accel_profile, "flat")
         assert_eq(#seen_core.gestures, 1)
 
-        local binds, by_chord, exec_calls, dispatches, submaps, ws_windows = {}, {}, {}, {}, {}, {}
+        local binds, by_chord, exec_calls, dispatches, submaps, ws_windows, hl_configs = {}, {}, {}, {}, {}, {}, {}
         with_mock_hl({ cfg = cfg }, function()
             rawset(_G, "hl", {
+                config = function(tbl)
+                    hl_configs[#hl_configs + 1] = tbl
+                end,
                 bind = function(keys, dispatcher, opts)
                     local rec = { keys = keys, dispatcher = dispatcher, opts = opts }
                     binds[#binds + 1] = rec
@@ -232,6 +243,33 @@ printf '%s\n' "$@" > "$HOME/noc-args"
             ws_windows["special:scratch"] = { { address = "0x999" } }
             by_chord["SUPER + S"].dispatcher()
             assert_eq(#exec_calls, prev_len)
+
+            -- Named special workspaces (music, communication, todo) spawn defaults when empty
+            by_chord["SUPER + M"].dispatcher()
+            assert_eq(exec_calls[#exec_calls].opts.workspace, "special:music")
+            by_chord["SUPER + D"].dispatcher()
+            assert_eq(exec_calls[#exec_calls].opts.workspace, "special:communication")
+            by_chord["SUPER + R"].dispatcher()
+            assert_eq(exec_calls[#exec_calls].opts.workspace, "special:todo")
+
+            -- Focus / Game Mode (Super + Shift + Z) toggles gaps/blur/animations off and restores cleanly
+            cfg.focus_mode = { allow_tearing = true, hide_bar = false }
+            local cfg_before = #hl_configs
+            by_chord["SUPER + SHIFT + Z"].dispatcher()
+            assert_eq(#hl_configs, cfg_before + 1)
+            assert_eq(hl_configs[#hl_configs].general.gaps_in, 0)
+            assert_eq(hl_configs[#hl_configs].general.gaps_out, 0)
+            assert_eq(hl_configs[#hl_configs].general.allow_tearing, true)
+            assert_eq(hl_configs[#hl_configs].decoration.blur.enabled, false)
+            assert_eq(hl_configs[#hl_configs].animations.enabled, false)
+
+            by_chord["SUPER + SHIFT + Z"].dispatcher()
+            assert_eq(#hl_configs, cfg_before + 2)
+            assert_eq(hl_configs[#hl_configs].general.gaps_in, cfg.gaps_in)
+            assert_eq(hl_configs[#hl_configs].general.gaps_out, cfg.gaps_out)
+            assert_eq(hl_configs[#hl_configs].general.allow_tearing, false)
+            assert_eq(hl_configs[#hl_configs].decoration.blur.enabled, true)
+            assert_eq(hl_configs[#hl_configs].animations.enabled, true)
         end)
     end)
 end

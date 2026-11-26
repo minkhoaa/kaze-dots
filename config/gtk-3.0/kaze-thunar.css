@@ -1,0 +1,179 @@
+/*
+ * Kaze Omarchy-sharp flat overrides for Thunar & GTK3 surfaces.
+ * Uses ONLY Noctalia's live @define-color variables from noctalia.css (0 hardcoded hex).
+ * Automatically adapts to every Noctalia theme and dark/light mode toggle.
+ */
+
+/* Flat 0px geometry across Thunar chrome, dialogs, menus, and popovers */
+window.thunar,
+window.thunar *,
+menu,
+.menu,
+.context-menu,
+popover,
+popover.background,
+tooltip,
+tooltip.background {
+    border-radius: 0px;
+    box-shadow: none;
+}
+
+window.thunar {
+    background-color: @window_bg_color;
+    color: @window_fg_color;
+}
+
+/* Compact flat toolbar and breadcrumb pathbar */
+window.thunar toolbar {
+    background-color: @headerbar_bg_color;
+    color: @headerbar_fg_color;
+    border-bottom: 1px solid alpha(@window_fg_color, 0.12);
+    padding: 2px 4px;
+    min-height: 28px;
+}
+
+window.thunar toolbar button,
+window.thunar .path-bar button,
+window.thunar .location-bar button {
+    border-radius: 0px;
+    padding: 2px 6px;
+    min-height: 22px;
+    background-image: none;
+    border: 1px solid transparent;
+}
+
+window.thunar toolbar button:hover,
+window.thunar .path-bar button:hover,
+window.thunar .location-bar button:hover {
+    background-color: alpha(@window_fg_color, 0.08);
+    border-color: alpha(@window_fg_color, 0.16);
+}
+
+window.thunar .path-bar button:checked,
+window.thunar .path-bar button.current-dir {
+    background-color: alpha(@accent_bg_color, 0.18);
+    color: @accent_color;
+    border-color: alpha(@accent_bg_color, 0.45);
+}
+
+window.thunar entry {
+    border-radius: 0px;
+    min-height: 24px;
+    padding: 2px 6px;
+    background-color: @view_bg_color;
+    color: @view_fg_color;
+    border: 1px solid alpha(@window_fg_color, 0.18);
+}
+
+window.thunar entry:focus {
+    border-color: @accent_bg_color;
+}
+
+/* Compact sidebar */
+window.thunar .sidebar,
+window.thunar .shortcuts-pane,
+window.thunar .shortcuts-pane treeview.view,
+window.thunar .sidebar treeview.view {
+    background-color: @sidebar_bg_color;
+    color: @sidebar_fg_color;
+}
+
+window.thunar .sidebar treeview.view:selected,
+window.thunar .shortcuts-pane treeview.view:selected {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+}
+
+window.thunar paned > separator {
+    background-color: alpha(@window_fg_color, 0.12);
+    min-width: 1px;
+    min-height: 1px;
+}
+
+/* Dense main list / icon view */
+window.thunar .standard-view .view,
+window.thunar treeview.view {
+    background-color: @view_bg_color;
+    color: @view_fg_color;
+}
+
+window.thunar .standard-view .view:selected,
+window.thunar treeview.view:selected,
+window.thunar iconview:selected {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+}
+
+window.thunar treeview header button {
+    background-color: @headerbar_bg_color;
+    color: alpha(@headerbar_fg_color, 0.85);
+    border: none;
+    border-bottom: 1px solid alpha(@window_fg_color, 0.12);
+    border-right: 1px solid alpha(@window_fg_color, 0.08);
+    border-radius: 0px;
+    padding: 3px 6px;
+    min-height: 22px;
+}
+
+/* Tabs */
+window.thunar notebook > header {
+    background-color: @headerbar_bg_color;
+    border-bottom: 1px solid alpha(@window_fg_color, 0.12);
+}
+
+window.thunar notebook > header tab {
+    border-radius: 0px;
+    padding: 3px 8px;
+    min-height: 22px;
+    border-right: 1px solid alpha(@window_fg_color, 0.08);
+}
+
+window.thunar notebook > header tab:checked {
+    background-color: @view_bg_color;
+    color: @accent_color;
+    box-shadow: inset 0 -2px @accent_bg_color;
+}
+
+/* Slim statusbar */
+window.thunar statusbar {
+    background-color: @headerbar_bg_color;
+    color: alpha(@headerbar_fg_color, 0.85);
+    border-top: 1px solid alpha(@window_fg_color, 0.12);
+    padding: 1px 6px;
+    min-height: 22px;
+    font-size: 9pt;
+}
+
+/* Sharp context menus & popovers */
+menu,
+.menu,
+.context-menu {
+    background-color: @popover_bg_color;
+    color: @popover_fg_color;
+    border: 1px solid alpha(@window_fg_color, 0.18);
+    padding: 2px;
+}
+
+menu menuitem,
+.menu menuitem {
+    padding: 4px 10px;
+    border-radius: 0px;
+}
+
+menu menuitem:hover,
+.menu menuitem:hover {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+}
+
+/* Slim sharp scrollbars */
+window.thunar scrollbar slider {
+    border-radius: 0px;
+    min-width: 6px;
+    min-height: 6px;
+    background-color: alpha(@window_fg_color, 0.25);
+}
+
+window.thunar scrollbar slider:hover {
+    background-color: @accent_bg_color;
+}

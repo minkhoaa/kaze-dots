@@ -1,0 +1,28 @@
+# Kaze imv configuration (Omarchy flat minimal Wayland image viewer)
+
+[options]
+background = 1a1b26
+overlay = false
+overlay_font = JetBrainsMono Nerd Font:10
+overlay_text_color = c0caf5
+overlay_background_color = 1a1b26
+overlay_background_alpha = e6
+overlay_position_bottom = true
+overlay_text = "$imv_current_file [$imv_width×$imv_height] ($imv_current_index/$imv_file_count) $imv_scale%"
+scaling_mode = shrink
+
+[binds]
+# Toggle info overlay and fullscreen
+d = overlay
+f = fullscreen
+
+# Vim-friendly image cycling & view controls
+J = next 1
+K = prev 1
+r = rotate by 90
+R = rotate by -90
+0 = reset
+
+# Direct Wayland clipboard copy (image bytes or file path)
+c = exec wl-copy < "$imv_current_file"
+C = exec printf '%s' "$imv_current_file" | wl-copy

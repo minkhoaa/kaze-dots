@@ -1,0 +1,45 @@
+# Kaze Yazi configuration (Omarchy sharp flat geometry + native Foot Sixel preview)
+
+[mgr]
+ratio          = [ 1, 4, 3 ]
+sort_by        = "natural"
+sort_sensitive = false
+sort_reverse   = false
+sort_dir_first = true
+sort_translit  = false
+linemode       = "size"
+show_hidden    = false
+show_symlink   = true
+scrolloff      = 5
+mouse_events   = [ "click", "scroll" ]
+
+[preview]
+wrap           = "no"
+tab_size       = 2
+max_width      = 1000
+max_height     = 1000
+cache_dir      = ""
+image_delay    = 20
+image_filter   = "triangle"
+image_quality  = 75
+sixel_fraction = 15
+
+[opener]
+edit = [
+    { run = '${EDITOR:-nvim} "$@"', block = true, desc = "$EDITOR", for = "unix" },
+]
+image = [
+    { run = 'if command -v imv >/dev/null 2>&1; then exec imv "$@"; else exec xdg-open "$1"; fi', orphan = true, desc = "imv", for = "unix" },
+]
+document = [
+    { run = 'if command -v zathura >/dev/null 2>&1; then exec zathura "$@"; else exec xdg-open "$1"; fi', orphan = true, desc = "zathura", for = "unix" },
+]
+open = [
+    { run = 'xdg-open "$1"', orphan = true, desc = "xdg-open", for = "unix" },
+]
+
+[open]
+prepend_rules = [
+    { mime = "image/*", use = [ "image", "open" ] },
+    { mime = "application/pdf", use = [ "document", "open" ] },
+]

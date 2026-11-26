@@ -1,0 +1,84 @@
+# Kaze Yazi theme (Omarchy sharp geometry, ANSI-only colors inheriting Foot/Noctalia)
+
+[mgr]
+cwd = { fg = "blue", bold = true }
+hovered = { reversed = true, bold = true }
+preview_hovered = { underline = true }
+
+find_keyword = { fg = "yellow", bold = true, underline = true }
+find_position = { fg = "magenta", italic = true }
+
+marker_copied = { fg = "green", bg = "green" }
+marker_cut = { fg = "red", bg = "red" }
+marker_marked = { fg = "cyan", bg = "cyan" }
+marker_selected = { fg = "yellow", bg = "yellow" }
+
+count_copied = { fg = "black", bg = "green", bold = true }
+count_cut = { fg = "black", bg = "red", bold = true }
+count_selected = { fg = "black", bg = "yellow", bold = true }
+
+border_symbol = "│"
+border_style = { fg = "darkgray" }
+
+[tabs]
+active = { fg = "black", bg = "blue", bold = true }
+inactive = { fg = "gray", bg = "reset" }
+sep_inner = { open = "", close = "" }
+sep_outer = { open = "", close = "" }
+
+[mode]
+normal_main = { fg = "black", bg = "blue", bold = true }
+normal_alt = { fg = "blue", bg = "black" }
+select_main = { fg = "black", bg = "green", bold = true }
+select_alt = { fg = "green", bg = "black" }
+unset_main = { fg = "black", bg = "red", bold = true }
+unset_alt = { fg = "red", bg = "black" }
+
+[status]
+overall = {}
+sep_left = { open = "", close = "" }
+sep_right = { open = "", close = "" }
+
+progress_label = { bold = true }
+progress_normal = { fg = "blue", bg = "black" }
+progress_error = { fg = "red", bg = "black" }
+
+perm_type = { fg = "blue" }
+perm_read = { fg = "yellow" }
+perm_write = { fg = "red" }
+perm_exec = { fg = "green" }
+perm_sep = { fg = "darkgray" }
+
+[pick]
+border = { fg = "blue" }
+active = { fg = "magenta", bold = true }
+
+[input]
+border = { fg = "blue" }
+title = { fg = "blue", bold = true }
+
+[confirm]
+border = { fg = "yellow" }
+title = { fg = "yellow", bold = true }
+
+[cmp]
+border = { fg = "blue" }
+
+[tasks]
+border = { fg = "blue" }
+hovered = { fg = "black", bg = "blue", bold = true }
+
+[which]
+mask = { bg = "black" }
+cand = { fg = "cyan", bold = true }
+rest = { fg = "darkgray" }
+desc = { fg = "gray" }
+separator = " → "
+separator_style = { fg = "darkgray" }
+
+[help]
+on = { fg = "cyan", bold = true }
+run = { fg = "magenta" }
+desc = { fg = "gray" }
+hovered = { reversed = true, bold = true }
+footer = { fg = "black", bg = "blue" }

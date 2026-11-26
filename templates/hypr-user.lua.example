@@ -10,9 +10,17 @@ return {
     -- cursor_size = 24,
     -- browser = "xdg-open https://",
     -- editor = "nvim",
-    -- files = "yazi",
+    -- files = "thunar",
     -- smart_gaps = false,
     -- display_hotplug_menu = true,
+    -- Focus / Game Mode (Super + Shift + Z):
+    -- focus_mode = {
+    --     allow_tearing = false, -- set true to allow immediate tearing for games
+    --     hide_bar = false,      -- set true to also hide Noctalia bar while focused
+    -- },
+    -- Project Switcher (Super + O / Super + Shift + O):
+    -- project_dirs = { "~/Projects", "~/Code", "~/src" },
+    -- project_mode = "shell", -- "shell" | "nvim" | "split"
     -- Hybrid Intel/AMD + NVIDIA laptops running Hyprland on iGPU:
     -- drm_devices = "/dev/dri/card1",
     -- prefer_mesa_egl = true, -- prevents Chrome WebRTC EglDmaBuf from probing NVIDIA EGL
@@ -20,7 +28,11 @@ return {
     -- monitors = {
     --     { output = "eDP-1", mode = "1920x1080@60", position = "0x0", scale = 1 },
     -- },
+    -- Special workspace presets (set to false to disable auto-spawn and only toggle):
     -- scratchpads = {
     --     scratch = "kaze-footclient -N",
+    --     music = "spotify",
+    --     communication = "vesktop",
+    --     todo = "kaze-footclient -N -e nvim ~/Documents/todo.md",
     -- },
 }

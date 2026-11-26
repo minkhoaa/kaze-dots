@@ -103,7 +103,7 @@ capsule = false
 capsule_border_width = 1.0
 start = [ "launcher", "ws" ]
 center = [ "vclock" ]
-end = [ "tray", "display", "net", "vol", "bat", "notifications", "control-center", "session" ]
+end = [ "record", "tray", "display", "mirror", "net", "vol", "bat", "notifications", "control-center", "session" ]
 
 [widget.ws]
 type = "workspaces"
@@ -143,6 +143,37 @@ hide_when_inactive = true
 [widget.bat]
 type = "battery"
 show_label = false
+
+[widget.record]
+type = "custom_button"
+glyph = "video"
+icon_color = "on_surface_variant"
+tooltip = "Screen Recorder (Left: Menu, Right: Toggle)"
+
+[widget.record.actions]
+left = "exec kaze-record --bar"
+right = "exec kaze-record"
+
+[widget.mirror]
+type = "custom_button"
+glyph = "server"
+icon_color = "on_surface_variant"
+tooltip = "Mirror Optimizer (Left: Menu, Right: TUI)"
+
+[widget.mirror.actions]
+left = "exec kaze-mirror --menu"
+right = "exec kaze-mirror --tui-window"
+
+[widget.hclock]
+type = "clock"
+format = "{:%a %d %b · %H:%M}"
+
+[widget.media]
+type = "media"
+art_size = 16.0
+min_length = 80.0
+max_length = 180.0
+title_scroll = "none"
 
 [idle]
 behavior_order = [ "lock", "screen-off", "lock-and-suspend" ]

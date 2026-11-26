@@ -18,8 +18,9 @@ function M.build(cfg)
     end
     local files_cmd = cfg.files or defaults.files
     if files_cmd == defaults.files then
-        files_cmd = "if command -v yazi >/dev/null; then exec kaze-footclient -N -e yazi; "
-            .. "else notify-send 'File manager unavailable' 'Install yazi or set files in hypr/user.lua'; fi"
+        files_cmd = "if command -v thunar >/dev/null; then exec thunar; "
+            .. "elif command -v yazi >/dev/null; then exec kaze-footclient -N -e yazi; "
+            .. "else notify-send 'File manager unavailable' 'Install thunar or set files in hypr/user.lua'; fi"
     end
 
     local entries = {
@@ -64,6 +65,14 @@ function M.build(cfg)
             desc = "Toggle Noctalia Settings",
             kind = "exec",
             cmd = "noctalia msg settings-toggle",
+        },
+        {
+            group = "Launchers",
+            chord = "SUPER + SHIFT + I",
+            display = "Super + Shift + I",
+            desc = "Visual style switcher",
+            kind = "exec",
+            cmd = "kaze-style --menu",
         },
         {
             group = "Launchers",
@@ -139,6 +148,13 @@ function M.build(cfg)
             desc = "Toggle Night Light",
             kind = "exec",
             cmd = "noctalia msg nightlight-force-toggle",
+        },
+        {
+            group = "System",
+            chord = "SUPER + SHIFT + Z",
+            display = "Super + Shift + Z",
+            desc = "Toggle Focus / Game Mode",
+            kind = "focus_mode",
         },
         {
             group = "System",
@@ -231,6 +247,22 @@ function M.build(cfg)
             kind = "exec",
             cmd = files_cmd,
         },
+        {
+            group = "Apps",
+            chord = "SUPER + O",
+            display = "Super + O",
+            desc = "Open project switcher (zoxide / fd)",
+            kind = "exec",
+            cmd = "kaze-project",
+        },
+        {
+            group = "Apps",
+            chord = "SUPER + SHIFT + O",
+            display = "Super + Shift + O",
+            desc = "Open project (Neovim + terminal split)",
+            kind = "exec",
+            cmd = "kaze-project --split",
+        },
 
         -- Control Center Quick Tabs & On-Demand System Monitor
         {
@@ -272,6 +304,14 @@ function M.build(cfg)
             desc = "Floating system monitor (btop)",
             kind = "exec",
             cmd = "kaze-tui sysmon",
+        },
+        {
+            group = "Tools",
+            chord = "CTRL + ALT + M",
+            display = "Ctrl + Alt + M",
+            desc = "Mirror optimizer (TUI)",
+            kind = "exec",
+            cmd = "kaze-mirror --tui-window",
         },
 
         -- Screenshots, Recording & Color Picker
@@ -323,6 +363,14 @@ function M.build(cfg)
             desc = "Toggle region recording",
             kind = "exec",
             cmd = "kaze-record --region",
+        },
+        {
+            group = "Capture",
+            chord = "SUPER + SHIFT + R",
+            display = "Super + Shift + R",
+            desc = "Open screen recording menu",
+            kind = "exec",
+            cmd = "kaze-record --menu",
         },
 
         -- Window Management & Groups
@@ -650,8 +698,11 @@ function M.build(cfg)
         { chord = "CTRL + SUPER + SHIFT + up", display = false, desc = "Move window to scratchpad", kind = "window_move", args = { workspace = "special:scratch" } },
         { chord = "CTRL + SUPER + SHIFT + down", display = "Ctrl + Super + Shift + Down", desc = "Move window out of scratchpad", kind = "window_move", args = { workspace = "e+0" } },
         { chord = "SUPER + M", display = "Super + M", desc = "Toggle music workspace", kind = "toggle_special", workspace = "music" },
+        { chord = "SUPER + ALT + M", display = "Super + Alt + M", desc = "Move window to music workspace", kind = "window_move", args = { workspace = "special:music" } },
         { chord = "SUPER + D", display = "Super + D", desc = "Toggle communication workspace", kind = "toggle_special", workspace = "communication" },
+        { chord = "SUPER + ALT + D", display = "Super + Alt + D", desc = "Move window to communication workspace", kind = "window_move", args = { workspace = "special:communication" } },
         { chord = "SUPER + R", display = "Super + R", desc = "Toggle todo workspace", kind = "toggle_special", workspace = "todo" },
+        { chord = "SUPER + ALT + R", display = "Super + Alt + R", desc = "Move window to todo workspace", kind = "window_move", args = { workspace = "special:todo" } },
     }
     for _, item in ipairs(specials) do
         item.group = "Workspaces"

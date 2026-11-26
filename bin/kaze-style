@@ -1,0 +1,143 @@
+#!/usr/bin/env lua
+-- Pure-Lua Noctalia v5 visual preset switcher (`omarchy-rail`, `floating-islands`, `concave-notch`, `dynamic-island`).
+
+local function resolve_script_dir()
+    local src = arg[0] or "kaze-style"
+    local p = io.popen("readlink -f -- '" .. src:gsub("'", "'\\''") .. "' 2>/dev/null")
+    local resolved = p and p:read("*l") or src
+    if p then
+        p:close()
+    end
+    return resolved:match("^(.*)/[^/]+$") or "."
+end
+
+local script_dir = resolve_script_dir()
+local paths = {}
+local repo_dir = os.getenv("KAZE_DOTS_DIR")
+if repo_dir and repo_dir ~= "" then
+    paths[#paths + 1] = repo_dir .. "/lua/?.lua"
+end
+local data_home = os.getenv("XDG_DATA_HOME") or ((os.getenv("HOME") or "") .. "/.local/share")
+paths[#paths + 1] = script_dir .. "/../lua/?.lua"
+paths[#paths + 1] = data_home .. "/kaze-dots/lua/?.lua"
+paths[#paths + 1] = package.path
+package.path = table.concat(paths, ";")
+
+local fs = require("kaze.fs")
+local popups = require("kaze.popups")
+local styles = require("kaze.styles")
+
+local function print_usage(out)
+    out:write("Usage: kaze-style [PRESET | --menu | --current | --list] [--no-reload] [-h|--help]\n")
+    out:write("Switch Noctalia v5 bar/HUD visual presets without extra daemons or polling.\n\n")
+    out:write("Presets:\n")
+    for _, preset in ipairs(styles.list()) do
+        out:write(string.format("  %-18s %s\n", preset.id, preset.summary))
+    end
+end
+
+local function resolve_template_path()
+    local candidates = {}
+    local env_tpl = os.getenv("KAZE_NOCTALIA_TEMPLATE")
+    if env_tpl and env_tpl ~= "" then
+        candidates[#candidates + 1] = env_tpl
+    end
+    if repo_dir and repo_dir ~= "" then
+        candidates[#candidates + 1] = repo_dir .. "/config/noctalia/config.toml"
+    end
+    candidates[#candidates + 1] = script_dir .. "/../config/noctalia/config.toml"
+    candidates[#candidates + 1] = data_home .. "/kaze-dots/config/noctalia/config.toml"
+    for _, p in ipairs(candidates) do
+        if fs.file_exists(p) then
+            return p
+        end
+    end
+    return nil
+end
+
+local mode = nil
+local target_style = nil
+local reload = true
+
+for i = 1, #arg do
+    local a = arg[i]
+    if a == "-h" or a == "--help" then
+        print_usage(io.stdout)
+        os.exit(0)
+    elseif a == "--menu" then
+        mode = "menu"
+    elseif a == "--current" then
+        mode = "current"
+    elseif a == "--list" then
+        mode = "list"
+    elseif a == "--no-reload" then
+        reload = false
+    elseif a:sub(1, 1) == "-" then
+        io.stderr:write("kaze-style: unknown option: " .. a .. "\n")
+        print_usage(io.stderr)
+        os.exit(2)
+    else
+        if target_style ~= nil then
+            io.stderr:write("kaze-style: unexpected extra argument: " .. a .. "\n")
+            os.exit(2)
+        end
+        target_style = a
+        mode = "apply"
+    end
+end
+
+if not mode then
+    mode = "menu"
+end
+
+if mode == "current" then
+    local cur, err = styles.current_style()
+    if not cur then
+        io.stderr:write("kaze-style: " .. err .. "\n")
+        os.exit(1)
+    end
+    io.stdout:write(cur .. "\n")
+    os.exit(0)
+elseif mode == "list" then
+    local cur = styles.current_style() or styles.DEFAULT
+    for _, preset in ipairs(styles.list()) do
+        local mark = (preset.id == cur) and "*" or " "
+        io.stdout:write(string.format("%s %-18s %s\n", mark, preset.id, preset.summary))
+    end
+    os.exit(0)
+elseif mode == "menu" then
+    local cur = styles.current_style() or styles.DEFAULT
+    local entries = {}
+    for _, preset in ipairs(styles.list()) do
+        local prefix = (preset.id == cur) and "* " or "  "
+        entries[#entries + 1] = string.format("%s%-18s | %s", prefix, preset.id, preset.summary)
+    end
+    local picked, pick_err = popups.run_dmenu(entries, { prompt = "Style > " })
+    if not picked then
+        io.stderr:write("kaze-style: " .. tostring(pick_err) .. "\n")
+        os.exit(1)
+    end
+    if picked == "" then
+        os.exit(0)
+    end
+    target_style = picked:match("^[%*%s]*([%a%d%-_]+)")
+    if not target_style or not styles.is_valid(target_style) then
+        io.stderr:write("kaze-style: invalid selection: " .. picked .. "\n")
+        os.exit(1)
+    end
+end
+
+local res, apply_err = styles.apply(target_style, {
+    reload = reload,
+    template_path = resolve_template_path(),
+})
+if not res then
+    io.stderr:write("kaze-style: " .. tostring(apply_err) .. "\n")
+    os.exit(target_style and not styles.is_valid(target_style) and 2 or 1)
+end
+
+local preset = styles.get(res.style)
+io.stdout:write(string.format("Applied style '%s' (%s)\n", res.style, preset.summary))
+if preset.note and os.getenv("KAZE_STYLE_QUIET") ~= "1" then
+    io.stdout:write("Note: " .. preset.note .. "\n")
+end

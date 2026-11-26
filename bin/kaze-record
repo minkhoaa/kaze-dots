@@ -1,104 +1,426 @@
 #!/usr/bin/env lua
 
-local action = arg[1] or "toggle"
-local help = #arg == 1 and (action == "--help" or action == "-h")
-local region = action == "--region"
-if help or #arg > 1 or not (region or action == "toggle" or action == "stop" or action == "status") then
-    (help and io.stdout or io.stderr):write("Usage: kaze-record [toggle|--region|stop|status]\n")
-    os.exit(help and 0 or 2)
+local function setup_path()
+    local script = (arg[0] or ""):gsub("'", "'\\''")
+    local link = io.popen("(readlink -f -- '" .. script .. "' || /usr/bin/readlink -f -- '" .. script .. "') 2>/dev/null")
+    local resolved = link and link:read("*l")
+    if link then link:close() end
+    local repo = ((resolved or arg[0]):match("^(.*)/[^/]+$") or ".") .. "/../lua"
+    local data = os.getenv("XDG_DATA_HOME") or ""
+    if data == "" then data = (os.getenv("HOME") or "") .. "/.local/share" end
+    package.path = table.concat({
+        repo .. "/?.lua",
+        repo .. "/?/init.lua",
+        data .. "/kaze-dots/lua/?.lua",
+        data .. "/kaze-dots/lua/?/init.lua",
+        package.path,
+    }, ";")
 end
 
-local script = arg[0]:gsub("'", "'\\''")
-local link = io.popen("(readlink -f -- '" .. script .. "' || /usr/bin/readlink -f -- '" .. script .. "') 2>/dev/null")
-local resolved = link and link:read("*l")
-if link then link:close() end
-local repo = ((resolved or arg[0]):match("^(.*)/[^/]+$") or ".") .. "/../lua"
-local data = os.getenv("XDG_DATA_HOME") or ""
-if data == "" then data = os.getenv("HOME") .. "/.local/share" end
-package.path = table.concat({ repo .. "/?.lua", repo .. "/?/init.lua", data .. "/kaze-dots/lua/?.lua",
-    data .. "/kaze-dots/lua/?/init.lua", package.path }, ";")
+setup_path()
 
 local fs = require("kaze.fs")
 local capture = require("kaze.capture")
+local popups = require("kaze.popups")
 local utility = require("kaze.utility")
+
 local unit = "kaze-record.service"
 local q = fs.shell_quote
-local function fail(msg) utility.fail("kaze-record", msg) end
+
+local function usage(out)
+    out:write("Usage: kaze-record [toggle|start|stop|status|--menu|--bar] [--region] [--audio[=desktop|mic|off]] [--gif]\n")
+end
+
+local function fail(msg)
+    utility.fail("kaze-record", msg)
+end
+
 local function get(...)
     local properties = utility.properties(unit, ...)
     if not properties then fail("cannot query " .. unit) end
     return properties
 end
+
 local function has_data(path)
     return path and os.execute("test -s " .. q(path))
 end
 
-if action == "status" then
+local function parse_args(argv)
+    local opts = {
+        action = nil,
+        region = false,
+        audio = nil,
+        gif = false,
+    }
+    local i = 1
+    while i <= #argv do
+        local a = argv[i]
+        if a == "-h" or a == "--help" then
+            usage(io.stdout)
+            os.exit(0)
+        elseif a == "toggle" or a == "start" or a == "stop" or a == "status" or a == "--menu" or a == "--bar" then
+            if opts.action then
+                usage(io.stderr)
+                os.exit(2)
+            end
+            opts.action = a
+        elseif a == "--region" then
+            opts.region = true
+        elseif a == "--gif" then
+            opts.gif = true
+        elseif a == "--audio" then
+            if opts.audio then
+                usage(io.stderr)
+                os.exit(2)
+            end
+            local next_a = argv[i + 1]
+            if next_a == "desktop" or next_a == "mic" or next_a == "off" then
+                opts.audio = next_a
+                i = i + 1
+            else
+                opts.audio = "desktop"
+            end
+        elseif a:sub(1, 8) == "--audio=" then
+            if opts.audio then
+                usage(io.stderr)
+                os.exit(2)
+            end
+            local val = a:sub(9)
+            if val ~= "desktop" and val ~= "mic" and val ~= "off" then
+                usage(io.stderr)
+                os.exit(2)
+            end
+            opts.audio = val
+        else
+            usage(io.stderr)
+            os.exit(2)
+        end
+        i = i + 1
+    end
+    opts.action = opts.action or "toggle"
+    if (opts.action == "stop" or opts.action == "status" or opts.action == "--menu" or opts.action == "--bar")
+        and (opts.region or opts.audio or opts.gif) then
+        usage(io.stderr)
+        os.exit(2)
+    end
+    if opts.gif and opts.audio and opts.audio ~= "off" then
+        io.stderr:write("kaze-record: --gif cannot be combined with --audio\n")
+        os.exit(2)
+    end
+    return opts
+end
+
+local function toml_quote(s)
+    return '"' .. tostring(s):gsub("\\", "\\\\"):gsub('"', '\\"') .. '"'
+end
+
+local function sync_bar_indicator(recording, audio_mode, gif_mode)
+    if not fs.command_exists("noctalia") then
+        return
+    end
+    local wtype = fs.capture("noctalia msg config-get widget.record.type 2>/dev/null")
+    if not wtype then
+        return
+    end
+    wtype = wtype:gsub("^%s+", ""):gsub("%s+$", ""):gsub("^['\"]", ""):gsub("['\"]$", "")
+    if wtype ~= "custom_button" then
+        return
+    end
+    local glyph, color, tooltip
+    if recording then
+        glyph = "circle-dot"
+        color = "error"
+        local mode_tag = gif_mode and "GIF" or (audio_mode and audio_mode ~= "" and "Video + Audio" or "Video")
+        tooltip = "Recording active (" .. mode_tag .. ") — click to stop"
+    else
+        glyph = "video"
+        color = "on_surface_variant"
+        tooltip = "Screen Recorder (Left: Menu, Right: Toggle)"
+    end
+    os.execute("noctalia msg config-set widget.record.glyph " .. q(toml_quote(glyph)) .. " >/dev/null 2>&1 || true")
+    os.execute("noctalia msg config-set widget.record.icon_color " .. q(toml_quote(color)) .. " >/dev/null 2>&1 || true")
+    os.execute("noctalia msg config-set widget.record.tooltip " .. q(toml_quote(tooltip)) .. " >/dev/null 2>&1 || true")
+end
+
+local function notify_saved(title, path)
+    if fs.command_exists("notify-send") then
+        os.execute("notify-send -a kaze-record -t 2500 -- " .. q(title) .. " " .. q(path) .. " 2>/dev/null || true")
+    end
+end
+
+local function convert_mp4_to_gif(mp4_path, gif_path)
+    if not fs.command_exists("ffmpeg") then
+        return nil, "ffmpeg not found in PATH"
+    end
+    if not fs.mkdir_p(fs.dirname(gif_path)) then
+        return nil, "cannot create output directory"
+    end
+    local tmp_gif = gif_path .. ".part.gif"
+    local vf = "fps=15,scale='min(1280,iw)':-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer"
+    local cmd = string.format(
+        "ffmpeg -v error -y -i %s -vf %s %s >/dev/null 2>&1",
+        q(mp4_path),
+        q(vf),
+        q(tmp_gif)
+    )
+    local ok = os.execute(cmd)
+    if not (ok == true or ok == 0) or not has_data(tmp_gif) then
+        os.remove(tmp_gif)
+        return nil, "ffmpeg GIF conversion failed"
+    end
+    local ren_ok, ren_err = os.rename(tmp_gif, gif_path)
+    if not ren_ok then
+        os.remove(tmp_gif)
+        return nil, "cannot finalize GIF: " .. tostring(ren_err)
+    end
+    return gif_path
+end
+
+local function resolve_audio_device(mode)
+    if not mode or mode == "off" then
+        return ""
+    end
+    if not fs.command_exists("pactl") then
+        if mode == "mic" then
+            return "default"
+        end
+        fail("pactl not found in PATH (required for --audio=desktop)")
+    end
+    if mode == "desktop" then
+        local sink = fs.capture("pactl get-default-sink 2>/dev/null")
+        sink = sink and sink:gsub("%s+$", "") or ""
+        if sink ~= "" and sink ~= "@DEFAULT_SINK@" then
+            return sink .. ".monitor"
+        end
+        local sources = fs.capture("pactl list sources short 2>/dev/null") or ""
+        for line in sources:gmatch("[^\r\n]+") do
+            local name = line:match("^%S+%s+(%S+%.monitor)%s")
+            if name then
+                return name
+            end
+        end
+        fail("no PipeWire/PulseAudio monitor source found for system audio")
+    elseif mode == "mic" then
+        local src = fs.capture("pactl get-default-source 2>/dev/null")
+        src = src and src:gsub("%s+$", "") or ""
+        if src ~= "" and src ~= "@DEFAULT_SOURCE@" then
+            return src
+        end
+        return "default"
+    end
+    return ""
+end
+
+local function stop_active(dir)
+    local env_path = dir .. "/record.env"
+    local receipt = dir .. "/record.done"
+    local env = fs.read_file(env_path)
+    local path = env and fs.read_env_entry(env, "KAZE_RECORD_FILE")
+    local fmt = env and fs.read_env_entry(env, "KAZE_RECORD_FORMAT") or ""
+    local gif_path = env and fs.read_env_entry(env, "KAZE_RECORD_GIF_PATH") or ""
+    local stopped = utility.change(unit, "stop") -- synchronous; SIGINT then bounded systemd timeout
+    local completed = fs.read_file(receipt)
+    os.remove(receipt)
+    sync_bar_indicator(false)
+    if not stopped or not path or completed ~= path .. "\n" then
+        fail("recording may be incomplete" .. (path and (": " .. path) or " (see journalctl --user -u " .. unit .. ")"))
+    end
+    if fmt == "gif" and gif_path ~= "" then
+        local out_gif, gif_err = convert_mp4_to_gif(path, gif_path)
+        if not out_gif then
+            fail(gif_err .. " (source MP4 kept at: " .. path .. ")")
+        end
+        os.remove(path)
+        print(out_gif)
+        notify_saved("GIF saved", out_gif)
+        return
+    end
+    pcall(fs.write_atomic, dir .. "/record.last", path .. "\n")
+    print(path)
+    notify_saved("Recording saved", path)
+end
+
+local function start_recording(dir, opts)
+    for _, dependency in ipairs({ "wf-recorder", "ffprobe" }) do
+        if not fs.command_exists(dependency) then fail(dependency .. " not found in PATH") end
+    end
+    if opts.gif and not fs.command_exists("ffmpeg") then
+        fail("ffmpeg not found in PATH")
+    end
+    local session = require("kaze.session")
+    if not session.is_active() then fail("no active Kaze session") end
+
+    local output, geom
+    if opts.region then
+        if not fs.command_exists("slurp") then fail("slurp not found in PATH") end
+        -- Crop to the selected output. wf-recorder can otherwise silently fall
+        -- back to recording the whole display for an out-of-bounds rectangle.
+        local picked = fs.capture("slurp -f " .. q("%x,%y %Wx%H\n%o\n") .. " </dev/null")
+        if not picked or picked == "" then return end
+        geom, output = picked:match("^(%-?%d+,%-?%d+ [1-9]%d*x[1-9]%d*)\n([%w_.:%-]+)\n$")
+        if not output then fail("selection does not belong to a single output") end
+    else
+        output = capture.focused_output(fs.capture("timeout 3s hyprctl -j monitors"))
+        if not output then fail("cannot find the focused Hyprland output") end
+    end
+    if not session.is_active() then fail("Kaze session ended before capture") end
+
+    local videos = capture.directory("VIDEOS", "Videos", "Recordings")
+    if videos:find("[%z\r\n]") then fail("invalid XDG Videos path") end
+
+    local audio_dev = ""
+    if not opts.gif and opts.audio and opts.audio ~= "off" then
+        audio_dev = resolve_audio_device(opts.audio)
+    end
+
+    local receipt = dir .. "/record.done"
+    local env_path = dir .. "/record.env"
+    os.remove(receipt)
+
+    local rec_path, gif_path
+    if opts.gif then
+        gif_path = capture.reserve(videos, "gif")
+        if not gif_path then fail("cannot reserve a GIF in " .. videos) end
+        rec_path = capture.reserve(dir, "mp4")
+        if not rec_path then
+            os.remove(gif_path)
+            fail("cannot reserve temporary MP4 in " .. dir)
+        end
+    else
+        rec_path = capture.reserve(videos, "mp4")
+        if not rec_path then fail("cannot reserve an MP4 in " .. videos) end
+    end
+
+    local entry = fs.env_entry
+    local payload = entry("KAZE_RECORD_FILE", rec_path)
+        .. entry("KAZE_RECORD_OUTPUT", output)
+        .. entry("KAZE_RECORD_REGION", geom or "")
+        .. entry("KAZE_RECORD_AUDIO", audio_dev)
+        .. entry("KAZE_RECORD_FORMAT", opts.gif and "gif" or "mp4")
+        .. entry("KAZE_RECORD_GIF_PATH", gif_path or "")
+
+    local written, err = pcall(fs.write_atomic, env_path, payload)
+    if not written or not utility.change(unit, "start") then
+        os.remove(env_path)
+        if not has_data(rec_path) then os.remove(rec_path) end
+        if gif_path and not has_data(gif_path) then os.remove(gif_path) end
+        sync_bar_indicator(false)
+        fail(err and tostring(err) or "recorder could not start; the recording may be incomplete (see journalctl --user -u " .. unit .. ")")
+    end
+    sync_bar_indicator(true, audio_dev, opts.gif)
+end
+
+local function run_menu(dir, state)
+    if utility.active(state) or state == "deactivating" then
+        local choice, err = popups.run_dmenu({ "⏹  Stop Recording" }, { prompt = "Record > " })
+        if not choice then fail(err or "failed to open menu") end
+        if choice == "" then return end
+        stop_active(dir)
+        return
+    end
+
+    local last_mp4 = fs.read_file(dir .. "/record.last")
+    last_mp4 = last_mp4 and last_mp4:gsub("[\r\n]+$", "") or nil
+    if last_mp4 and (last_mp4 == "" or not has_data(last_mp4)) then
+        last_mp4 = nil
+    end
+
+    local choices = {
+        { label = "󰍹  Fullscreen (Video)", region = false, audio = nil, gif = false },
+        { label = "󰍹  Fullscreen + System Audio", region = false, audio = "desktop", gif = false },
+        { label = "󰍬  Fullscreen + Mic", region = false, audio = "mic", gif = false },
+        { label = "󰩭  Region (Video)", region = true, audio = nil, gif = false },
+        { label = "󰩭  Region + System Audio", region = true, audio = "desktop", gif = false },
+        { label = "󰩭  Region + Mic", region = true, audio = "mic", gif = false },
+        { label = "󰵸  Region → GIF", region = true, audio = nil, gif = true },
+        { label = "󰵸  Fullscreen → GIF", region = false, audio = nil, gif = true },
+    }
+    if last_mp4 and fs.command_exists("ffmpeg") then
+        choices[#choices + 1] = { label = "󰈟  Convert Last MP4 → GIF", convert_last = last_mp4 }
+    end
+
+    local labels = {}
+    local by_label = {}
+    for _, c in ipairs(choices) do
+        labels[#labels + 1] = c.label
+        by_label[c.label] = c
+    end
+
+    local picked, err = popups.run_dmenu(labels, { prompt = "Record > " })
+    if not picked then fail(err or "failed to open menu") end
+    if picked == "" then return end
+
+    local item = by_label[picked]
+    if not item then
+        fail("unrecognized recording option '" .. picked .. "'")
+    end
+    if item.convert_last then
+        local videos = capture.directory("VIDEOS", "Videos", "Recordings")
+        local gif_path = capture.reserve(videos, "gif")
+        if not gif_path then fail("cannot reserve a GIF in " .. videos) end
+        local out_gif, gif_err = convert_mp4_to_gif(item.convert_last, gif_path)
+        if not out_gif then
+            os.remove(gif_path)
+            fail(gif_err)
+        end
+        print(out_gif)
+        notify_saved("GIF saved", out_gif)
+        return
+    end
+
+    start_recording(dir, {
+        region = item.region,
+        audio = item.audio,
+        gif = item.gif,
+    })
+end
+
+local opts = parse_args(arg)
+
+if opts.action == "status" then
     print(utility.active(get("ActiveState").ActiveState) and "on" or "off")
     return
 end
 
 local dir = fs.private_runtime_dir()
 if not dir then fail("cannot prepare $XDG_RUNTIME_DIR/kaze") end
-local receipt = dir .. "/record.done"
+
 if os.getenv("KAZE_RECORD_LOCKED") ~= "1" then
     if not fs.command_exists("flock") then fail("flock not found in PATH") end
-    local status = fs.exit_status(os.execute("umask 077; exec flock -n --close --conflict-exit-code 75 "
-        .. q(dir .. "/record.lock") .. " env KAZE_RECORD_LOCKED=1 " .. q(arg[0]) .. " " .. q(action)))
+    local forwarded = { "umask 077; exec flock -n --close --conflict-exit-code 75", q(dir .. "/record.lock"),
+        "env KAZE_RECORD_LOCKED=1", q(arg[0]) }
+    for i = 1, #arg do
+        forwarded[#forwarded + 1] = q(arg[i])
+    end
+    local status = fs.exit_status(os.execute(table.concat(forwarded, " ")))
     os.exit(status == 75 and 0 or status) -- overlapping toggle/selection: ignore the second call
 end
 
-local env_path = dir .. "/record.env"
 local state = get("ActiveState").ActiveState
-if utility.active(state) or state == "deactivating" then
-    local env = fs.read_file(env_path)
-    local path = env and fs.read_env_entry(env, "KAZE_RECORD_FILE")
-    local stopped = utility.change(unit, "stop") -- synchronous; SIGINT then bounded systemd timeout
-    -- Systemd may unload the inactive unit immediately. Use the stop-post
-    -- receipt for this exact file, not an ExecMainStatus query after GC.
-    local completed = fs.read_file(receipt)
-    os.remove(receipt)
-    if not stopped or not path or completed ~= path .. "\n" then
-        fail("recording may be incomplete" .. (path and (": " .. path) or " (see journalctl --user -u " .. unit .. ")"))
+local is_running = utility.active(state) or state == "deactivating"
+
+if opts.action == "--bar" then
+    if is_running then
+        stop_active(dir)
+        return
     end
-    print(path)
-    os.execute("notify-send -a kaze-record -t 2500 -- 'Recording saved' " .. q(path) .. " 2>/dev/null")
+    run_menu(dir, state)
     return
-elseif action == "stop" then
+elseif opts.action == "--menu" then
+    run_menu(dir, state)
+    return
+end
+
+if is_running then
+    if opts.action == "start" then
+        return
+    end
+    stop_active(dir)
+    return
+elseif opts.action == "stop" then
+    sync_bar_indicator(false)
     if state == "failed" then fail("previous recording may be incomplete; see journalctl --user -u " .. unit) end
     return -- a stale click must not start a new recording
 end
 
-for _, dependency in ipairs({ "wf-recorder", "ffprobe" }) do
-    if not fs.command_exists(dependency) then fail(dependency .. " not found in PATH") end
-end
-local session = require("kaze.session")
-if not session.is_active() then fail("no active Kaze session") end
-local output, geom
-if region then
-    if not fs.command_exists("slurp") then fail("slurp not found in PATH") end
-    -- Crop to the selected output. wf-recorder can otherwise silently fall
-    -- back to recording the whole display for an out-of-bounds rectangle.
-    local picked = fs.capture("slurp -f " .. q("%x,%y %Wx%H\n%o\n") .. " </dev/null")
-    if not picked or picked == "" then return end
-    geom, output = picked:match("^(%-?%d+,%-?%d+ [1-9]%d*x[1-9]%d*)\n([%w_.:%-]+)\n$")
-    if not output then fail("selection does not belong to a single output") end
-else
-    output = capture.focused_output(fs.capture("timeout 3s hyprctl -j monitors"))
-    if not output then fail("cannot find the focused Hyprland output") end
-end
-if not session.is_active() then fail("Kaze session ended before capture") end
-
-local videos = capture.directory("VIDEOS", "Videos", "Recordings")
-if videos:find("[%z\r\n]") then fail("invalid XDG Videos path") end
-os.remove(receipt)
-local path = capture.reserve(videos, "mp4")
-if not path then fail("cannot reserve an MP4 in " .. videos) end
-local entry = fs.env_entry
-local written, err = pcall(fs.write_atomic, env_path, entry("KAZE_RECORD_FILE", path)
-    .. entry("KAZE_RECORD_OUTPUT", output) .. entry("KAZE_RECORD_REGION", geom or ""))
-if not written or not utility.change(unit, "start") then
-    os.remove(env_path)
-    if not has_data(path) then os.remove(path) end
-    fail(err and tostring(err) or "recorder could not start; the recording may be incomplete (see journalctl --user -u " .. unit .. ")")
-end
+start_recording(dir, opts)

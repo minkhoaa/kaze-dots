@@ -37,6 +37,7 @@ setup_path()
 
 local fs = require("kaze.fs")
 local hypr_user = require("kaze.hypr_user")
+local styles = require("kaze.styles")
 local toml_diff = require("kaze.toml_diff")
 
 local function usage(out)
@@ -129,6 +130,9 @@ if diff_mode then
         io.stderr:write("kaze-doctor: failed to read Noctalia config files for diff\n")
         os.exit(1)
     end
+    local saved_style, has_saved = styles.read_style()
+    local active_style = (has_saved and saved_style) or styles.detect_style(usr_text) or styles.DEFAULT
+    tpl_text = styles.render_template_for_style(tpl_text, active_style) or tpl_text
     local result = toml_diff.diff(tpl_text, usr_text)
     io.stdout:write(toml_diff.format_report(result, {
         user_path = noc_cfg,
@@ -174,8 +178,8 @@ local MINIMAL_BINS = {
 }
 
 local FULL_EXTRA_BINS = {
-    "slurp", "wf-recorder", "ffprobe", "hyprpicker",
-    "yazi", "imv", "zathura", "gnome-keyring-daemon", "fcitx5",
+    "slurp", "wf-recorder", "ffmpeg", "ffprobe", "hyprpicker",
+    "thunar", "yazi", "imv", "zathura", "gnome-keyring-daemon", "fcitx5",
     "fzf", "zoxide", "eza", "bat", "rg", "fd", "starship",
     "wl-mirror",
 }
@@ -220,12 +224,20 @@ for p in %s/hypr/*.lua \
          %s/hypr/xdph.conf \
          %s/foot/foot.ini \
          %s/starship.toml \
+         %s/yazi/*.toml \
+         %s/zathura/zathurarc \
+         %s/imv/config \
+         %s/mimeapps.list \
+         %s/gtk-3.0/settings.ini \
+         %s/gtk-3.0/kaze-thunar.css \
+         %s/Thunar/uca.xml \
          %s/.zshrc \
          %s/.zprofile \
          %s/zsh/conf.d \
          %s/systemd/user/kaze-* \
          %s/systemd/user/foot-server.service.d/*.conf \
          %s/systemd/user/foot-server.socket.d/*.conf \
+         %s/applications/yazi.desktop \
          %s/kaze-dots/lua/kaze \
          %s/kaze-*; do
     if [ -L "$p" ] && [ ! -e "$p" ]; then
@@ -239,12 +251,20 @@ done
         q(config_home),
         q(config_home),
         q(config_home),
+        q(config_home),
+        q(config_home),
+        q(config_home),
+        q(config_home),
+        q(config_home),
+        q(config_home),
+        q(config_home),
         q(fs.home()),
         q(fs.home()),
         q(config_home),
         q(config_home),
         q(config_home),
         q(config_home),
+        q(data_home),
         q(data_home),
         q(bin_home)
     )
@@ -264,10 +284,20 @@ done
 
     local required_links = {
         data_home .. "/kaze-dots/lua/kaze",
+        data_home .. "/applications/yazi.desktop",
         config_home .. "/hypr/hyprland.lua",
         config_home .. "/hypr/xdph.conf",
         config_home .. "/foot/foot.ini",
         config_home .. "/starship.toml",
+        config_home .. "/yazi/yazi.toml",
+        config_home .. "/yazi/theme.toml",
+        config_home .. "/yazi/keymap.toml",
+        config_home .. "/zathura/zathurarc",
+        config_home .. "/imv/config",
+        config_home .. "/mimeapps.list",
+        config_home .. "/gtk-3.0/settings.ini",
+        config_home .. "/gtk-3.0/kaze-thunar.css",
+        config_home .. "/Thunar/uca.xml",
         fs.home() .. "/.zshrc",
         fs.home() .. "/.zprofile",
         config_home .. "/zsh/conf.d",
@@ -314,12 +344,27 @@ do
         report_fail("noctalia: missing " .. noc_cfg)
     end
 
+    local saved_style, style_state = styles.read_style()
+    local active_style = saved_style
+    if not active_style then
+        report_warn("style: " .. style_state)
+        active_style = styles.DEFAULT
+    else
+        if style_state == false and fs.file_exists(noc_cfg) then
+            active_style = styles.detect_style(fs.read_file(noc_cfg)) or active_style
+        end
+        if styles.get(active_style) then
+            report_ok("style: active preset '" .. active_style .. "'")
+        end
+    end
+
     local tpl_path = resolve_noctalia_template()
     if tpl_path and fs.file_exists(noc_cfg) then
         local tpl_text = fs.read_file(tpl_path)
         local usr_text = fs.read_file(noc_cfg)
         if tpl_text and usr_text then
-            local diff_res = toml_diff.diff(tpl_text, usr_text)
+            local style_tpl = styles.render_template_for_style(tpl_text, active_style) or tpl_text
+            local diff_res = toml_diff.diff(style_tpl, usr_text)
             if diff_res.has_drift then
                 local sec_n, key_n, item_n = toml_diff.summary_counts(diff_res)
                 report_warn(string.format(

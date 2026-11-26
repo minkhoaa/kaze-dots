@@ -60,6 +60,17 @@ hl.window_rule({
     size = "(monitor_w*0.58) (monitor_h*0.64)",
 })
 
+-- Thunar modal/progress/rename/properties dialogs float cleanly without disrupting tiled layouts
+hl.window_rule({
+    name = "thunar-dialogs",
+    match = {
+        class = "^[Tt]hunar$",
+        title = "^(File Operation Progress|Confirm to replace files|Rename \".*\"|Create New Folder|Create Document|.* - Properties)$",
+    },
+    float = true,
+    center = true,
+})
+
 -- Noctalia GUI Settings floats centered
 hl.window_rule({
     name = "noctalia-settings",
@@ -69,7 +80,7 @@ hl.window_rule({
     size = "(monitor_w*0.5625) (monitor_h*0.85)",
 })
 
--- Floating TUI drawer (sysmon / btop) and top dropdown
+-- Floating TUI drawer (sysmon / btop), centered Mirror Optimizer TUI, and top dropdown
 hl.window_rule({
     name = "kaze-tui-drawer",
     match = { class = "^kaze-tui$" },
@@ -77,6 +88,14 @@ hl.window_rule({
     size = "(monitor_w*0.42) (monitor_h-24)",
     move = "58 12",
     animation = "slide left",
+})
+
+hl.window_rule({
+    name = "kaze-mirror-tui",
+    match = { class = "^kaze-mirror-tui$" },
+    float = true,
+    center = true,
+    size = "(monitor_w*0.62) (monitor_h*0.78)",
 })
 
 hl.window_rule({

@@ -56,9 +56,10 @@ Optional / on-demand units:
 2. **Hyprland Settings (`lua/kaze/hypr_user.lua`)**:
    - Deep-merges built-in defaults → `~/.config/kaze/profile` → optional `~/.config/hypr/user.lua` (loaded in an isolated environment via `loadfile(..., "t", {})` with `pcall` fallback so syntax errors never break Hyprland startup).
    - Runtime display overrides (from `kaze-display`) are persisted per session in `$XDG_RUNTIME_DIR/kaze/monitors.lua` and re-applied on `hyprctl reload`.
-3. **Zsh & Prompt (`config/zsh/`, `config/starship/starship.toml`)**:
+3. **Zsh & Daily-Driver Apps (`config/zsh/`, `config/starship/`, `config/yazi/`, `config/zathura/`, `config/imv/`, `config/mimeapps.list`)**:
    - Modular `conf.d/*.zsh` (`10-options`, `20-completion`, `30-keybinds`, `40-tools`, `50-aliases`, `60-prompt`) with guarded optional tool integration (`fzf`, `zoxide`, `eza`, `bat`, `ripgrep`, `fd`, `starship`).
    - Personal machine overrides live in `~/.config/zsh/user.zsh` and `~/.config/zsh/zprofile.local` (never overwritten by `apply.sh`).
+   - Omarchy-sharp flat configs for `yazi` (Foot Sixel previews, ANSI theme, Vim keymap), `zathura`, `imv`, `mimeapps.list`, and `applications/yazi.desktop`.
 
 ## 4. Module Boundaries
 
@@ -70,8 +71,12 @@ lua/kaze/
 ├── hypr_user.lua      # Defaults + ~/.config/kaze/profile + safe ~/.config/hypr/user.lua loader
 ├── json.lua           # Strict pure-Lua JSON decoder (UTF-16 surrogates) & deterministic encoder
 ├── keybinds_data.lua  # Single pure-Lua shortcut registry shared by hypr/keybinds.lua & kaze-keys
+├── mirror.lua         # Pure-Lua pacman.conf parser, saturation math (Q1..Q4, B1/B4), validators
+├── mirror_tui.lua     # Pure-Lua 5-screen Omarchy ANSI TUI & sudo TTY handoff adapter
 ├── popups.lua         # Shared `noctalia dmenu` picker wrapper
+├── projects.lua       # Pure-Lua zoxide/fd project discovery & launch command builder
 ├── session.lua        # kaze-session.target lifecycle, session.env renderer, lock/DPMS helpers
+├── styles.lua         # Pure-Lua Noctalia v5 visual preset definitions & surgical TOML updater
 ├── toml_diff.lua      # Pure-Lua Noctalia config.toml section/key/widget drift checker
 └── utility.lua        # Shared systemd user unit query/start/stop helpers
 ```
@@ -83,6 +88,7 @@ lua/kaze/
 | Target Path | Source / Type |
 |---|---|
 | `$XDG_DATA_HOME/kaze-dots/lua/kaze` | Symlink → `<repo>/lua/kaze` |
+| `$XDG_DATA_HOME/applications/yazi.desktop` | Symlink → `<repo>/config/applications/yazi.desktop` |
 | `$XDG_CONFIG_HOME/hypr/{hyprland,env,core,rules,execs,keybinds}.lua` | Symlink → `<repo>/hypr/*.lua` |
 | `$XDG_CONFIG_HOME/hypr/xdph.conf` | Symlink → `<repo>/config/hypr/xdph.conf` |
 | `$XDG_CONFIG_HOME/hypr/user.lua` | Seeded once from `templates/hypr-user.lua.example`; never overwritten or deleted on rollback |
@@ -90,8 +96,13 @@ lua/kaze/
 | `$XDG_CONFIG_HOME/foot/foot.ini` | Symlink → `<repo>/config/foot/foot.ini` |
 | `$XDG_CONFIG_HOME/foot/themes/noctalia` | Empty placeholder created on first apply; populated live by Noctalia's `foot` template |
 | `$XDG_CONFIG_HOME/starship.toml` | Symlink → `<repo>/config/starship/starship.toml` |
+| `$XDG_CONFIG_HOME/yazi/{yazi,theme,keymap}.toml` | Symlinks → `<repo>/config/yazi/*.toml` |
+| `$XDG_CONFIG_HOME/zathura/zathurarc` | Symlink → `<repo>/config/zathura/zathurarc` |
+| `$XDG_CONFIG_HOME/imv/config` | Symlink → `<repo>/config/imv/config` |
+| `$XDG_CONFIG_HOME/mimeapps.list` | Symlink → `<repo>/config/mimeapps.list` |
 | `~/.zshrc`, `~/.zprofile`, `$XDG_CONFIG_HOME/zsh/conf.d` | Symlinks → `<repo>/config/zsh/{zshrc,zprofile,conf.d}` |
 | `$XDG_CONFIG_HOME/systemd/user/` | Symlinks → `<repo>/config/systemd/user/` units and `foot-server` drop-ins |
-| `~/.local/bin/kaze-*` | Symlinks → `<repo>/bin/kaze-*` (7 helper CLIs) |
+| `~/.local/bin/kaze-*` | Symlinks → `<repo>/bin/kaze-*` (9 helper CLIs) |
 | `$XDG_CONFIG_HOME/kaze/profile` | Written by `scripts/install.sh` (`minimal` or `full`) |
+| `$XDG_CONFIG_HOME/kaze/style` | Active Noctalia visual preset (`omarchy-rail`, `floating-islands`, `concave-notch`, `dynamic-island`) |
 | `$XDG_RUNTIME_DIR/kaze/` | Private (`0700`) per-session runtime state (`session.env`, `display-state.json`, `monitors.lua`, `record.*`) |

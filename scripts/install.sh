@@ -26,6 +26,8 @@ fi
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="minimal"
 PROFILE_EXPLICIT=false
+STYLE="dynamic-island"
+STYLE_EXPLICIT=false
 DRY_RUN=false
 SKIP_PACKAGES=false
 SKIP_PACKAGES_EXPLICIT=false
@@ -41,10 +43,12 @@ Usage: $0 [OPTIONS]
 
 Installs official Arch Linux [core]/[extra] packages for the chosen Kaze + Noctalia profile
 (zero AUR dependencies), applies symlinks and default Noctalia/Foot configs via scripts/apply.sh,
-and records the active profile in ~/.config/kaze/profile without overwriting hypr/user.lua.
+and records the active profile and visual style under ~/.config/kaze without overwriting hypr/user.lua.
 
 Options:
   --profile <minimal|full>  Select installation profile (default: minimal)
+  --style <preset>          Select Noctalia visual preset (dynamic-island, omarchy-rail,
+                            floating-islands, concave-notch; default: dynamic-island)
   --dry-run, --check        Print installation plan without writing any files
   --skip-packages           Skip pacman package installation and apply dotfiles only
   --no-zsh                  Do not change the default login shell to Zsh
@@ -71,6 +75,20 @@ while (( $# > 0 )); do
         --profile=*)
             PROFILE="${1#--profile=}"
             PROFILE_EXPLICIT=true
+            shift
+            ;;
+        --style)
+            if (( $# < 2 )) || [[ -z "${2:-}" ]]; then
+                echo "install.sh: --style requires an argument (omarchy-rail, floating-islands, concave-notch, dynamic-island)" >&2
+                exit 2
+            fi
+            STYLE="$2"
+            STYLE_EXPLICIT=true
+            shift 2
+            ;;
+        --style=*)
+            STYLE="${1#--style=}"
+            STYLE_EXPLICIT=true
             shift
             ;;
         --dry-run|--check)
@@ -125,6 +143,14 @@ case "$PROFILE" in
         ;;
 esac
 
+case "$STYLE" in
+    omarchy-rail|floating-islands|concave-notch|dynamic-island) ;;
+    *)
+        echo "install.sh: invalid style '$STYLE' (expected: omarchy-rail, floating-islands, concave-notch, dynamic-island)" >&2
+        exit 2
+        ;;
+esac
+
 # shellcheck source=scripts/packages.sh
 source "$REPO_DIR/scripts/packages.sh"
 
@@ -135,6 +161,7 @@ DATA_HOME=$(realpath -ms -- "${XDG_DATA_HOME:-$HOME/.local/share}")
 CONFIG_HOME=$(realpath -ms -- "${XDG_CONFIG_HOME:-$HOME/.config}")
 BIN_HOME="$HOME/.local/bin"
 PROFILE_FILE="$CONFIG_HOME/kaze/profile"
+STYLE_FILE="$CONFIG_HOME/kaze/style"
 LAST_BACKUP="$CONFIG_HOME/kaze/last-backup"
 
 if [[ "$DRY_RUN" == true ]]; then
@@ -145,6 +172,7 @@ if [[ "$DRY_RUN" == true ]]; then
         APPLY_FLAGS+=(--yes)
     fi
     echo "Kaze profile: $PROFILE"
+    echo "Kaze style: $STYLE"
     echo "kaze-dots official Arch packages (${#PACKAGES[@]} total, 0 AUR):"
     printf '  %s\n' "${PACKAGES[@]}"
     if [[ "$SKIP_PACKAGES" == true ]]; then
@@ -156,6 +184,7 @@ if [[ "$DRY_RUN" == true ]]; then
     echo "  CONFIG_HOME=$CONFIG_HOME"
     echo "  DATA_HOME=$DATA_HOME"
     echo "  PROFILE_FILE=$PROFILE_FILE (profile=$PROFILE, preserving hypr/user.lua)"
+    echo "  STYLE_FILE=$STYLE_FILE (style=$STYLE)"
     if [[ "$SKIP_PACKAGES" == false ]] && [[ "$SET_ZSH" != "false" ]]; then
         echo "Default shell: chsh -s /usr/bin/zsh ${USER:-$(id -un)} (if not already zsh)"
     fi
@@ -542,10 +571,10 @@ tui_render_header() {
         frame_center "KAZE ${G_BULLET} Hyprland 0.57 + Noctalia v5.x (0 AUR)" "${C_BOLD}${C_CYAN}"
     fi
 
-    local labels=("1 Profile" "2 Options" "3 Review" "4 Install")
+    local labels=("1 Profile" "2 Style" "3 Options" "4 Review" "5 Install")
     local sep=" ${G_H}${G_H} "
     local plain="" formatted="" i idx marker
-    for (( i=0; i<4; i++ )); do
+    for (( i=0; i<5; i++ )); do
         idx=$(( i + 1 ))
         if (( idx < active_step )); then
             marker="$G_CHECK"
@@ -560,7 +589,7 @@ tui_render_header() {
             plain+="${marker} ${labels[$i]}"
             formatted+="${C_MUTED}${marker} ${labels[$i]}${C_RESET}"
         fi
-        if (( i < 3 )); then
+        if (( i < 4 )); then
             plain+="$sep"
             formatted+="${C_BORDER}${sep}${C_RESET}"
         fi
@@ -571,7 +600,7 @@ tui_render_header() {
         tui_spaces "$sp"
         frame_line "${REPLY}${formatted}"
     else
-        frame_center "Step ${active_step}/4: ${labels[$((active_step - 1))]}" "${C_BOLD}${C_CYAN}"
+        frame_center "Step ${active_step}/5: ${labels[$((active_step - 1))]}" "${C_BOLD}${C_CYAN}"
     fi
 }
 
@@ -681,7 +710,7 @@ draw_screen_profile() {
         local fmt="${C_ACTIVE_BORDER}${bg}${G_BAR} ${C_PURPLE}${bg}${G_DOT_ON} ${C_BOLD}${C_FG}${bg}Full       ${C_PURPLE}${bg}${full_count} pkgs ${G_BULLET} 0 AUR${C_RESET}"
         if (( ${#hc} < ${#h_plain} )); then fmt="${C_BOLD}${C_PURPLE}${bg}${hc}${C_RESET}"; fi
         tui_box_row "${#hc}" "$fmt" "$bg"
-        tui_clip "+ wf-recorder, hyprpicker, wl-mirror, yazi, imv, zathura" "$desc_max"
+        tui_clip "+ wf-recorder, hyprpicker, wl-mirror, thunar, imv, zathura" "$desc_max"
         tui_box_row "$(( 6 + ${#REPLY} ))" "${C_ACTIVE_BORDER}${bg}${G_BAR}     ${C_FG}${bg}${REPLY}${C_RESET}" "$bg"
         tui_clip "+ fcitx5-bamboo, keyring, polkit_agent, starship & CLI" "$desc_max"
         tui_box_row "$(( 6 + ${#REPLY} ))" "${C_ACTIVE_BORDER}${bg}${G_BAR}     ${C_MUTED}${bg}${REPLY}${C_RESET}" "$bg"
@@ -689,7 +718,7 @@ draw_screen_profile() {
         local h_plain="  ${G_DOT_OFF} Full       ${full_count} pkgs ${G_BULLET} 0 AUR"
         tui_clip "$h_plain" "$TUI_BOX_W"
         tui_box_row "${#REPLY}" "${C_FG}${REPLY}${C_RESET}"
-        tui_clip "+ wf-recorder, hyprpicker, wl-mirror, yazi, imv, zathura" "$desc_max"
+        tui_clip "+ wf-recorder, hyprpicker, wl-mirror, thunar, imv, zathura" "$desc_max"
         tui_box_row "$(( 6 + ${#REPLY} ))" "${C_MUTED}      ${REPLY}${C_RESET}"
         tui_clip "+ fcitx5-bamboo, keyring, polkit_agent, starship & CLI" "$desc_max"
         tui_box_row "$(( 6 + ${#REPLY} ))" "${C_MUTED}      ${REPLY}${C_RESET}"
@@ -697,6 +726,52 @@ draw_screen_profile() {
 
     tui_box_bottom
     tui_render_footer "Up/Down Move   Enter Next   p Inspect Packages   q Quit"
+    frame_flush "$FRAME_LINES"
+}
+
+draw_style_card() {
+    local id="$1" title="$2" tag="$3" desc="$4"
+    local selected=false
+    [[ "$STYLE" == "$id" ]] && selected=true
+    local desc_max=$(( TUI_BOX_W - 6 ))
+    local tag_suffix=""
+    [[ -n "$tag" ]] && tag_suffix="   ${tag}"
+
+    if [[ "$selected" == true ]]; then
+        local bg="$C_BG_SEL"
+        local h_plain="${G_BAR} ${G_DOT_ON} ${title}${tag_suffix}"
+        tui_clip "$h_plain" "$TUI_BOX_W"
+        local hc="$REPLY"
+        local tag_fmt=""
+        [[ -n "$tag" ]] && tag_fmt="   ${C_GREEN}${bg}${tag}"
+        local fmt="${C_ACTIVE_BORDER}${bg}${G_BAR} ${C_CYAN}${bg}${G_DOT_ON} ${C_BOLD}${C_FG}${bg}${title}${tag_fmt}${C_RESET}"
+        if (( ${#hc} < ${#h_plain} )); then fmt="${C_BOLD}${C_CYAN}${bg}${hc}${C_RESET}"; fi
+        tui_box_row "${#hc}" "$fmt" "$bg"
+        tui_clip "$desc" "$desc_max"
+        tui_box_row "$(( 6 + ${#REPLY} ))" "${C_ACTIVE_BORDER}${bg}${G_BAR}     ${C_MUTED}${bg}${REPLY}${C_RESET}" "$bg"
+    else
+        local h_plain="  ${G_DOT_OFF} ${title}${tag_suffix}"
+        tui_clip "$h_plain" "$TUI_BOX_W"
+        tui_box_row "${#REPLY}" "${C_FG}${REPLY}${C_RESET}"
+        tui_clip "$desc" "$desc_max"
+        tui_box_row "$(( 6 + ${#REPLY} ))" "${C_MUTED}      ${REPLY}${C_RESET}"
+    fi
+}
+
+draw_screen_style() {
+    frame_reset
+    tui_render_header 2
+    tui_box_top
+    tui_box_text "Select Noctalia v5 visual style preset (0 extra RAM)" "${C_BOLD}${C_FG}"
+    tui_box_empty
+
+    draw_style_card "dynamic-island" "1 Dynamic Island" "[Default]" "3 top islands + hover-expanding center Dynamic Island"
+    draw_style_card "omarchy-rail" "2 Omarchy Rail" "" "Left vertical 42px bar, 0px sharp corners, 2px borders"
+    draw_style_card "floating-islands" "3 Floating Islands" "" "Transparent top bar, 3 independent capsule_group islands"
+    draw_style_card "concave-notch" "4 Concave Notch" "" "Flush top bar (margin_edge=0), Caelestia concave corners"
+
+    tui_box_bottom
+    tui_render_footer "Up/Down or 1-4 Select   Enter Next   Esc Back   p Packages"
     frame_flush "$FRAME_LINES"
 }
 
@@ -742,7 +817,7 @@ draw_opt_row() {
 
 draw_screen_options() {
     frame_reset
-    tui_render_header 2
+    tui_render_header 3
     tui_box_top
 
     get_packages_for_profile "$PROFILE"
@@ -752,11 +827,11 @@ draw_screen_options() {
         prof_upper="FULL"
         prof_col="$C_PURPLE"
     fi
-    local hdr_plain="Profile: ${prof_upper} (${#PACKAGES[@]} Arch [core]/[extra] packages ${G_BULLET} 0 AUR)"
+    local hdr_plain="Profile: ${prof_upper} (${#PACKAGES[@]} pkgs) ${G_BULLET} Style: ${STYLE}"
     tui_clip "$hdr_plain" "$TUI_BOX_W"
     local hc="$REPLY"
     if (( ${#hc} == ${#hdr_plain} )); then
-        tui_box_row "${#hc}" "${C_MUTED}Profile: ${C_BOLD}${prof_col}${prof_upper} ${C_MUTED}(${#PACKAGES[@]} Arch [core]/[extra] packages ${G_BULLET} 0 AUR)${C_RESET}"
+        tui_box_row "${#hc}" "${C_MUTED}Profile: ${C_BOLD}${prof_col}${prof_upper} ${C_MUTED}(${#PACKAGES[@]} pkgs) ${G_BULLET} Style: ${C_CYAN}${STYLE}${C_RESET}"
     else
         tui_box_row "${#hc}" "${prof_col}${hc}${C_RESET}"
     fi
@@ -836,7 +911,7 @@ draw_screen_options() {
 
 draw_screen_review() {
     frame_reset
-    tui_render_header 3
+    tui_render_header 4
     tui_box_top
     tui_box_text "Pre-flight review before writing changes" "${C_BOLD}${C_FG}"
     tui_box_mid
@@ -845,6 +920,7 @@ draw_screen_review() {
     local prof_col="$C_CYAN"
     [[ "$PROFILE" == "full" ]] && prof_col="$C_PURPLE"
     tui_box_kv 14 "Profile" "${PROFILE} (${#PACKAGES[@]} official Arch packages, 0 AUR)" "$prof_col"
+    tui_box_kv 14 "Visual style" "${STYLE} (switch anytime via kaze-style / Super+Shift+I)" "$C_CYAN"
 
     local pkg_desc="sudo pacman -S --needed"
     [[ "$PACMAN_NOCONFIRM" == true ]] && pkg_desc+=" --noconfirm"
@@ -964,8 +1040,9 @@ build_pkg_modal_lines() {
 draw_screen_packages() {
     frame_reset
     local step_num=1
-    [[ "$TUI_PREV_SCREEN" == "options" ]] && step_num=2
-    [[ "$TUI_PREV_SCREEN" == "review" ]] && step_num=3
+    [[ "$TUI_PREV_SCREEN" == "style" ]] && step_num=2
+    [[ "$TUI_PREV_SCREEN" == "options" ]] && step_num=3
+    [[ "$TUI_PREV_SCREEN" == "review" ]] && step_num=4
     tui_render_header "$step_num"
     tui_box_top
 
@@ -1058,6 +1135,7 @@ run_tui_wizard() {
         tui_measure_term
         case "$TUI_SCREEN" in
             profile)  draw_screen_profile ;;
+            style)    draw_screen_style ;;
             options)  draw_screen_options ;;
             review)   draw_screen_review ;;
             packages) draw_screen_packages ;;
@@ -1081,7 +1159,7 @@ run_tui_wizard() {
                     1) PROFILE="minimal" ;;
                     2) PROFILE="full" ;;
                     ENTER|RIGHT|TAB)
-                        TUI_SCREEN="options"
+                        TUI_SCREEN="style"
                         ;;
                     p|P)
                         TUI_PREV_SCREEN="profile"
@@ -1089,6 +1167,48 @@ run_tui_wizard() {
                         TUI_SCREEN="packages"
                         ;;
                     q|Q|ESC)
+                        tui_leave
+                        echo "Aborted."
+                        exit 1
+                        ;;
+                esac
+                ;;
+            style)
+                case "$key" in
+                    UP)
+                        case "$STYLE" in
+                            dynamic-island)   STYLE="concave-notch" ;;
+                            omarchy-rail)     STYLE="dynamic-island" ;;
+                            floating-islands) STYLE="omarchy-rail" ;;
+                            concave-notch)    STYLE="floating-islands" ;;
+                        esac
+                        STYLE_EXPLICIT=true
+                        ;;
+                    DOWN)
+                        case "$STYLE" in
+                            dynamic-island)   STYLE="omarchy-rail" ;;
+                            omarchy-rail)     STYLE="floating-islands" ;;
+                            floating-islands) STYLE="concave-notch" ;;
+                            concave-notch)    STYLE="dynamic-island" ;;
+                        esac
+                        STYLE_EXPLICIT=true
+                        ;;
+                    1) STYLE="dynamic-island"; STYLE_EXPLICIT=true ;;
+                    2) STYLE="omarchy-rail"; STYLE_EXPLICIT=true ;;
+                    3) STYLE="floating-islands"; STYLE_EXPLICIT=true ;;
+                    4) STYLE="concave-notch"; STYLE_EXPLICIT=true ;;
+                    ENTER|RIGHT|TAB)
+                        TUI_SCREEN="options"
+                        ;;
+                    LEFT|b|B|ESC)
+                        TUI_SCREEN="profile"
+                        ;;
+                    p|P)
+                        TUI_PREV_SCREEN="style"
+                        TUI_SCROLL=0
+                        TUI_SCREEN="packages"
+                        ;;
+                    q|Q)
                         tui_leave
                         echo "Aborted."
                         exit 1
@@ -1129,7 +1249,7 @@ run_tui_wizard() {
                         elif (( OPT_IDX == 4 )); then
                             OPT_BTN=$(( (OPT_BTN + 1) % 2 ))
                         elif [[ "$key" == "LEFT" ]]; then
-                            TUI_SCREEN="profile"
+                            TUI_SCREEN="style"
                         fi
                         ;;
                     SPACE)
@@ -1174,20 +1294,20 @@ run_tui_wizard() {
                                 if (( OPT_BTN == 0 )); then
                                     TUI_SCREEN="review"
                                 else
-                                    TUI_SCREEN="profile"
+                                    TUI_SCREEN="style"
                                 fi
                                 ;;
                         esac
                         ;;
                     ENTER)
                         if (( OPT_IDX == 4 && OPT_BTN == 1 )); then
-                            TUI_SCREEN="profile"
+                            TUI_SCREEN="style"
                         else
                             TUI_SCREEN="review"
                         fi
                         ;;
                     b|B|ESC)
-                        TUI_SCREEN="profile"
+                        TUI_SCREEN="style"
                         ;;
                     p|P)
                         TUI_PREV_SCREEN="options"
@@ -1391,7 +1511,7 @@ else
         fi
     fi
     if [[ "$AUTO_YES" == false ]] && [[ -t 0 ]]; then
-        read -r -p "Install kaze-dots (profile: $PROFILE) into $HOME? [Y/n] " reply
+        read -r -p "Install kaze-dots (profile: $PROFILE, style: $STYLE) into $HOME? [Y/n] " reply
         case "$reply" in
             ""|[yY]|[yY][eE][sS])
                 APPLY_FLAGS=(--yes)
@@ -1442,7 +1562,7 @@ if [[ "$SKIP_PACKAGES" == false ]]; then
     log_ok "Packages installed cleanly"
 fi
 
-# Step 3: Apply dotfiles, profile, polkit & backup manifest
+# Step 3: Apply dotfiles, profile, visual style, polkit & backup manifest
 echo ""
 log_step "$STEP_NUM" "$TOTAL_STEPS" "Backing up & deploying kaze-dots configs"
 STEP_NUM=$(( STEP_NUM + 1 ))
@@ -1454,6 +1574,13 @@ if [[ ! -f "$LAST_BACKUP" ]] && { [[ -f "$PROFILE_FILE" ]] || [[ -L "$PROFILE_FI
     PREINSTALL_PROFILE_CONTENT="$(cat -- "$PROFILE_FILE")"
 fi
 
+HAD_PREINSTALL_STYLE=false
+PREINSTALL_STYLE_CONTENT=""
+if [[ ! -f "$LAST_BACKUP" ]] && { [[ -f "$STYLE_FILE" ]] || [[ -L "$STYLE_FILE" ]]; }; then
+    HAD_PREINSTALL_STYLE=true
+    PREINSTALL_STYLE_CONTENT="$(cat -- "$STYLE_FILE")"
+fi
+
 "$REPO_DIR/scripts/apply.sh" ${APPLY_FLAGS[@]+"${APPLY_FLAGS[@]}"}
 
 mkdir -p -- "$(dirname -- "$PROFILE_FILE")"
@@ -1463,28 +1590,42 @@ if [[ "$PROFILE" == "full" ]] && [[ -f "$CONFIG_HOME/noctalia/config.toml" ]]; t
     sed -i 's/^polkit_agent = false$/polkit_agent = true/' "$CONFIG_HOME/noctalia/config.toml"
 fi
 
-# Record profile file in active backup manifest so rollback restores or cleans it.
-if [[ -f "$LAST_BACKUP" ]]; then
-    BACKUP_DIR="$(<"$LAST_BACKUP")"
-    if [[ -d "$BACKUP_DIR" ]] && [[ -f "$BACKUP_DIR/installed.list" ]]; then
-        if ! grep -Fxq "$PROFILE_FILE" "$BACKUP_DIR/installed.list" 2>/dev/null; then
-            printf '%s\n' "$PROFILE_FILE" >> "$BACKUP_DIR/installed.list"
-            if [[ "$HAD_PREINSTALL_PROFILE" == true ]] && [[ -f "$BACKUP_DIR/backed_up.list" ]]; then
-                rel_prof="${PROFILE_FILE#"$HOME"/}"
-                if [[ "$rel_prof" == "$PROFILE_FILE" ]]; then
-                    rel_prof="_abs/${PROFILE_FILE#/}"
+if [[ "$STYLE" != "omarchy-rail" ]] || [[ "$STYLE_EXPLICIT" == true ]]; then
+    KAZE_DOTS_DIR="$REPO_DIR" KAZE_STYLE_QUIET=1 "$BIN_HOME/kaze-style" --no-reload "$STYLE" >/dev/null
+else
+    mkdir -p -- "$(dirname -- "$STYLE_FILE")"
+    printf '%s\n' "$STYLE" > "$STYLE_FILE"
+fi
+
+record_state_file() {
+    local dst="$1" had_pre="$2" pre_content="$3"
+    if [[ ! -f "$LAST_BACKUP" ]]; then
+        return 0
+    fi
+    local backup_dir rel_path saved_path
+    backup_dir="$(<"$LAST_BACKUP")"
+    if [[ -d "$backup_dir" ]] && [[ -f "$backup_dir/installed.list" ]]; then
+        if ! grep -Fxq "$dst" "$backup_dir/installed.list" 2>/dev/null; then
+            printf '%s\n' "$dst" >> "$backup_dir/installed.list"
+            if [[ "$had_pre" == true ]] && [[ -f "$backup_dir/backed_up.list" ]]; then
+                rel_path="${dst#"$HOME"/}"
+                if [[ "$rel_path" == "$dst" ]]; then
+                    rel_path="_abs/${dst#/}"
                 fi
-                saved_prof="$BACKUP_DIR/files/$rel_prof"
-                if [[ ! -e "$saved_prof" ]] && [[ ! -L "$saved_prof" ]]; then
-                    mkdir -p -- "$(dirname -- "$saved_prof")"
-                    printf '%s\n' "$PREINSTALL_PROFILE_CONTENT" > "$saved_prof"
-                    printf '%s\t%s\n' "$rel_prof" "$PROFILE_FILE" >> "$BACKUP_DIR/backed_up.list"
+                saved_path="$backup_dir/files/$rel_path"
+                if [[ ! -e "$saved_path" ]] && [[ ! -L "$saved_path" ]]; then
+                    mkdir -p -- "$(dirname -- "$saved_path")"
+                    printf '%s\n' "$pre_content" > "$saved_path"
+                    printf '%s\t%s\n' "$rel_path" "$dst" >> "$backup_dir/backed_up.list"
                 fi
             fi
         fi
     fi
-fi
-log_ok "Profile '${PROFILE}' recorded in $PROFILE_FILE"
+}
+
+record_state_file "$PROFILE_FILE" "$HAD_PREINSTALL_PROFILE" "$PREINSTALL_PROFILE_CONTENT"
+record_state_file "$STYLE_FILE" "$HAD_PREINSTALL_STYLE" "$PREINSTALL_STYLE_CONTENT"
+log_ok "Profile '${PROFILE}' and style '${STYLE}' recorded under $CONFIG_HOME/kaze"
 
 # Step 4: Default login shell
 if [[ "$SET_ZSH" == "true" ]]; then
@@ -1511,19 +1652,19 @@ if [[ "$PRINT_STYLED" == true ]]; then
     tui_repeat "$G_H" 64
     rule_line="$REPLY"
     printf '%s%s%s\n' "$C_GREEN" "$rule_line" "$C_RESET"
-    printf '  %s%s Installed kaze-dots (profile: %s)%s\n' \
-        "${C_BOLD}${C_GREEN}" "$G_CHECK" "$PROFILE" "$C_RESET"
+    printf '  %s%s Installed kaze-dots (profile: %s, style: %s)%s\n' \
+        "${C_BOLD}${C_GREEN}" "$G_CHECK" "$PROFILE" "$STYLE" "$C_RESET"
     if [[ -f "$LAST_BACKUP" ]]; then
         printf '  %sRollback:%s %s/rollback.sh\n' \
             "$C_MUTED" "$C_RESET" "$(<"$LAST_BACKUP")"
     fi
     printf '  %sKeys:%s     Super+Space Launcher %s Super+Return Foot %s Super+/ Keys\n' \
         "$C_MUTED" "$C_RESET" "$G_BULLET" "$G_BULLET"
-    printf '  %sSettings:%s Super+I Noctalia GUI %s Health: kaze-doctor\n' \
-        "$C_MUTED" "$C_RESET" "$G_BULLET"
+    printf '  %sStyle:%s    Super+Shift+I Switcher %s Super+I Settings %s Health: kaze-doctor\n' \
+        "$C_MUTED" "$C_RESET" "$G_BULLET" "$G_BULLET"
     printf '%s%s%s\n' "$C_GREEN" "$rule_line" "$C_RESET"
 else
-    echo "Installed kaze-dots profile: $PROFILE"
+    echo "Installed kaze-dots profile: $PROFILE (style: $STYLE)"
 fi
 
 if [[ "$PROFILE" == "full" ]]; then

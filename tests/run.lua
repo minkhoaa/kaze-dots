@@ -156,6 +156,67 @@ test("native configs: config/noctalia/config.toml and config/foot/foot.ini valid
     local foot_src = assert(fs.read_file(repo_dir .. "/config/foot/foot.ini"))
     assert_contains(foot_src, "include=~/.config/foot/themes/noctalia\n", "foot includes Noctalia theme")
 
+    assert_contains(noc_src, '"record"', "Noctalia bar includes record indicator widget")
+    assert_contains(noc_src, "[widget.record]\n", "Noctalia config defines [widget.record]")
+    assert_contains(noc_src, "[widget.mirror]\n", "Noctalia config defines [widget.mirror]")
+    assert_contains(noc_src, "[widget.mirror.actions]\n", "Noctalia config defines [widget.mirror.actions]")
+    assert_contains(noc_src, "left = \"exec kaze-record --bar\"\n", "Noctalia record widget supports click-to-stop/menu")
+    assert_contains(noc_src, "[widget.hclock]\n", "Noctalia config defines horizontal clock widget")
+    assert_contains(noc_src, "[widget.media]\n", "Noctalia config defines media widget")
+
+    local yazi_src = assert(fs.read_file(repo_dir .. "/config/yazi/yazi.toml"))
+    assert_contains(yazi_src, "[mgr]\n", "yazi.toml uses [mgr]")
+    assert_contains(yazi_src, "sixel_fraction = 15\n", "yazi.toml tunes Sixel previews for Foot")
+    assert_contains(yazi_src, "imv", "yazi.toml routes images to imv")
+    assert_contains(yazi_src, "zathura", "yazi.toml routes PDFs to zathura")
+
+    local yazi_theme = assert(fs.read_file(repo_dir .. "/config/yazi/theme.toml"))
+    assert_true(not yazi_theme:find("#[0-9a-fA-F][0-9a-fA-F]"), "yazi theme.toml must use ANSI colors only, not hex")
+    assert_contains(yazi_theme, "[status]\n", "yazi theme.toml defines [status]")
+
+    local yazi_keys = assert(fs.read_file(repo_dir .. "/config/yazi/keymap.toml"))
+    assert_contains(yazi_keys, "prepend_keymap", "yazi keymap.toml defines prepend_keymap")
+
+    local zathura_src = assert(fs.read_file(repo_dir .. "/config/zathura/zathurarc"))
+    assert_contains(zathura_src, 'set guioptions ""\n', "zathurarc hides extra GUI chrome")
+    assert_contains(zathura_src, 'set selection-clipboard "clipboard"\n', "zathurarc copies directly to clipboard")
+    assert_true(not zathura_src:find("smooth-scroll", 1, true), "zathurarc must not use removed smooth-scroll option")
+
+    local imv_src = assert(fs.read_file(repo_dir .. "/config/imv/config"))
+    assert_contains(imv_src, "overlay = false\n", "imv hides overlay bar by default")
+    assert_contains(imv_src, "wl-copy", "imv binds clipboard copy via wl-copy")
+
+    local mime_src = assert(fs.read_file(repo_dir .. "/config/mimeapps.list"))
+    assert_contains(mime_src, "inode/directory=thunar.desktop;\n", "mimeapps routes directories to thunar")
+    assert_contains(mime_src, "application/pdf=org.pwmt.zathura.desktop;\n", "mimeapps routes PDFs to zathura")
+    assert_contains(mime_src, "image/png=imv.desktop;\n", "mimeapps routes PNGs to imv")
+
+    local gtk_ini = assert(fs.read_file(repo_dir .. "/config/gtk-3.0/settings.ini"))
+    assert_contains(gtk_ini, "gtk-theme-name=adw-gtk3-dark\n", "GTK3 pairs adw-gtk3-dark with Noctalia CSS")
+    assert_contains(gtk_ini, "gtk-enable-animations=0\n", "GTK3 disables animations for snappy Thunar UI")
+
+    local thunar_css = assert(fs.read_file(repo_dir .. "/config/gtk-3.0/kaze-thunar.css"))
+    assert_true(not thunar_css:find("#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]"), "kaze-thunar.css must use Noctalia @define-color variables, not hex")
+    assert_contains(thunar_css, "@window_bg_color", "kaze-thunar.css binds Noctalia window background")
+    assert_contains(thunar_css, "border-radius: 0px;", "kaze-thunar.css enforces sharp Omarchy corners")
+
+    local thunar_xml = assert(fs.read_file(repo_dir .. "/config/xfce4/xfconf/xfce-perchannel-xml/thunar.xml"))
+    assert_contains(thunar_xml, 'value="ThunarDetailsView"', "thunar.xml defaults to dense details view")
+    assert_contains(thunar_xml, 'name="misc-use-csd" type="bool" value="false"', "thunar.xml disables CSD for Hyprland borders")
+    assert_contains(thunar_xml, 'value="THUNAR_THUMBNAIL_MODE_NEVER"', "thunar.xml disables thumbnail daemon overhead")
+
+    local thunar_uca = assert(fs.read_file(repo_dir .. "/config/Thunar/uca.xml"))
+    assert_contains(thunar_uca, "kaze-thunar-action terminal %f", "uca.xml wires Foot terminal action")
+    assert_contains(thunar_uca, "kaze-thunar-action wallpaper %f", "uca.xml wires Noctalia wallpaper action")
+    assert_contains(thunar_uca, "kaze-thunar-action extract %f", "uca.xml wires safe bsdtar extraction")
+
+    local thunar_accels = assert(fs.read_file(repo_dir .. "/config/Thunar/accels.scm"))
+    assert_contains(thunar_accels, "toggle-split-view", "accels.scm configures split view shortcut")
+
+    local yazi_desktop = assert(fs.read_file(repo_dir .. "/config/applications/yazi.desktop"))
+    assert_contains(yazi_desktop, "TryExec=yazi\n", "yazi.desktop hides when yazi is uninstalled")
+    assert_contains(yazi_desktop, "Exec=kaze-footclient -N -e yazi %f\n", "yazi.desktop launches via kaze-footclient")
+
     local zshrc_src = assert(fs.read_file(repo_dir .. "/config/zsh/zshrc"))
     assert_contains(zshrc_src, "$XDG_CONFIG_HOME/zsh/conf.d", "zshrc loads conf.d modules")
     assert_contains(zshrc_src, "$XDG_CONFIG_HOME/zsh/user.zsh", "zshrc supports user.zsh overrides")
@@ -266,10 +327,27 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
 
         local manifest = assert(fs.read_file(second .. "/installed.list"))
         assert_contains(manifest, tmp .. "/.local/bin/kaze-session\n")
+        assert_contains(manifest, tmp .. "/.local/bin/kaze-project\n")
         assert_contains(manifest, cfg .. "/hypr/xdph.conf\n")
         assert_contains(manifest, cfg .. "/systemd/user/kaze-noctalia.service\n")
         assert_contains(manifest, cfg .. "/foot/foot.ini\n")
         assert_contains(manifest, cfg .. "/starship.toml\n")
+        assert_contains(manifest, cfg .. "/yazi/yazi.toml\n")
+        assert_contains(manifest, cfg .. "/yazi/theme.toml\n")
+        assert_contains(manifest, cfg .. "/yazi/keymap.toml\n")
+        assert_contains(manifest, cfg .. "/zathura/zathurarc\n")
+        assert_contains(manifest, cfg .. "/imv/config\n")
+        assert_contains(manifest, cfg .. "/mimeapps.list\n")
+        assert_contains(manifest, cfg .. "/gtk-3.0/settings.ini\n")
+        assert_contains(manifest, cfg .. "/gtk-3.0/kaze-thunar.css\n")
+        assert_contains(manifest, cfg .. "/gtk-3.0/gtk.css\n")
+        assert_contains(manifest, cfg .. "/Thunar/uca.xml\n")
+        assert_contains(manifest, cfg .. "/Thunar/accels.scm\n")
+        assert_contains(manifest, cfg .. "/xfce4/xfconf/xfce-perchannel-xml/thunar.xml\n")
+        assert_contains(manifest, data .. "/applications/yazi.desktop\n")
+        local gtk_css = assert(fs.read_file(cfg .. "/gtk-3.0/gtk.css"))
+        assert_contains(gtk_css, '@import url("noctalia.css");\n', "gtk.css imports noctalia.css")
+        assert_contains(gtk_css, '@import url("kaze-thunar.css");\n', "gtk.css imports kaze-thunar.css")
         assert_contains(manifest, cfg .. "/noctalia/config.toml\n")
         assert_contains(manifest, tmp .. "/.zshrc\n")
         assert_contains(manifest, tmp .. "/.zprofile\n")
@@ -290,7 +368,24 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         assert_eq(fs.capture("readlink -- " .. q(foot)), "/nonexistent/fixture\n")
         assert_eq(fs.read_file(user_lua), "return {} -- original hypr user settings\n")
         assert_true(not fs.file_exists(last), "rollback unregisters active backup")
-        for _, path in ipairs({ tmp .. "/.local/bin/kaze-session", tmp .. "/.zprofile", data .. "/kaze-dots/lua/kaze", cfg .. "/foot/themes/noctalia" }) do
+        for _, path in ipairs({
+            tmp .. "/.local/bin/kaze-session",
+            tmp .. "/.local/bin/kaze-project",
+            tmp .. "/.zprofile",
+            data .. "/kaze-dots/lua/kaze",
+            data .. "/applications/yazi.desktop",
+            cfg .. "/foot/themes/noctalia",
+            cfg .. "/yazi/yazi.toml",
+            cfg .. "/zathura/zathurarc",
+            cfg .. "/imv/config",
+            cfg .. "/mimeapps.list",
+            cfg .. "/gtk-3.0/settings.ini",
+            cfg .. "/gtk-3.0/kaze-thunar.css",
+            cfg .. "/gtk-3.0/gtk.css",
+            cfg .. "/Thunar/uca.xml",
+            cfg .. "/Thunar/accels.scm",
+            cfg .. "/xfce4/xfconf/xfce-perchannel-xml/thunar.xml",
+        }) do
             assert(os.execute("test ! -e " .. q(path) .. " && test ! -L " .. q(path)))
         end
         assert_true(not rollback(second), "a second rollback cannot delete restored files")
@@ -363,6 +458,8 @@ test("rules: Noctalia layer no_anim, Settings float, smart_gaps, and TUI drawer 
     for _, r in ipairs(wins) do if r.name then by_name[r.name] = r end end
     assert_true(by_name["noctalia-settings"] ~= nil and by_name["noctalia-settings"].float == true)
     assert_true(by_name["kaze-tui-drawer"] ~= nil and by_name["kaze-tui-drawer"].float == true)
+    assert_true(by_name["kaze-mirror-tui"] ~= nil and by_name["kaze-mirror-tui"].float == true and by_name["kaze-mirror-tui"].center == true)
+    assert_eq(by_name["kaze-mirror-tui"].match.class, "^kaze-mirror-tui$")
     assert_true(by_name["kaze-share-preview"] ~= nil and by_name["kaze-share-preview"].float == true and by_name["kaze-share-preview"].pin == true)
     assert_eq(by_name["kaze-share-preview"].keep_aspect_ratio, true)
     assert_eq(by_name["kaze-share-preview"].match.class, "^at\\.yrlf\\.wl_mirror$")
@@ -410,6 +507,370 @@ fi
         local args = assert(fs.read_file(tmp .. "/tui-args"))
         assert_contains(args, "-a\nkaze-tui\n")
         assert_contains(args, "btop\n")
+    end)
+end)
+
+test("kaze.projects & kaze-project: discovers zoxide/fd projects, compacts paths, and launches modes", function()
+    local projects = require("kaze.projects")
+    local tmp = make_tmp_dir()
+    local ok_p, err_p = pcall(function()
+        local home = tmp .. "/home"
+        local p_alpha = home .. "/Projects/alpha"
+        local p_beta = home .. "/Projects/beta"
+        local p_z = home .. "/work/zeta"
+        fs.mkdir_p(p_alpha .. "/.git")
+        fs.mkdir_p(p_beta)
+        fs.mkdir_p(p_z)
+
+        local cmds_shell = projects.build_launch_cmds(p_alpha, "shell", { cmd_exists = function() return true end })
+        assert_eq(#cmds_shell, 1)
+        assert_contains(cmds_shell[1], "-N -D")
+        local cmds_split = projects.build_launch_cmds(p_alpha, "split", { cmd_exists = function() return true end })
+        assert_eq(#cmds_split, 2)
+        assert_contains(cmds_split[1], "-e 'nvim' .")
+        assert_contains(cmds_split[2], "-N -D")
+
+        local discovered = projects.discover({ project_dirs = { "~/Projects" } }, {
+            home = home,
+            cmd_exists = function(bin) return bin == "zoxide" or bin == "fd" end,
+            is_dir = function(d) return d == home .. "/Projects" or d == p_alpha or d == p_beta or d == p_z end,
+            capture = function(cmd)
+                if cmd:find("^zoxide query") then
+                    return p_z .. "\n" .. p_alpha .. "\n" .. home .. "/missing\n"
+                elseif cmd:find("'%.git%$'") then
+                    return p_alpha .. "/.git\n"
+                elseif cmd:find("max%-depth 1") then
+                    return p_alpha .. "\n" .. p_beta .. "\n"
+                end
+                return ""
+            end,
+        })
+        assert_eq(#discovered, 3)
+        assert_eq(discovered[1].label, "~/work/zeta", "zoxide frecency first")
+        assert_eq(discovered[2].label, "~/Projects/alpha", "deduplicated alpha second")
+        assert_eq(discovered[3].label, "~/Projects/beta", "fd subdir third")
+    end)
+    rm_rf(tmp)
+    if not ok_p then error(err_p, 0) end
+
+    with_stubs(function(tmp2, stub, run)
+        local q = fs.shell_quote
+        for _, bin in ipairs({ "lua", "readlink", "mkdir", "find", "sort" }) do
+            local actual = assert(fs.capture("command -v " .. bin)):gsub("\n$", "")
+            assert(os.execute("ln -s -- " .. q(actual) .. " " .. q(tmp2 .. "/bin/" .. bin)))
+        end
+        fs.mkdir_p(tmp2 .. "/Projects/demo/.git")
+        stub("zoxide", [[
+if [ "$1" = "query" ]; then
+    printf '%s/Projects/demo\n' "$HOME"
+else
+    printf '%s\n' "$*" >> "$HOME/zoxide-calls"
+fi
+]])
+        stub("fd", "exit 0")
+        stub("nvim", "exit 0")
+        stub("footclient", [[printf '%s\n' "$@" >> "$HOME/foot-calls"]])
+        stub("noctalia", [[
+if [ "$1" = "dmenu" ]; then
+    cat > "$HOME/proj-dmenu"
+    head -n 1 "$HOME/proj-dmenu"
+fi
+]])
+        local list_out = assert(fs.capture(run("kaze-project", "--list")))
+        assert_eq(list_out, "~/Projects/demo\n")
+
+        assert(os.execute(run("kaze-project", "--split")))
+        assert_contains(assert(fs.read_file(tmp2 .. "/proj-dmenu")), "~/Projects/demo\n")
+        assert_contains(assert(fs.read_file(tmp2 .. "/zoxide-calls")), "add -- " .. tmp2 .. "/Projects/demo\n")
+        local fcalls
+        for _ = 1, 40 do
+            local raw = fs.read_file(tmp2 .. "/foot-calls")
+            if raw and raw:find("-e\nnvim\n.\n", 1, true) and raw:find("-N\n-D\n" .. tmp2 .. "/Projects/demo\n", 1, true) then
+                fcalls = raw
+                break
+            end
+            os.execute("sleep 0.02")
+        end
+        assert_true(fcalls ~= nil, "kaze-project --split must spawn both nvim and shell footclient windows")
+        assert_contains(fcalls, "-D\n" .. tmp2 .. "/Projects/demo\n-e\nnvim\n.\n")
+
+        local ok_bad, _, code_bad = os.execute(run("kaze-project", "--mode=bogus") .. " 2>/dev/null")
+        assert_true(not ok_bad and code_bad == 2)
+    end)
+end)
+
+test("kaze-record: supports --menu, --bar, --audio, --gif, and Noctalia bar status", function()
+    with_stubs(function(tmp, stub, run)
+        local q = fs.shell_quote
+        for _, bin in ipairs({ "lua", "readlink", "flock", "mkdir", "install", "mktemp", "rm", "test" }) do
+            local actual = assert(fs.capture("command -v " .. bin)):gsub("\n$", "")
+            assert(os.execute("ln -s -- " .. q(actual) .. " " .. q(tmp .. "/bin/" .. bin)))
+        end
+        stub("wf-recorder", "exit 0")
+        stub("ffprobe", "exit 0")
+        stub("ffmpeg", [[
+out=""
+for a in "$@"; do out="$a"; done
+printf 'GIF89a' > "$out"
+]])
+        stub("notify-send", [[printf '%s\n' "$*" >> "$HOME/rec-notify"]])
+        stub("pactl", [[
+if [ "$1" = "get-default-sink" ]; then
+    printf 'alsa_output.pci.stereo\n'
+elif [ "$1" = "get-default-source" ]; then
+    printf 'alsa_input.pci.mono\n'
+fi
+]])
+        stub("hyprctl", [[
+if [ "$1" = "-j" ] && [ "$2" = "monitors" ]; then
+    printf '[{"name":"eDP-1","focused":true}]\n'
+fi
+]])
+        stub("dbus-update-activation-environment", "exit 0")
+        stub("systemctl", [[
+case "$*" in
+  *"show -p ActiveState --value kaze-session.target"*) printf 'active\n' ;;
+  *"is-active --quiet kaze-session.target"*) exit 0 ;;
+  *"show -p ActiveState kaze-record.service"*)
+    if [ -f "$HOME/rec-active" ]; then printf 'ActiveState=active\n'; else printf 'ActiveState=inactive\n'; fi ;;
+  *"start kaze-record.service"*) : > "$HOME/rec-active"; exit 0 ;;
+  *"stop kaze-record.service"*)
+    rm -f "$HOME/rec-active"
+    rec=$(sed -n 's/^KAZE_RECORD_FILE="\(.*\)"$/\1/p' "$XDG_RUNTIME_DIR/kaze/record.env")
+    printf '%s\n' "$rec" > "$XDG_RUNTIME_DIR/kaze/record.done"
+    exit 0 ;;
+  *) exit 0 ;;
+esac
+]])
+        stub("noctalia", [[
+if [ "$1" = "msg" ] && [ "$2" = "config-get" ]; then
+    printf "'custom_button'\n"
+elif [ "$1" = "msg" ] && [ "$2" = "config-set" ]; then
+    printf '%s\n' "$*" >> "$HOME/noc-rec-set"
+elif [ "$1" = "dmenu" ]; then
+    cat > "$HOME/rec-menu"
+    if [ -n "${TEST_REC_CHOICE:-}" ]; then
+        grep -F -m1 "$TEST_REC_CHOICE" "$HOME/rec-menu"
+    fi
+fi
+]])
+
+        local vars = "HYPRLAND_INSTANCE_SIGNATURE=sig-1 WAYLAND_DISPLAY=wayland-1"
+        assert(os.execute("env HOME=" .. q(tmp) .. " XDG_RUNTIME_DIR=" .. q(tmp .. "/runtime") .. " PATH=" .. q(tmp .. "/bin") .. " lua -e "
+            .. q("package.path=" .. q(repo_dir .. "/lua/?.lua;") .. "..package.path; local fs=require('kaze.fs'); local s=require('kaze.session'); assert(os.execute('true'))")))
+
+        -- Patch systemctl show-environment for session.is_active()
+        stub("systemctl", [[
+case "$*" in
+  "--user show-environment")
+    printf 'HYPRLAND_INSTANCE_SIGNATURE=sig-1\nWAYLAND_DISPLAY=wayland-1\n' ;;
+  *"is-active --quiet kaze-session.target"*) exit 0 ;;
+  *"show -p ActiveState kaze-record.service"*)
+    if [ -f "$HOME/rec-active" ]; then printf 'ActiveState=active\n'; else printf 'ActiveState=inactive\n'; fi ;;
+  *"start kaze-record.service"*) : > "$HOME/rec-active"; exit 0 ;;
+  *"stop kaze-record.service"*)
+    rm -f "$HOME/rec-active"
+    rec=$(sed -n 's/^KAZE_RECORD_FILE="\(.*\)"$/\1/p' "$XDG_RUNTIME_DIR/kaze/record.env")
+    printf '%s\n' "$rec" > "$XDG_RUNTIME_DIR/kaze/record.done"
+    exit 0 ;;
+  *) exit 0 ;;
+esac
+]])
+
+        -- 1. Menu selection: Fullscreen + System Audio -> sets KAZE_RECORD_AUDIO=.monitor & Noctalia red indicator
+        assert(os.execute(run("kaze-record", "--menu", vars .. " TEST_REC_CHOICE='Fullscreen + System Audio'")))
+        local menu_txt = assert(fs.read_file(tmp .. "/rec-menu"))
+        assert_contains(menu_txt, "Fullscreen + System Audio\n")
+        assert_contains(menu_txt, "Region → GIF\n")
+        local env_txt = assert(fs.read_file(tmp .. "/runtime/kaze/record.env"))
+        assert_contains(env_txt, 'KAZE_RECORD_AUDIO="alsa_output.pci.stereo.monitor"\n')
+        assert_contains(assert(fs.read_file(tmp .. "/noc-rec-set")), 'msg config-set widget.record.icon_color "error"\n')
+
+        -- 2. Bar click while active (--bar) stops immediately and resets Noctalia indicator
+        local stop_out = assert(fs.capture(run("kaze-record", "--bar", vars)))
+        assert_contains(stop_out, ".mp4\n")
+        assert_contains(assert(fs.read_file(tmp .. "/noc-rec-set")), 'msg config-set widget.record.icon_color "on_surface_variant"\n')
+
+        -- 3. Fullscreen -> GIF mode produces .gif on stop
+        assert(os.execute(run("kaze-record", "--gif", vars)))
+        local gif_out = assert(fs.capture(run("kaze-record", "stop", vars)))
+        assert_contains(gif_out, ".gif\n")
+        assert_contains(assert(fs.read_file(tmp .. "/rec-notify")), "GIF saved")
+
+        -- 4. Reject invalid --gif + --audio combination
+        local ok_bad, _, code_bad = os.execute(run("kaze-record", "--gif --audio", vars) .. " 2>/dev/null")
+        assert_true(not ok_bad and code_bad == 2)
+    end)
+end)
+
+test("kaze.styles & kaze-style: renders all 4 presets safely, preserves user edits, and switches via CLI/menu", function()
+    local styles = require("kaze.styles")
+    local toml_diff = require("kaze.toml_diff")
+    local base_tpl = assert(fs.read_file(repo_dir .. "/config/noctalia/config.toml"))
+    local user_toml = base_tpl:gsub("polkit_agent = false", "polkit_agent = true")
+        :gsub('directory = "~/Pictures/Wallpapers"', 'directory = "/home/user/Wallpapers"')
+
+    local fi = assert(styles.render_config(user_toml, "floating-islands"))
+    assert_contains(fi, "corner_radius_scale = 1.0\n", "floating-islands sets rounded corners")
+    assert_contains(fi, 'position = "top"\n', "floating-islands moves bar to top")
+    assert_contains(fi, "background_opacity = 0.0\n", "floating-islands hides bar background")
+    assert_contains(fi, 'start = [ "group:left" ]\n', "floating-islands references left capsule_group")
+    assert_contains(fi, 'center = [ "group:center" ]\n', "floating-islands references center capsule_group")
+    assert_contains(fi, 'end = [ "group:right" ]\n', "floating-islands references right capsule_group")
+    assert_contains(fi, "[[bar.default.capsule_group]]\n", "floating-islands defines capsule_group tables")
+    assert_true(not fi:find("\ncapsule_group = ", 1, true), "must not duplicate capsule_group scalar and table array")
+    assert_contains(fi, "polkit_agent = true\n", "preserves polkit_agent user edit")
+    assert_contains(fi, 'directory = "/home/user/Wallpapers"\n', "preserves custom wallpaper dir")
+    assert_contains(fi, "offline_mode = true\n", "keeps offline_mode enabled")
+    assert_contains(fi, "[weather]\nenabled = false\n", "keeps disabled sections")
+    assert_contains(fi, "[widget.record]\n", "keeps widget.record")
+
+    local cn = assert(styles.render_config(fi, "concave-notch"))
+    assert_contains(cn, "margin_edge = 0\n", "concave-notch flushes bar to screen edge")
+    assert_contains(cn, "concave_edge_corners = true\n", "concave-notch enables inverse corners")
+    assert_true(not cn:find("[[bar.default.capsule_group]]", 1, true), "concave-notch clears prior capsule_group tables")
+
+    local di = assert(styles.render_config(cn, "dynamic-island"))
+    assert_contains(di, 'start = [ "group:left" ]\n', "dynamic-island keeps left launcher/ws island")
+    assert_contains(di, 'center = [ "group:island" ]\n', "dynamic-island centers hover-expanding island group")
+    assert_contains(di, 'end = [ "group:right" ]\n', "dynamic-island keeps right status/session island")
+    assert_contains(di, 'id = "island"\n', "dynamic-island defines island group")
+    assert_contains(di, "accordion = true\n", "dynamic-island enables native hover-expand accordion")
+    assert_contains(di, 'accordion_direction = "end"\n', "dynamic-island expands toward end")
+    assert_contains(di, "accordion_duration = 240\n", "dynamic-island configures smooth 240ms accordion")
+    assert_contains(di, "accordion_delay_ms = 60\n", "dynamic-island configures 60ms hover delay")
+    assert_contains(di, '"clipboard", "screenshot", "record", "display", "mirror", "wallpaper"', "dynamic-island packs hover utilities")
+    assert_contains(di, "[notification]\nenable_daemon = true\nposition = \"top_center\"", "dynamic-island anchors notifications under pill")
+    assert_contains(di, "offset_x = 0\noffset_y = 6\n", "dynamic-island places notification/OSD at offset_y=6")
+
+    local back = assert(styles.render_config(di, "omarchy-rail"))
+    assert_contains(back, 'position = "left"\n', "round-trip back to vertical rail")
+    assert_contains(back, "corner_radius_scale = 0.0\n", "round-trip restores 0px corners")
+    assert_contains(back, "polkit_agent = true\n", "round-trip preserves polkit_agent")
+    local diff_back = toml_diff.diff(base_tpl, back)
+    assert_true(not diff_back.has_drift, "round-trip to omarchy-rail leaves zero drift vs repo template")
+
+    -- Test legacy user config missing [widget.hclock] and [widget.media]
+    local stripped = user_toml:gsub("%[widget%.hclock%].-$", "")
+    local upgraded = assert(styles.render_config(stripped, "dynamic-island"))
+    assert_contains(upgraded, "[widget.hclock]\n", "adds missing [widget.hclock]")
+    assert_contains(upgraded, "[widget.media]\n", "adds missing [widget.media]")
+
+    with_stubs(function(tmp, stub, run)
+        local q = fs.shell_quote
+        fs.mkdir_p(tmp .. "/cfg/noctalia")
+        fs.mkdir_p(tmp .. "/cfg/kaze")
+        fs.write_atomic(tmp .. "/cfg/noctalia/config.toml", user_toml)
+
+        stub("noctalia", [[
+printf '%s\n' "$@" >> "$HOME/noc-calls"
+case "${1:-}" in
+  config)
+    [ "${2:-}" = "validate" ] || exit 1
+    grep -q '\[bar\.default\]' "${3:?}" || exit 1
+    exit 0
+    ;;
+  dmenu)
+    cat > "$HOME/style-menu"
+    printf '%s\n' "${TEST_STYLE_CHOICE:-  dynamic-island     | Centered top pill}"
+    ;;
+  msg)
+    exit 0
+    ;;
+esac
+]])
+
+        local help_out = assert(fs.capture(run("kaze-style", "--help")))
+        assert_contains(help_out, "Usage: kaze-style")
+        assert_contains(help_out, "floating-islands")
+        local ok_bad, _, code_bad = os.execute(run("kaze-style", "--bogus") .. " 2>/dev/null")
+        assert_true(not ok_bad and code_bad == 2)
+        local ok_bad_p, _, code_bad_p = os.execute(run("kaze-style", "not-a-style") .. " 2>/dev/null")
+        assert_true(not ok_bad_p and code_bad_p == 2)
+
+        assert_eq(assert(fs.capture(run("kaze-style", "--current"))), "dynamic-island\n")
+        local list_out = assert(fs.capture(run("kaze-style", "--list")))
+        assert_contains(list_out, "* dynamic-island")
+        assert_contains(list_out, "  omarchy-rail")
+
+        local env_base = "XDG_CONFIG_HOME=" .. q(tmp .. "/cfg")
+        local ap_out = assert(fs.capture(run("kaze-style", "floating-islands", env_base)))
+        assert_contains(ap_out, "Applied style 'floating-islands'")
+        assert_eq(assert(fs.read_file(tmp .. "/cfg/kaze/style")), "floating-islands\n")
+        assert_eq(assert(fs.capture(run("kaze-style", "--current", env_base))), "floating-islands\n")
+        local noc_calls = assert(fs.read_file(tmp .. "/noc-calls"))
+        assert_contains(noc_calls, "config\nvalidate\n")
+        assert_contains(noc_calls, "msg\nconfig-reload\n")
+
+        -- --menu switches via dmenu
+        assert(os.execute(run("kaze-style", "--menu", env_base)))
+        assert_contains(assert(fs.read_file(tmp .. "/style-menu")), "* floating-islands")
+        assert_eq(assert(fs.read_file(tmp .. "/cfg/kaze/style")), "dynamic-island\n")
+        assert_contains(assert(fs.read_file(tmp .. "/cfg/noctalia/config.toml")), 'id = "island"\n')
+
+        -- Cancel (empty dmenu selection) keeps active style intact
+        assert(os.execute(run("kaze-style", "--menu", env_base .. " TEST_STYLE_CHOICE=''")))
+        assert_eq(assert(fs.read_file(tmp .. "/cfg/kaze/style")), "dynamic-island\n")
+    end)
+end)
+
+test("kaze-thunar-action: terminal, yazi, copy-path, checksum, wallpaper, compress, and tarbomb-safe extract", function()
+    with_stubs(function(tmp, stub, run)
+        local q = fs.shell_quote
+        stub("notify-send", "printf '%s\\n' \"$*\" >> \"$HOME/notify.log\"")
+        stub("wl-copy", "cat > \"$HOME/clipboard.out\"")
+        stub("noctalia", "printf '%s\\n' \"$*\" >> \"$HOME/noc.log\"")
+        stub("kaze-footclient", "printf '%s\\n' \"$*\" >> \"$HOME/foot.log\"")
+        stub("yazi", "exit 0")
+
+        local help_out = assert(fs.capture(run("kaze-thunar-action", "--help")))
+        assert_contains(help_out, "Usage: kaze-thunar-action")
+        local ok_bad, _, code_bad = os.execute(run("kaze-thunar-action", "bogus /tmp") .. " 2>/dev/null")
+        assert_true(not ok_bad and code_bad == 2)
+
+        local work = tmp .. "/work dir"
+        fs.mkdir_p(work)
+        local f1 = work .. "/hello world.txt"
+        local f2 = work .. "/second.txt"
+        local img = work .. "/wall.png"
+        fs.write_atomic(f1, "kaze thunar test\n")
+        fs.write_atomic(f2, "second file\n")
+        fs.write_atomic(img, "\137PNG\r\n\26\n")
+
+        -- copy-path (multi-selection)
+        assert(os.execute(run("kaze-thunar-action", "copy-path " .. q(f1) .. " " .. q(f2))))
+        assert_eq(fs.read_file(tmp .. "/clipboard.out"), f1 .. "\n" .. f2)
+
+        -- checksum
+        assert(os.execute(run("kaze-thunar-action", "checksum " .. q(f1))))
+        local hash = assert(fs.read_file(tmp .. "/clipboard.out"))
+        assert_true(hash:match("^[0-9a-f]+$") ~= nil and #hash == 64, "sha256 hex digest copied")
+
+        -- wallpaper via Noctalia IPC
+        assert(os.execute(run("kaze-thunar-action", "wallpaper " .. q(img))))
+        assert_contains(assert(fs.read_file(tmp .. "/noc.log")), "msg wallpaper-set " .. img)
+
+        -- terminal on file opens parent directory; yazi opens file in parent dir
+        assert(os.execute(run("kaze-thunar-action", "terminal " .. q(f1))))
+        assert_contains(assert(fs.read_file(tmp .. "/foot.log")), "-N -D " .. work)
+        assert(os.execute(run("kaze-thunar-action", "yazi " .. q(f1))))
+        assert_contains(assert(fs.read_file(tmp .. "/foot.log")), "-e yazi " .. f1)
+
+        -- compress + tarbomb-safe extract round-trip (when bsdtar is available)
+        if cmd_exists("bsdtar") then
+            assert(os.execute(run("kaze-thunar-action", "compress " .. q(f1) .. " " .. q(f2))))
+            local arc = work .. "/work dir-archive.tar.zst"
+            assert_true(fs.file_exists(arc), "compress creates .tar.zst archive")
+
+            local dest_dir = tmp .. "/extract-check"
+            fs.mkdir_p(dest_dir)
+            local copied_arc = dest_dir .. "/bundle.tar.zst"
+            assert(os.execute("cp -- " .. q(arc) .. " " .. q(copied_arc)))
+            assert(os.execute(run("kaze-thunar-action", "extract " .. q(copied_arc))))
+            -- Multi-root archive must be wrapped in subdirectory (tarbomb protection)
+            assert_eq(fs.read_file(dest_dir .. "/bundle/hello world.txt"), "kaze thunar test\n")
+            assert_eq(fs.read_file(dest_dir .. "/bundle/second.txt"), "second file\n")
+        end
     end)
 end)
 

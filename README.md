@@ -21,11 +21,18 @@ Built around official Arch `[extra]` packages (no AUR needed for the core setup)
 hypr/                    Hyprland Lua config (env, rules, keybinds, execs)
 config/noctalia/         Default Noctalia config (sharp/flat, offline, built-in templates)
 config/foot/             Foot terminal config (includes Noctalia theme)
+config/gtk-3.0/          GTK3 settings (adw-gtk3-dark) & sharp Noctalia CSS for Thunar
+config/Thunar/           Thunar custom actions (uca.xml) & keyboard shortcuts (accels.scm)
+config/xfce4/            Seeded fast/minimal Thunar xfconf defaults (thunar.xml)
+config/yazi/             Yazi config (Foot Sixel previews, ANSI theme, Vim keymap)
+config/zathura/          Minimal flat Zathura PDF viewer config
+config/imv/              Minimal Wayland imv image viewer config
+config/mimeapps.list     Default XDG file associations (thunar, imv, zathura)
 config/starship/         Minimal single-line ANSI Starship prompt config
 config/zsh/              Modular Zsh config (~/.zprofile, ~/.zshrc, conf.d/*.zsh)
 config/systemd/user/     Session target and user service units
-lua/kaze/                Small Lua helpers (hypr_user, keybinds_data, popups, session, json)
-bin/                     7 small helper CLIs for things Noctalia doesn't cover
+lua/kaze/                Small Lua helpers (hypr_user, keybinds_data, projects, popups, session, styles)
+bin/                     10 small helper CLIs for things Noctalia doesn't cover
 scripts/                 Install, apply, backup/rollback, and VM test helpers
 templates/               Example ~/.config/hypr/user.lua override file
 ```
@@ -36,9 +43,12 @@ templates/               Example ~/.config/hypr/user.lua override file
 - `kaze-footclient` — launch `footclient` with live Noctalia theme colors
 - `kaze-display` — Hyprland multi-monitor layout picker (`noctalia dmenu`)
 - `kaze-keys` — searchable Hyprland shortcut list (`noctalia dmenu`)
+- `kaze-project` — `zoxide`/`fd` project switcher (`noctalia dmenu`, Foot shell / Neovim split)
+- `kaze-style` — switch Noctalia v5 visual presets (`omarchy-rail`, `floating-islands`, `concave-notch`, `dynamic-island`)
 - `kaze-tui` — toggle floating `btop` window
-- `kaze-record` — full/region screen recording (`wf-recorder`)
+- `kaze-record` — full/region screen, audio & GIF recording (`wf-recorder` + `ffmpeg`, `noctalia dmenu`)
 - `kaze-doctor` — quick health check for packages, symlinks, configs, services, and Noctalia config drift (`--diff`)
+- `kaze-mirror` — Arch/CachyOS HTTPS mirror ranker & `ParallelDownloads` benchmark (`--dry-run`, `--apply`, `--bench`, `--rollback`)
 
 ## Setup
 
@@ -48,11 +58,11 @@ Preview first without touching anything:
 ./scripts/install.sh --profile minimal --dry-run
 ```
 
-Install packages, set Zsh as default login shell, and apply configs (backs up existing dotfiles automatically):
+Install packages, set Zsh as default login shell, choose a visual preset (`omarchy-rail`, `floating-islands`, `concave-notch`, or `dynamic-island`), and apply configs (backs up existing dotfiles automatically):
 
 ```sh
-./scripts/install.sh --profile minimal   # core setup (24 packages)
-./scripts/install.sh --profile full      # adds recording, color picker, wl-mirror, yazi, imv, zathura, fcitx5, starship, and CLI tools
+./scripts/install.sh --profile minimal --style dynamic-island   # default 3-island + hover-expanding center pill
+./scripts/install.sh --profile full --style dynamic-island  # full profile + Dynamic Island pill
 ```
 
 Apply dotfiles only (if packages are already installed):
@@ -81,8 +91,10 @@ Press `Super + /` anytime to search the full list (`kaze-keys`).
 | --- | --- |
 | `Super` (tap) / `Super + Space` | App launcher |
 | `Super + Return` / `Super + T` | Terminal (`foot`) |
+| `Super + O` / `Super + Shift + O` | Project switcher (`zoxide`/`fd`) / Neovim + terminal split |
+| `Super + Shift + Z` | Focus / Game Mode (0 animations/blur/gaps + DND) |
 | `Super + A` / `Super + N` | Control Center / Notifications |
-| `Super + I` | Noctalia Settings |
+| `Super + I` / `Super + Shift + I` | Noctalia Settings / Visual style switcher (`kaze-style`) |
 | `Super + Shift + T` | Toggle Dark / Light mode |
 | `Super + Shift + W` | Wallpaper picker |
 | `Super + V` | Clipboard history |
@@ -91,9 +103,10 @@ Press `Super + /` anytime to search the full list (`kaze-keys`).
 | `Ctrl + Super + P` | Toggle control presented workspace on laptop |
 | `Super + Alt + P` | Push/pull focused window to shared workspace |
 | `Ctrl + Shift + Esc` | Floating `btop` |
+| `Ctrl + Alt + M` | Mirror Optimizer TUI (`kaze-mirror --tui-window`) |
 | `Print` / `Super + Shift + S` / `Super + Shift + Alt + S` | Full / Region / Annotate screenshot |
 | `Super + Shift + C` | Pick color (`hyprpicker`) |
-| `Ctrl + Alt + R` / `Super + Shift + Alt + R` | Full / Region screen recording |
+| `Ctrl + Alt + R` / `Super + Shift + Alt + R` / `Super + Shift + R` | Full / Region recording / Recording menu (`kaze-record`) |
 | `Super + L` / `Ctrl + Alt + Del` | Lock / Session menu |
 | `Ctrl + Super + Alt + R` | Reload Noctalia & Hyprland |
 

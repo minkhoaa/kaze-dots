@@ -2,7 +2,7 @@
 
 ## 1. Helper CLIs (`bin/kaze-*`)
 
-All 7 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run strictly on demand (`0 MiB` resident background RAM), and follow POSIX exit codes (`0` success, `2` invalid CLI args, non-zero + `stderr` message on runtime errors).
+All 10 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run strictly on demand (`0 MiB` resident background RAM), and follow POSIX exit codes (`0` success, `2` invalid CLI args, non-zero + `stderr` message on runtime errors).
 
 ### `kaze-session <start|stop|lock|wake-displays>`
 - `start`: renders `$XDG_RUNTIME_DIR/kaze/session.env` from `hypr_user.load()`, imports only `WAYLAND_DISPLAY`, `XDG_CURRENT_DESKTOP`, and `HYPRLAND_INSTANCE_SIGNATURE` to `systemd --user` / D-Bus, and starts `kaze-session.target`.
@@ -26,17 +26,35 @@ All 7 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run st
 - Reads `lua/kaze/keybinds_data.lua` directly (single pure-Lua source of truth shared with `hypr/keybinds.lua`, zero compositor IPC needed for `--list`).
 - Default mode opens `noctalia dmenu` (`Super + /`, Esc-safe).
 
+### `kaze-project [--list] [--mode shell|nvim|split | --shell | --nvim | --split] [DIR]`
+- Discovers project directories from `zoxide query -l` (frecent first) and `fd` across `cfg.project_dirs` (defaulting to existing `~/Projects`, `~/Code`, `~/src`, `~/dev`, `~/Workspace`), then prompts via `noctalia dmenu` (`Project > `).
+- Updates `zoxide` frecency and opens the selected directory in `kaze-footclient` (`shell`, `nvim`, or `split` for Neovim + companion terminal split).
+
+### `kaze-style [PRESET | --menu | --current | --list] [--no-reload]`
+- Switches Noctalia v5 visual presets (`omarchy-rail`, `floating-islands`, `concave-notch`, `dynamic-island`) via `lua/kaze/styles.lua` with `0` extra resident daemons or polling, while preserving user edits outside style-managed TOML keys.
+- `floating-islands` uses 3 independent `[[bar.default.capsule_group]]` islands over a transparent top bar (`background_opacity = 0.0`); `concave-notch` uses `margin_edge = 0` + `concave_edge_corners = true`; `dynamic-island` centers a `group:island` top pill and anchors `[notification]` and `[osd]` at `position = "top_center"`, `offset_y = 6` right below the pill (with optional opt-in Noctalia `media-island` plugin documented for spring expansion without enabling network updates by default).
+- Persists active selection in `~/.config/kaze/style`, validates before atomic swap, reloads live Noctalia via `noctalia msg config-reload`, and is also selectable directly in `scripts/install.sh` (`--style` and TUI wizard step 2).
+
 ### `kaze-tui <sysmon|wifi|bluetooth|audio>`
 - Toggles a floating left-edge drawer (`-a kaze-tui`, matched by `hypr/rules.lua`) inside `kaze-footclient`. Primary hotkey is `Ctrl + Shift + Esc` → `kaze-tui sysmon` (`btop`, fallback `htop`/`top`). Focuses or closes an existing drawer cleanly on repeat press.
 
-### `kaze-record [toggle|--region|stop|status]`
-- Video-only `wf-recorder` capture managed via on-demand `kaze-record.service` with `flock` concurrency protection (`$XDG_RUNTIME_DIR/kaze/record.lock`).
-- `--region` selects a single-output rectangle via `slurp` (`Esc` cancels without reserving a file).
-- Writes unique `.mp4` files under XDG Videos `Recordings/`, stops cleanly via `SIGINT` with `ffprobe` packet verification, and notifies on completion.
+### `kaze-record [toggle|start|stop|status|--menu|--bar] [--region] [--audio[=desktop|mic|off]] [--gif]`
+- `wf-recorder` capture managed via on-demand `kaze-record.service` with `flock` concurrency protection (`$XDG_RUNTIME_DIR/kaze/record.lock`).
+- `--menu` opens `noctalia dmenu` (`Record > `) for Fullscreen/Region video, system audio (`desktop` sink monitor via `pactl`), mic input, and `ffmpeg` palettegen GIF export (or converting the last MP4 to GIF). `--bar` stops immediately when active or opens `--menu` when idle.
+- Updates Noctalia's `[widget.record]` bar indicator (`circle-dot` + `error` color while recording, reset cleanly via `ExecStopPost`).
+- Writes unique `.mp4` / `.gif` files under XDG Videos `Recordings/`, stops cleanly via `SIGINT` with `ffprobe` packet verification, and notifies on completion.
 
 ### `kaze-doctor [--offline] [--profile minimal|full] [--diff [--template PATH]]`
 - Validates required `PATH` binaries for the active profile (`minimal` vs `full`), deployed XDG symlinks (zero broken links), `noctalia config validate`, `foot --check-config`, `zsh -n` across `~/.zshrc`/`~/.zprofile`/`conf.d/*.zsh`, UTF-8 locale, empty `hyprctl configerrors`, matching `systemd --user` Wayland env, passive `busctl --user --activatable` portal check (never wakes portals), active PipeWire/WirePlumber, and singleton daemon counts (`noctalia`, `foot`, plus `fcitx5` on `full`).
 - `--diff` (alias `--diff-noctalia`): pure-Lua drift check (`lua/kaze/toml_diff.lua`) comparing `~/.config/noctalia/config.toml` against `<repo>/config/noctalia/config.toml` to surface newly added upstream sections, keys, and bar/template list items without flagging user GUI edits. Normal `kaze-doctor` runs also emit a `[WARN]` hint when drift exists.
+
+### `kaze-mirror [--dry-run|--apply] [--fast] [--bench] [--rollback] [--menu|--tui|--tui-window] [--json] [--force]`
+- Pure-Lua + `curl`/`bsdtar`/`pacman` Arch & CachyOS mirror optimizer (`lua/kaze/mirror.lua`, `lua/kaze/mirror_tui.lua`, `0` Python, `0` AUR, `0` background daemons).
+- Parses active `Include = /etc/pacman.d/...` groups directly from `/etc/pacman.conf` (strictly skips unmanaged third-party repos, globs, and inline `Server`/`CacheServer` conflicts).
+- **3-stage saturation protocol:** Phase 1A (`128 KiB` single `curl -Z` screen, high-RTT safe) → dynamic large stable `.pkg.tar.zst` discovery via `bsdtar` → Phase 1B (`8 MiB` warm-up) → Phase 2A (sustained single-stream `256 KiB` Lua pipe with `Q1..Q4` slow-start discard & burst-shaping detection) → Phase 2B (`4×` parallel aggregate saturation via `curl -Z`) + secondary repo freshness/size check.
+- **Stage 3 (`--bench`):** adaptive mixed-size real-package `ParallelDownloads` A/B (`{3, 5, 8, 12}`) via isolated `fakeroot pacman -Sw` against staged winning mirrorlists + Pre/Post comparison.
+- **Security & rollback:** zero-network `root` boundary (`--commit-plan` / `--commit-rollback`), two-layer `flock`, `db.lck` & active-service guard, symlink/allowlist enforcement, same-filesystem atomic `mktemp` + `sync` + `0644` + `rename`, `pacman-conf` post-commit verification with auto-revert, backup rotation (last 5 `.kaze-bak-*`), and transactional manifest preventing double-rollback.
+- **UI integration:** `[widget.mirror]` on Noctalia bar (Left: `--menu` via `noctalia dmenu`, Right: `--tui-window`), `Ctrl + Alt + M` keybind, and Omarchy ANSI TUI with upfront `sudo -v` authentication + automatic atomic commit on scan completion (pass `--tui --dry-run` to preview without committing).
 
 ---
 
@@ -46,7 +64,7 @@ All 7 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run st
 |---|---|---|
 | **Launchers** | `Super` (tap) / `Super + Space` | Toggle Noctalia app launcher |
 | **Launchers** | `Super + A` / `Super + N` | Control Center / Notifications tab |
-| **Launchers** | `Super + I` | Noctalia Settings GUI |
+| **Launchers** | `Super + I` / `Super + Shift + I` | Noctalia Settings GUI / Visual style switcher (`kaze-style`) |
 | **Launchers** | `Super + /` | Search Hyprland shortcuts (`kaze-keys`) |
 | **Launchers** | `Super + Shift + T` | Toggle Dark / Light mode (Noctalia) |
 | **Launchers** | `Super + Shift + W` | Noctalia wallpaper picker |
@@ -56,19 +74,22 @@ All 7 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run st
 | **System** | `Ctrl + Alt + C` | Dismiss active notifications (`locked`) |
 | **System** | `Super + Shift + D` | Toggle Do Not Disturb |
 | **System** | `Super + Shift + N` | Toggle Night Light |
+| **System** | `Super + Shift + Z` | Toggle Focus / Game Mode (`hl.config` + DND, `0` extra processes) |
 | **System** | `Super + Esc` | Enter/exit VM keybind `passthrough` submap |
 | **System** | `Super + Shift + P` / `XF86Display` | Display / Present / Virtual Share menu (`kaze-display --menu`) |
 | **System** | `Super + Alt + P` | Push/pull window to shared workspace (`kaze-display toggle-window-share`) |
 | **System** | `Ctrl + Super + P` | Toggle control presented workspace on laptop (`kaze-display toggle-control`) |
 | **System** | `Ctrl + Super + Alt + R` | Reload Noctalia & Hyprland (`noctalia msg config-reload && hyprctl reload`) |
 | **Apps** | `Super + Return` / `Super + T` | Terminal (`kaze-footclient -N`) |
-| **Apps** | `Super + W` / `Super + C` / `Super + E` | Browser / Editor (`codium`/`code`/`nvim`) / File manager (`yazi`) |
+| **Apps** | `Super + W` / `Super + C` / `Super + E` | Browser / Editor (`codium`/`code`/`nvim`) / File manager (`thunar`, fallback `yazi`) |
+| **Apps** | `Super + O` / `Super + Shift + O` | Project switcher (`kaze-project`) / Neovim + terminal split |
 | **Tools** | `Super + Alt + W` / `Super + Alt + B` | Network / Bluetooth Control Center tab |
 | **Tools** | `Ctrl + Alt + V` / `Super + Alt + A` | Audio Control Center tab |
 | **Tools** | `Ctrl + Shift + Esc` | Floating `btop` drawer (`kaze-tui sysmon`) |
+| **Tools** | `Ctrl + Alt + M` | Mirror Optimizer TUI (`kaze-mirror --tui-window`) |
 | **Capture** | `Print` / `Super + Shift + S` / `Super + Shift + Alt + S` | Full / Region / Annotate screenshot (Noctalia native) |
 | **Capture** | `Super + Shift + C` | Pick screen color (`hyprpicker` → clipboard) |
-| **Capture** | `Ctrl + Alt + R` / `Super + Shift + Alt + R` | Toggle Full / Region screen recording (`kaze-record`) |
+| **Capture** | `Ctrl + Alt + R` / `Super + Shift + Alt + R` / `Super + Shift + R` | Toggle Full / Region recording / Recording menu (`kaze-record`) |
 | **Windows** | `Super + Q` | Close active window |
 | **Windows** | `Super + F` / `Super + Alt + F` | Toggle fullscreen / maximize |
 | **Windows** | `Super + Alt + Space` / `Super + P` | Toggle float / pin |
@@ -81,7 +102,7 @@ All 7 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run st
 | **Workspaces** | `Super + 1..0` · `Super + Shift / Alt + 1..0` | Switch / Move window to workspace `1..10` |
 | **Workspaces** | `Super + Scroll` / `Ctrl + Super + Left/Right` / `Super + Page_Up/Down` | Cycle workspaces (and `+Shift`/`+Alt` to move window) |
 | **Workspaces** | `Super + S` / `Super + Alt + S` / `Ctrl + Super + Shift + Up/Down` | Toggle / Move in & out of `special:scratch` |
-| **Workspaces** | `Super + M` / `Super + D` / `Super + R` | Toggle special workspaces (`music`, `communication`, `todo`) |
+| **Workspaces** | `Super + M` / `Super + D` / `Super + R` (+ `Super + Alt + M/D/R`) | Toggle / move window to special workspaces (`music`, `communication`, `todo`) |
 | **Media** | `XF86AudioRaise/LowerVolume`, `XF86AudioMute` (`Super + Shift + M`), `XF86AudioMicMute` | Noctalia native volume/mic OSD (`locked`) |
 | **Media** | `XF86MonBrightnessUp/Down` | Noctalia native brightness OSD (`locked`) |
 | **Media** | `XF86AudioPlay/Next/Prev/Stop` (`Ctrl + Super + Space / = / - / Backspace`) | Noctalia native media controls (`locked`) |

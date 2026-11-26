@@ -1,7 +1,7 @@
 # Native app configuration
 
 ## Scope
-Edit [Hyprland modules](../hypr/), the default [Noctalia config](noctalia/config.toml), [Foot config](foot/foot.ini), [Zsh config](zsh/), and [systemd user units](systemd/user/) directly.
+Edit [Hyprland modules](../hypr/), the default [Noctalia config](noctalia/config.toml), [Foot config](foot/foot.ini), [GTK3/Thunar theme](gtk-3.0/), [Thunar configs](Thunar/), [Thunar xfconf defaults](xfce4/xfconf/xfce-perchannel-xml/thunar.xml), [Yazi configs](yazi/), [Zathura config](zathura/zathurarc), [imv config](imv/config), [XDG MIME defaults](mimeapps.list), [Yazi desktop override](applications/yazi.desktop), [Zsh config](zsh/), and [systemd user units](systemd/user/) directly.
 
 ## Local rules
 - Use Hyprland's native `hl.*` Lua API, not legacy compositor `.conf` rules. Write window matchers as C++ `std::regex`, not Lua patterns.

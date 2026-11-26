@@ -1,0 +1,168 @@
+#!/usr/bin/env lua
+
+local script_dir
+
+local function setup_path()
+    local home = os.getenv("HOME") or ""
+    local xdg_data = os.getenv("XDG_DATA_HOME")
+    if not xdg_data or xdg_data == "" then
+        xdg_data = home .. "/.local/share"
+    end
+    local paths = {}
+    local script = arg and arg[0] or ""
+    local q = "'" .. script:gsub("'", "'\\''") .. "'"
+    local p = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+    local resolved = p and p:read("*l") or nil
+    if p then p:close() end
+    script_dir = (resolved or script):match("^(.*)/[^/]+$")
+    if script_dir then
+        local repo_lua = script_dir .. "/../lua"
+        local f = io.open(repo_lua .. "/kaze/fs.lua", "r")
+        if f then
+            f:close()
+            paths[#paths + 1] = repo_lua .. "/?.lua"
+            paths[#paths + 1] = repo_lua .. "/?/init.lua"
+        end
+    end
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?.lua"
+    paths[#paths + 1] = xdg_data .. "/kaze-dots/lua/?/init.lua"
+    paths[#paths + 1] = package.path
+    package.path = table.concat(paths, ";")
+end
+
+setup_path()
+
+local fs = require("kaze.fs")
+local hypr_user = require("kaze.hypr_user")
+local popups = require("kaze.popups")
+local projects = require("kaze.projects")
+
+local function usage(out)
+    out:write("Usage: kaze-project [--list] [--mode shell|nvim|split | --shell | --nvim | --split] [DIR]\n")
+end
+
+local list_only = false
+local cli_mode = nil
+local target_arg = nil
+
+do
+    local i = 1
+    while i <= #arg do
+        local a = arg[i]
+        if a == "-h" or a == "--help" then
+            usage(io.stdout)
+            os.exit(0)
+        elseif a == "--list" then
+            list_only = true
+        elseif a == "--shell" then
+            cli_mode = "shell"
+        elseif a == "--nvim" then
+            cli_mode = "nvim"
+        elseif a == "--split" then
+            cli_mode = "split"
+        elseif a == "--mode" then
+            i = i + 1
+            cli_mode = arg[i]
+            if not cli_mode or cli_mode == "" then
+                io.stderr:write("kaze-project: --mode requires shell, nvim, or split\n")
+                os.exit(2)
+            end
+        elseif a:sub(1, 7) == "--mode=" then
+            cli_mode = a:sub(8)
+        elseif a:sub(1, 1) == "-" then
+            io.stderr:write("kaze-project: unknown option '" .. tostring(a) .. "'\n")
+            usage(io.stderr)
+            os.exit(2)
+        elseif not target_arg then
+            target_arg = a
+        else
+            io.stderr:write("kaze-project: too many arguments\n")
+            usage(io.stderr)
+            os.exit(2)
+        end
+        i = i + 1
+    end
+end
+
+local cfg = hypr_user.load()
+local mode = cli_mode or cfg.project_mode or "shell"
+if mode ~= "shell" and mode ~= "nvim" and mode ~= "split" then
+    io.stderr:write("kaze-project: invalid mode '" .. tostring(mode) .. "' (expected shell, nvim, or split)\n")
+    os.exit(2)
+end
+
+if list_only then
+    if target_arg then
+        io.stderr:write("kaze-project: --list cannot be combined with a target directory\n")
+        os.exit(2)
+    end
+    local items = projects.discover(cfg)
+    for _, item in ipairs(items) do
+        io.stdout:write(item.label .. "\n")
+    end
+    os.exit(0)
+end
+
+local selected_dir
+if target_arg then
+    local expanded = fs.expand_home(target_arg)
+    local ok = os.execute("test -d " .. fs.shell_quote(expanded) .. " >/dev/null 2>&1")
+    if not (ok == true or ok == 0) then
+        io.stderr:write("kaze-project: directory not found: " .. tostring(target_arg) .. "\n")
+        os.exit(1)
+    end
+    selected_dir = expanded
+else
+    local items = projects.discover(cfg)
+    if #items == 0 then
+        if fs.command_exists("notify-send") then
+            os.execute("notify-send -a kaze-project -t 3000 'No projects found' 'Visit folders with zoxide or set project_dirs in ~/.config/hypr/user.lua' >/dev/null 2>&1 || true")
+        end
+        os.exit(0)
+    end
+    local labels = {}
+    local by_label = {}
+    for _, item in ipairs(items) do
+        labels[#labels + 1] = item.label
+        by_label[item.label] = item.path
+    end
+    local choice, dmenu_err = popups.run_dmenu(labels, { prompt = "Project > " })
+    if not choice then
+        io.stderr:write("kaze-project: " .. tostring(dmenu_err) .. "\n")
+        os.exit(1)
+    end
+    if choice == "" then
+        os.exit(0)
+    end
+    selected_dir = by_label[choice]
+    if not selected_dir then
+        local maybe = fs.expand_home(choice)
+        local ok = os.execute("test -d " .. fs.shell_quote(maybe) .. " >/dev/null 2>&1")
+        if ok == true or ok == 0 then
+            selected_dir = maybe
+        else
+            io.stderr:write("kaze-project: unrecognized selection '" .. choice .. "'\n")
+            os.exit(1)
+        end
+    end
+end
+
+if fs.command_exists("zoxide") then
+    os.execute("zoxide add -- " .. fs.shell_quote(selected_dir) .. " >/dev/null 2>&1 || true")
+end
+
+local footclient_bin = (script_dir and fs.file_exists(script_dir .. "/kaze-footclient"))
+    and (script_dir .. "/kaze-footclient")
+    or "kaze-footclient"
+
+local cmds = projects.build_launch_cmds(selected_dir, mode, {
+    terminal_bin = footclient_bin,
+    editor = cfg.editor,
+})
+for _, cmd in ipairs(cmds) do
+    if not popups.exec_detached(cmd) then
+        io.stderr:write("kaze-project: failed to launch: " .. cmd .. "\n")
+        os.exit(1)
+    end
+end
+os.exit(0)

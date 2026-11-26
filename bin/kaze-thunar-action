@@ -1,0 +1,372 @@
+#!/usr/bin/env lua
+
+-- Kaze Thunar custom-action helper (stateless, zero-dependency Lua 5.5+ CLI).
+-- Actions: terminal | yazi | editor | copy-path | copy-image | wallpaper | extract | compress | checksum
+
+local script = arg and arg[0] or ""
+local data = os.getenv("XDG_DATA_HOME") or ""
+if data == "" then data = (os.getenv("HOME") or "") .. "/.local/share" end
+local installed = data .. "/kaze-dots/lua"
+local direct_dir = script:match("^(.*)/[^/]+$")
+local repo = direct_dir and (direct_dir .. "/../lua") or nil
+local f_repo = repo and io.open(repo .. "/kaze/fs.lua", "r") or nil
+if f_repo then
+    f_repo:close()
+else
+    local f_inst = io.open(installed .. "/kaze/fs.lua", "r")
+    if f_inst then
+        f_inst:close()
+        repo = nil
+    else
+        local q = "'" .. script:gsub("'", "'\\''") .. "'"
+        local link = io.popen("(readlink -f -- " .. q .. " || /usr/bin/readlink -f -- " .. q .. ") 2>/dev/null")
+        local resolved = link and link:read("*l")
+        if link then link:close() end
+        repo = ((resolved or script):match("^(.*)/[^/]+$") or ".") .. "/../lua"
+    end
+end
+local paths = {}
+if repo then
+    paths[#paths + 1] = repo .. "/?.lua"
+    paths[#paths + 1] = repo .. "/?/init.lua"
+end
+paths[#paths + 1] = installed .. "/?.lua"
+paths[#paths + 1] = installed .. "/?/init.lua"
+paths[#paths + 1] = package.path
+package.path = table.concat(paths, ";")
+
+local fs = require("kaze.fs")
+local hypr_user = require("kaze.hypr_user")
+local q = fs.shell_quote
+
+local USAGE = [[Usage: kaze-thunar-action <action> <path> [paths...]
+Actions:
+  terminal <path>      Open kaze-footclient in directory (or file's parent)
+  yazi <path>          Open path in Yazi inside kaze-footclient
+  editor <paths...>    Open selection in configured editor (codium/code/nvim)
+  copy-path <paths...> Copy full path(s) to Wayland clipboard
+  copy-image <path>    Copy image bytes to Wayland clipboard
+  wallpaper <path>     Set image as live Noctalia wallpaper
+  extract <archive>    Safely extract archive with bsdtar (tarbomb-safe)
+  compress <paths...>  Create fast .tar.zst archive with bsdtar
+  checksum <file>      Compute SHA256 and copy to Wayland clipboard
+]]
+
+local function notify(title, body, urgency)
+    if not fs.command_exists("notify-send") then return end
+    local urg = urgency and (" -u " .. q(urgency)) or ""
+    os.execute("notify-send -a kaze -t 3000" .. urg .. " " .. q(title) .. " " .. q(body or "") .. " >/dev/null 2>&1 || true")
+end
+
+local function is_dir(path)
+    return fs.exit_status(os.execute("[ -d " .. q(path) .. " ]")) == 0
+end
+
+local function path_exists(path)
+    return fs.exit_status(os.execute("[ -e " .. q(path) .. " ] || [ -L " .. q(path) .. " ]")) == 0
+end
+
+local function dir_of(path)
+    if is_dir(path) then return path end
+    return fs.dirname(path)
+end
+
+local function basename(path)
+    local clean = path:gsub("/+$", "")
+    if clean == "" then return "/" end
+    return clean:match("([^/]+)$") or clean
+end
+
+local function strip_archive_ext(name)
+    local stem = name:gsub("%.tar%.[^.]+$", "")
+    if stem ~= name then return stem end
+    stem = name:gsub("%.[^.]+$", "")
+    if stem ~= "" then return stem end
+    return name .. "-extracted"
+end
+
+local function unique_path(base, suffix)
+    suffix = suffix or ""
+    local cand = base .. suffix
+    if not path_exists(cand) then return cand end
+    for i = 1, 999 do
+        cand = string.format("%s-%d%s", base, i, suffix)
+        if not path_exists(cand) then return cand end
+    end
+    return string.format("%s-%d%s", base, os.time(), suffix)
+end
+
+local function footclient_bin()
+    if fs.command_exists("kaze-footclient") then return "kaze-footclient" end
+    local local_bin = fs.home() .. "/.local/bin/kaze-footclient"
+    if fs.file_exists(local_bin) then return local_bin end
+    if direct_dir and fs.file_exists(direct_dir .. "/kaze-footclient") then
+        return direct_dir .. "/kaze-footclient"
+    end
+    return "kaze-footclient"
+end
+
+local function wl_copy_text(text)
+    if not fs.command_exists("wl-copy") then
+        notify("Thunar", "wl-copy not found in PATH", "critical")
+        return false
+    end
+    local p = io.popen("wl-copy >/dev/null 2>&1", "w")
+    if not p then return false end
+    p:write(text)
+    return fs.exit_status(p:close()) == 0
+end
+
+local function quote_args(list)
+    local out = {}
+    for _, v in ipairs(list) do out[#out + 1] = q(v) end
+    return table.concat(out, " ")
+end
+
+local function guess_image_mime(path)
+    local ext = (path:match("%.([^./]+)$") or ""):lower()
+    local map = {
+        png = "image/png",
+        jpg = "image/jpeg",
+        jpeg = "image/jpeg",
+        gif = "image/gif",
+        webp = "image/webp",
+        bmp = "image/bmp",
+        svg = "image/svg+xml",
+        avif = "image/avif",
+        jxl = "image/jxl",
+        tif = "image/tiff",
+        tiff = "image/tiff",
+    }
+    return map[ext]
+end
+
+local function do_terminal(paths_arg)
+    local target = dir_of(paths_arg[1])
+    local cmd = string.format("exec %s -N -D %s", q(footclient_bin()), q(target))
+    return fs.exit_status(os.execute(cmd))
+end
+
+local function do_yazi(paths_arg)
+    if not fs.command_exists("yazi") then
+        notify("Thunar", "yazi is not installed", "critical")
+        return 1
+    end
+    local target = paths_arg[1]
+    local cwd = dir_of(target)
+    local cmd = string.format("exec %s -N -D %s -e yazi %s", q(footclient_bin()), q(cwd), q(target))
+    return fs.exit_status(os.execute(cmd))
+end
+
+local function do_editor(paths_arg)
+    local cfg = hypr_user.load()
+    local defaults = hypr_user.defaults()
+    local ed = cfg.editor or defaults.editor
+    local quoted = quote_args(paths_arg)
+    local cwd = dir_of(paths_arg[1])
+
+    if ed ~= defaults.editor then
+        return fs.exit_status(os.execute(ed .. " " .. quoted))
+    end
+    for _, gui in ipairs({ "codium", "code" }) do
+        if fs.command_exists(gui) then
+            return fs.exit_status(os.execute("exec " .. q(gui) .. " " .. quoted))
+        end
+    end
+    for _, tui in ipairs({ "nvim", "vim", "nano" }) do
+        if fs.command_exists(tui) then
+            local cmd = string.format("exec %s -N -D %s -e %s %s", q(footclient_bin()), q(cwd), q(tui), quoted)
+            return fs.exit_status(os.execute(cmd))
+        end
+    end
+    notify("Editor unavailable", "Install codium/nvim or set editor in ~/.config/hypr/user.lua", "critical")
+    return 1
+end
+
+local function do_copy_path(paths_arg)
+    local payload = table.concat(paths_arg, "\n")
+    if not wl_copy_text(payload) then return 1 end
+    local label = #paths_arg == 1 and paths_arg[1] or string.format("%d paths copied", #paths_arg)
+    notify("Copied path", label)
+    return 0
+end
+
+local function do_copy_image(paths_arg)
+    local path = paths_arg[1]
+    if not fs.file_exists(path) then
+        notify("Copy image failed", "File not found: " .. path, "critical")
+        return 1
+    end
+    if not fs.command_exists("wl-copy") then
+        notify("Copy image failed", "wl-copy not found in PATH", "critical")
+        return 1
+    end
+    local mime = guess_image_mime(path)
+    local type_flag = mime and ("--type " .. q(mime) .. " ") or ""
+    local rc = fs.exit_status(os.execute("wl-copy " .. type_flag .. "< " .. q(path) .. " >/dev/null 2>&1"))
+    if rc == 0 then
+        notify("Copied image", basename(path))
+    else
+        notify("Copy image failed", basename(path), "critical")
+    end
+    return rc
+end
+
+local function do_wallpaper(paths_arg)
+    local path = paths_arg[1]
+    if not fs.file_exists(path) then
+        notify("Wallpaper failed", "File not found: " .. path, "critical")
+        return 1
+    end
+    if not fs.command_exists("noctalia") then
+        notify("Wallpaper failed", "noctalia not found in PATH", "critical")
+        return 1
+    end
+    local rc = fs.exit_status(os.execute("noctalia msg wallpaper-set " .. q(path) .. " >/dev/null 2>&1"))
+    if rc == 0 then
+        notify("Wallpaper updated", basename(path))
+    else
+        notify("Wallpaper failed", "Noctalia rejected " .. basename(path), "critical")
+    end
+    return rc
+end
+
+local function do_extract(paths_arg)
+    local archive = paths_arg[1]
+    if not fs.file_exists(archive) then
+        notify("Extract failed", "Archive not found: " .. archive, "critical")
+        return 1
+    end
+    if not fs.command_exists("bsdtar") then
+        notify("Extract failed", "bsdtar not found in PATH", "critical")
+        return 1
+    end
+    local parent = fs.dirname(archive)
+    local list_out = fs.capture("bsdtar -tf " .. q(archive) .. " 2>/dev/null")
+    if not list_out then
+        notify("Extract failed", "Unreadable archive: " .. basename(archive), "critical")
+        return 1
+    end
+
+    -- Inspect top-level entries to prevent tarbombs and unsafe absolute/parent paths.
+    local roots = {}
+    local root_count = 0
+    local single_root = nil
+    for line in list_out:gmatch("[^\r\n]+") do
+        local norm = line:gsub("^%./+", "")
+        if norm:sub(1, 1) == "/" or norm == ".." or norm:match("^%.%./") or norm:match("/%.%./") or norm:match("/%.%.$") then
+            notify("Extract blocked", "Unsafe path in archive: " .. line, "critical")
+            return 1
+        end
+        if norm ~= "" and norm ~= "." then
+            local top = norm:match("^([^/]+)")
+            if top and not roots[top] then
+                roots[top] = true
+                root_count = root_count + 1
+                single_root = top
+            end
+        end
+    end
+
+    local dest
+    local extract_dir
+    if root_count == 1 and single_root and not path_exists(parent .. "/" .. single_root) then
+        extract_dir = parent
+        dest = parent .. "/" .. single_root
+    else
+        local stem = strip_archive_ext(basename(archive))
+        extract_dir = unique_path(parent .. "/" .. stem, "")
+        fs.mkdir_p(extract_dir)
+        dest = extract_dir
+    end
+
+    local rc = fs.exit_status(os.execute("bsdtar -xf " .. q(archive) .. " -C " .. q(extract_dir) .. " 2>/dev/null"))
+    if rc == 0 then
+        notify("Extracted archive", basename(archive) .. " -> " .. basename(dest))
+    else
+        notify("Extract failed", basename(archive), "critical")
+    end
+    return rc
+end
+
+local function do_compress(paths_arg)
+    if not fs.command_exists("bsdtar") then
+        notify("Compress failed", "bsdtar not found in PATH", "critical")
+        return 1
+    end
+    local parent = fs.dirname(paths_arg[1])
+    local base_name = #paths_arg == 1 and basename(paths_arg[1]) or (basename(parent) .. "-archive")
+    local out_path = unique_path(parent .. "/" .. base_name, ".tar.zst")
+
+    local rels = {}
+    for _, p in ipairs(paths_arg) do
+        if fs.dirname(p) ~= parent then
+            notify("Compress failed", "All selected items must be in the same folder", "critical")
+            return 1
+        end
+        rels[#rels + 1] = q(basename(p))
+    end
+
+    local cmd = string.format("bsdtar --zstd -cf %s -C %s -- %s 2>/dev/null",
+        q(out_path), q(parent), table.concat(rels, " "))
+    local rc = fs.exit_status(os.execute(cmd))
+    if rc == 0 then
+        notify("Created archive", basename(out_path))
+    else
+        notify("Compress failed", basename(out_path), "critical")
+    end
+    return rc
+end
+
+local function do_checksum(paths_arg)
+    local path = paths_arg[1]
+    if not fs.file_exists(path) or is_dir(path) then
+        notify("Checksum failed", "Not a regular file: " .. basename(path), "critical")
+        return 1
+    end
+    local out = fs.capture("sha256sum -- " .. q(path) .. " 2>/dev/null")
+    local hash = out and out:match("^([0-9a-fA-F]+)%s+")
+    if not hash then
+        notify("Checksum failed", "Could not hash " .. basename(path), "critical")
+        return 1
+    end
+    if not wl_copy_text(hash) then return 1 end
+    notify("SHA256 copied", string.format("%s (%s…)", basename(path), hash:sub(1, 16)))
+    return 0
+end
+
+local action = arg[1]
+if not action or action == "-h" or action == "--help" then
+    local stream = (action == "-h" or action == "--help") and io.stdout or io.stderr
+    stream:write(USAGE)
+    os.exit((action == "-h" or action == "--help") and 0 or 2)
+end
+
+local targets = {}
+for i = 2, #arg do
+    targets[#targets + 1] = arg[i]
+end
+if #targets == 0 then
+    io.stderr:write("kaze-thunar-action: missing path argument for '" .. action .. "'\n")
+    os.exit(2)
+end
+
+local dispatch = {
+    terminal = do_terminal,
+    yazi = do_yazi,
+    editor = do_editor,
+    ["copy-path"] = do_copy_path,
+    ["copy-image"] = do_copy_image,
+    wallpaper = do_wallpaper,
+    extract = do_extract,
+    compress = do_compress,
+    checksum = do_checksum,
+}
+
+local handler = dispatch[action]
+if not handler then
+    io.stderr:write("kaze-thunar-action: unknown action '" .. action .. "'\n" .. USAGE)
+    os.exit(2)
+end
+
+os.exit(handler(targets))

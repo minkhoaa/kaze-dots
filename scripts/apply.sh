@@ -33,7 +33,7 @@ for arg in "$@"; do
             ;;
         -h|--help)
             echo "Usage: $0 [--yes]"
-            echo "Backs up existing configs, writes a reversible rollback.sh, symlinks Hyprland/Foot/Zsh/Starship/systemd/CLI files, and seeds editable Noctalia config."
+            echo "Backs up existing configs, writes a reversible rollback.sh, symlinks Hyprland/Foot/Zsh/Starship/App/MIME/systemd/CLI files, and seeds editable Noctalia config."
             exit 0
             ;;
         *)
@@ -148,6 +148,58 @@ seed_editable_noctalia_config() {
     sed "s|directory = \"~/Pictures/Wallpapers\"|directory = \"${home_escaped}/Pictures/Wallpapers\"|" "$src" > "$dst"
 }
 
+seed_editable_file() {
+    local src="$1"
+    local dst="$2"
+    local already_managed=false
+    if [ "$REAPPLY" = true ] && grep -Fxq "$dst" "$INSTALLED_LIST" 2>/dev/null; then
+        already_managed=true
+    fi
+    record_installed "$dst"
+    if [ "$already_managed" = true ] && [ -f "$dst" ] && [ ! -L "$dst" ]; then
+        return 0
+    fi
+    mkdir -p -- "$(dirname -- "$dst")"
+    backup_existing "$dst"
+    cp -- "$src" "$dst"
+}
+
+ensure_gtk3_css_imports() {
+    local dst="$CONFIG_HOME/gtk-3.0/gtk.css"
+    local already_managed=false
+    if [ "$REAPPLY" = true ] && grep -Fxq "$dst" "$INSTALLED_LIST" 2>/dev/null; then
+        already_managed=true
+    fi
+    record_installed "$dst"
+    mkdir -p -- "$(dirname -- "$dst")"
+
+    local existing=""
+    if [ -f "$dst" ] && [ ! -L "$dst" ]; then
+        existing=$(cat -- "$dst")
+    fi
+    if [ "$already_managed" = false ] && { [ -e "$dst" ] || [ -L "$dst" ]; }; then
+        backup_existing "$dst"
+    fi
+
+    if [ -n "$existing" ]; then
+        printf '%s\n' "$existing" > "$dst"
+    elif [ ! -f "$dst" ]; then
+        : > "$dst"
+    fi
+    if ! grep -Fq 'noctalia.css' "$dst" 2>/dev/null; then
+        local tmp_css
+        tmp_css=$(mktemp -- "$dst.XXXXXXXX")
+        {
+            printf '@import url("noctalia.css");\n'
+            cat -- "$dst"
+        } > "$tmp_css"
+        mv -fT -- "$tmp_css" "$dst"
+    fi
+    if ! grep -Fq 'kaze-thunar.css' "$dst" 2>/dev/null; then
+        printf '@import url("kaze-thunar.css");\n' >> "$dst"
+    fi
+}
+
 backup_and_link "$REPO_DIR/lua/kaze" "$DATA_HOME/kaze-dots/lua/kaze"
 
 for f in hyprland.lua env.lua core.lua rules.lua execs.lua keybinds.lua; do
@@ -160,6 +212,28 @@ backup_and_link "$REPO_DIR/config/starship/starship.toml" "$CONFIG_HOME/starship
 backup_and_link "$REPO_DIR/config/zsh/zshrc" "$HOME/.zshrc"
 backup_and_link "$REPO_DIR/config/zsh/zprofile" "$HOME/.zprofile"
 backup_and_link "$REPO_DIR/config/zsh/conf.d" "$CONFIG_HOME/zsh/conf.d"
+
+for yazi_cfg in yazi.toml theme.toml keymap.toml; do
+    backup_and_link "$REPO_DIR/config/yazi/$yazi_cfg" "$CONFIG_HOME/yazi/$yazi_cfg"
+done
+backup_and_link "$REPO_DIR/config/zathura/zathurarc" "$CONFIG_HOME/zathura/zathurarc"
+backup_and_link "$REPO_DIR/config/imv/config" "$CONFIG_HOME/imv/config"
+backup_and_link "$REPO_DIR/config/mimeapps.list" "$CONFIG_HOME/mimeapps.list"
+backup_and_link "$REPO_DIR/config/applications/yazi.desktop" "$DATA_HOME/applications/yazi.desktop"
+
+backup_and_link "$REPO_DIR/config/gtk-3.0/settings.ini" "$CONFIG_HOME/gtk-3.0/settings.ini"
+backup_and_link "$REPO_DIR/config/gtk-3.0/kaze-thunar.css" "$CONFIG_HOME/gtk-3.0/kaze-thunar.css"
+backup_and_link "$REPO_DIR/config/Thunar/uca.xml" "$CONFIG_HOME/Thunar/uca.xml"
+seed_editable_file "$REPO_DIR/config/Thunar/accels.scm" "$CONFIG_HOME/Thunar/accels.scm"
+seed_editable_file "$REPO_DIR/config/xfce4/xfconf/xfce-perchannel-xml/thunar.xml" "$CONFIG_HOME/xfce4/xfconf/xfce-perchannel-xml/thunar.xml"
+ensure_gtk3_css_imports
+
+GTK3_NOCTALIA="$CONFIG_HOME/gtk-3.0/noctalia.css"
+if [ ! -e "$GTK3_NOCTALIA" ] && [ ! -L "$GTK3_NOCTALIA" ]; then
+    mkdir -p -- "$(dirname -- "$GTK3_NOCTALIA")"
+    : > "$GTK3_NOCTALIA"
+    record_installed "$GTK3_NOCTALIA"
+fi
 
 # Ensure Foot's included Noctalia theme file exists before Noctalia runs its first template pass.
 FOOT_THEME="$CONFIG_HOME/foot/themes/noctalia"

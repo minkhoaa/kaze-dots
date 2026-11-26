@@ -46,6 +46,8 @@ Layout geometry is unified across Noctalia (`config/noctalia/config.toml`) and H
 - **Launcher, Clipboard, Session:** floating centered (`launcher.width = 560`, `layout = "simple"`, `compact = true`).
 - **Noctalia Settings GUI (`dev.noctalia.Noctalia`):** floats centered at `56.25% × 85%` of the active monitor.
 - **Floating TUI Drawer (`^kaze-tui$`):** slides in from the left edge (`x = 58`, `y = 12`, `42%` width × `monitor_h - 24`), flush next to the `42px` bar (`8px + 42px + 8px = 58px`).
+- **Mirror Optimizer TUI (`^kaze-mirror-tui$`):** centered floating Foot window (`62% × 78%`, `center = true`) with responsive wide/medium/compact table breakpoints.
+- **Noctalia Mirror Widget (`[widget.mirror]`):** `glyph = "server"` (switches to `"refresh"` + `"primary"` while a scan runs, zero polling), Left-click `kaze-mirror --menu`, Right-click `kaze-mirror --tui-window`.
 - **Virtual Share Preview (`^at\.yrlf\.wl_mirror$`):** pinned bottom-right PiP (`28% × 28%`, `keep_aspect_ratio = true`, `opaque = true`, `no_blur = true`).
 
 ## 3. Customization Without Re-Generating Configs

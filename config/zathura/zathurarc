@@ -1,0 +1,61 @@
+# Kaze Zathura configuration (Omarchy sharp flat minimal PDF viewer)
+
+# Minimal chrome: hide statusbar/scrollbars by default (show input/status on ':' or '/')
+set guioptions ""
+set window-title-basename true
+set window-title-page true
+set statusbar-basename true
+
+# Direct Wayland clipboard copy on text selection
+set selection-clipboard "clipboard"
+set selection-notification true
+
+# Reading ergonomics
+set adjust-open "width"
+set pages-per-row 1
+set scroll-step 50
+set zoom-min 10
+set incremental-search true
+set font "JetBrainsMono Nerd Font 10"
+
+# Flat Tokyo-Night palette matching Noctalia default
+set default-bg "#1a1b26"
+set default-fg "#c0caf5"
+set statusbar-bg "#1a1b26"
+set statusbar-fg "#a9b1d6"
+set inputbar-bg "#1a1b26"
+set inputbar-fg "#c0caf5"
+set completion-bg "#24283b"
+set completion-fg "#c0caf5"
+set completion-highlight-bg "#7aa2f7"
+set completion-highlight-fg "#1a1b26"
+set completion-group-bg "#1a1b26"
+set completion-group-fg "#7aa2f7"
+set index-bg "#1a1b26"
+set index-fg "#c0caf5"
+set index-active-bg "#24283b"
+set index-active-fg "#7aa2f7"
+set highlight-color "rgba(122, 162, 247, 0.35)"
+set highlight-active-color "rgba(125, 207, 255, 0.55)"
+set notification-bg "#24283b"
+set notification-fg "#c0caf5"
+set notification-error-bg "#f7768e"
+set notification-error-fg "#1a1b26"
+set notification-warning-bg "#e0af68"
+set notification-warning-fg "#1a1b26"
+
+# Recolor dark mode ready on demand (toggle with 'i' or Ctrl+r)
+set recolor false
+set recolor-keephue true
+set recolor-lightcolor "#1a1b26"
+set recolor-darkcolor "#c0caf5"
+
+# Clean Vim navigation & toggles
+map i recolor
+map [normal] u scroll half-up
+map [normal] d scroll half-down
+map [normal] D toggle_page_mode
+map [normal] K zoom in
+map [normal] J zoom out
+map [normal] r rotate
+map [normal] R reload

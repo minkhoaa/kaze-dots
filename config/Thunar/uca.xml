@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Kaze Thunar Custom Actions (powered by zero-dependency bin/kaze-thunar-action) -->
+<actions>
+<action>
+	<icon>utilities-terminal</icon>
+	<name>Open Terminal Here</name>
+	<submenu></submenu>
+	<unique-id>kaze-thunar-terminal-1</unique-id>
+	<command>kaze-thunar-action terminal %f</command>
+	<description>Launch Foot client in this directory with live Noctalia theme</description>
+	<range>*</range>
+	<patterns>*</patterns>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+<action>
+	<icon>system-file-manager</icon>
+	<name>Open in Yazi</name>
+	<submenu></submenu>
+	<unique-id>kaze-thunar-yazi-2</unique-id>
+	<command>kaze-thunar-action yazi %f</command>
+	<description>Open current folder or file in Yazi terminal file manager</description>
+	<range>*</range>
+	<patterns>*</patterns>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+<action>
+	<icon>accessories-text-editor</icon>
+	<name>Open in Editor</name>
+	<submenu></submenu>
+	<unique-id>kaze-thunar-editor-3</unique-id>
+	<command>kaze-thunar-action editor %F</command>
+	<description>Open selection in configured Kaze editor (codium/code/nvim)</description>
+	<range>*</range>
+	<patterns>*</patterns>
+	<directories/>
+	<text-files/>
+	<other-files/>
+</action>
+<action>
+	<icon>edit-copy</icon>
+	<name>Copy Path</name>
+	<submenu></submenu>
+	<unique-id>kaze-thunar-copy-path-4</unique-id>
+	<command>kaze-thunar-action copy-path %F</command>
+	<description>Copy full file or directory path(s) to Wayland clipboard</description>
+	<range>*</range>
+	<patterns>*</patterns>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+<action>
+	<icon>image-x-generic</icon>
+	<name>Copy Image to Clipboard</name>
+	<submenu></submenu>
+	<unique-id>kaze-thunar-copy-image-5</unique-id>
+	<command>kaze-thunar-action copy-image %f</command>
+	<description>Copy image data directly to Wayland clipboard</description>
+	<range>1</range>
+	<patterns>*</patterns>
+	<image-files/>
+</action>
+<action>
+	<icon>preferences-desktop-wallpaper</icon>
+	<name>Set as Wallpaper (Noctalia)</name>
+	<submenu></submenu>
+	<unique-id>kaze-thunar-wallpaper-6</unique-id>
+	<command>kaze-thunar-action wallpaper %f</command>
+	<description>Apply image as live Noctalia wallpaper</description>
+	<range>1</range>
+	<patterns>*</patterns>
+	<image-files/>
+</action>
+<action>
+	<icon>package-x-generic</icon>
+	<name>Extract Archive Here</name>
+	<submenu></submenu>
+	<unique-id>kaze-thunar-extract-7</unique-id>
+	<command>kaze-thunar-action extract %f</command>
+	<description>Safely extract tar/zip/7z/rar/iso archive using bsdtar</description>
+	<range>1</range>
+	<patterns>*.tar;*.tar.*;*.tgz;*.tbz2;*.txz;*.tzst;*.zip;*.7z;*.rar;*.iso;*.cpio</patterns>
+	<other-files/>
+</action>
+<action>
+	<icon>application-x-archive</icon>
+	<name>Compress to .tar.zst</name>
+	<submenu></submenu>
+	<unique-id>kaze-thunar-compress-8</unique-id>
+	<command>kaze-thunar-action compress %F</command>
+	<description>Fast Zstd archive via bsdtar</description>
+	<range>*</range>
+	<patterns>*</patterns>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+<action>
+	<icon>security-high</icon>
+	<name>Copy SHA256 Checksum</name>
+	<submenu></submenu>
+	<unique-id>kaze-thunar-checksum-9</unique-id>
+	<command>kaze-thunar-action checksum %f</command>
+	<description>Compute SHA256 digest and copy to Wayland clipboard</description>
+	<range>1</range>
+	<patterns>*</patterns>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+</actions>
