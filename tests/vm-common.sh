@@ -9,10 +9,24 @@ ssh_guest() {
 }
 
 require_vm_off() {
-    if pgrep -x qemu-system-x86 >/dev/null; then
-        echo 'A QEMU instance is already running; leaving it untouched.' >&2
-        return 1
+    local pid cmdline
+    if [ -f "$VMDIR/vm.pid" ]; then
+        pid=$(<"$VMDIR/vm.pid")
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            echo 'A kaze test VM instance is already running; leaving it untouched.' >&2
+            return 1
+        fi
     fi
+    while read -r pid; do
+        [ -n "$pid" ] || continue
+        cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)
+        case "$cmdline" in
+            *"-name shell-bench-vm"*|*"arch-bench.qcow2"*|*"127.0.0.1:22222"*)
+                echo 'A kaze test VM instance is already running; leaving it untouched.' >&2
+                return 1
+                ;;
+        esac
+    done < <(pgrep -x qemu-system-x86 2>/dev/null || true)
 }
 
 vm_pid=

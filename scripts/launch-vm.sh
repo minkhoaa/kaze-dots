@@ -35,8 +35,28 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-if pgrep -x qemu-system-x86 >/dev/null 2>&1; then
-    echo "launch-vm.sh: qemu-system-x86 is already running" >&2
+vm_is_running() {
+    local pid cmdline
+    if [ -f "$VMDIR/vm.pid" ]; then
+        pid=$(<"$VMDIR/vm.pid")
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    while read -r pid; do
+        [ -n "$pid" ] || continue
+        cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)
+        case "$cmdline" in
+            *"-name shell-bench-vm"*|*"arch-bench.qcow2"*|*"127.0.0.1:22222"*)
+                return 0
+                ;;
+        esac
+    done < <(pgrep -x qemu-system-x86 2>/dev/null || true)
+    return 1
+}
+
+if vm_is_running; then
+    echo "launch-vm.sh: shell-bench-vm is already running" >&2
     exit 1
 fi
 
