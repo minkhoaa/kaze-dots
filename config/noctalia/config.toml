@@ -280,3 +280,4 @@ show_visualizer = false
 [wallpaper]
 enabled = true
 directory = "~/Pictures/Wallpapers"
+default = "~/Pictures/Wallpapers/01-tokyo-night-waves.jpg"

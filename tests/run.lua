@@ -292,8 +292,10 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         local zprof_local = cfg .. "/zsh/zprofile.local"
         local custom_conf = cfg .. "/zsh/conf.d/99-custom.zsh"
         local user_lua = cfg .. "/hypr/user.lua"
+        local user_wall = tmp .. "/Pictures/Wallpapers/my-custom.jpg"
 
         fs.write_atomic(user_lua, "return {} -- original hypr user settings\n")
+        fs.write_atomic(user_wall, "user-wallpaper-bytes\n")
         fs.write_atomic(unit, "original unit\n")
         fs.write_atomic(noc_cfg, "# pre-existing user noctalia config\n")
         fs.write_atomic(starship, "# pre-existing user starship config\n")
@@ -311,7 +313,12 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
 
         assert(os.execute(apply))
         local first = assert(fs.read_file(last)):gsub("\n$", "")
-        assert_contains(assert(fs.read_file(noc_cfg)), "offline_mode = true\n")
+        local seeded_noc = assert(fs.read_file(noc_cfg))
+        assert_contains(seeded_noc, "offline_mode = true\n")
+        assert_contains(seeded_noc, 'directory = "' .. tmp .. '/Pictures/Wallpapers"\n', "expands wallpaper directory")
+        assert_contains(seeded_noc, 'default = "' .. tmp .. '/Pictures/Wallpapers/01-tokyo-night-waves.jpg"\n', "expands default wallpaper path")
+        assert_true(not seeded_noc:find("~/Pictures/Wallpapers", 1, true), "leaves no unexpanded ~/Pictures/Wallpapers")
+        assert_eq(fs.read_file(user_wall), "user-wallpaper-bytes\n", "preserves pre-existing user wallpaper")
         assert_true(fs.file_exists(cfg .. "/foot/themes/noctalia"), "seeds empty Foot Noctalia theme")
         assert_true(os.execute("test -L " .. q(tmp .. "/.config/foot/themes/noctalia")), "links ~/.config/foot/themes/noctalia when XDG_CONFIG_HOME is custom")
         assert_eq(fs.read_file(user_zsh), "# user-owned zsh overrides\n")
@@ -347,6 +354,12 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-Phosphor.json\n")
         assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-Amber.json\n")
         assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-Retro90s.json\n")
+        assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-RosePine.json\n")
+        assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-Everforest.json\n")
+        assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-Monochrome.json\n")
+        assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-Sakura.json\n")
+        assert_contains(manifest, tmp .. "/Pictures/Wallpapers/01-tokyo-night-waves.jpg\n")
+        assert_contains(manifest, tmp .. "/Pictures/Wallpapers/10-swiss-light.jpg\n")
         assert_contains(manifest, cfg .. "/Thunar/uca.xml\n")
         assert_contains(manifest, cfg .. "/Thunar/accels.scm\n")
         assert_contains(manifest, cfg .. "/xfce4/xfconf/xfce-perchannel-xml/thunar.xml\n")
@@ -374,6 +387,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         assert_eq(fs.read_file(zprof_local), "# user-owned zprofile overrides\n")
         assert_eq(fs.capture("readlink -- " .. q(foot)), "/nonexistent/fixture\n")
         assert_eq(fs.read_file(user_lua), "return {} -- original hypr user settings\n")
+        assert_eq(fs.read_file(user_wall), "user-wallpaper-bytes\n", "rollback preserves user-owned wallpaper")
         assert_true(not fs.file_exists(last), "rollback unregisters active backup")
         for _, path in ipairs({
             tmp .. "/.local/bin/kaze-session",
@@ -395,6 +409,12 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
             cfg .. "/noctalia/palettes/Kaze-Phosphor.json",
             cfg .. "/noctalia/palettes/Kaze-Amber.json",
             cfg .. "/noctalia/palettes/Kaze-Retro90s.json",
+            cfg .. "/noctalia/palettes/Kaze-RosePine.json",
+            cfg .. "/noctalia/palettes/Kaze-Everforest.json",
+            cfg .. "/noctalia/palettes/Kaze-Monochrome.json",
+            cfg .. "/noctalia/palettes/Kaze-Sakura.json",
+            tmp .. "/Pictures/Wallpapers/01-tokyo-night-waves.jpg",
+            tmp .. "/Pictures/Wallpapers/10-swiss-light.jpg",
             cfg .. "/Thunar/uca.xml",
             cfg .. "/Thunar/accels.scm",
             cfg .. "/xfce4/xfconf/xfce-perchannel-xml/thunar.xml",
@@ -726,7 +746,7 @@ test("kaze.styles & kaze-style: renders all 11 presets safely, manages palettes/
     local user_toml = base_tpl:gsub("polkit_agent = false", "polkit_agent = true")
         :gsub('directory = "~/Pictures/Wallpapers"', 'directory = "/home/user/Wallpapers"')
 
-    -- Verify all 4 custom Version-2 palettes decode cleanly and contain strict 6-digit hex colors
+    -- Verify all 8 custom Version-2 palettes decode cleanly and contain strict 6-digit hex colors
     local required_roles = {
         "primary", "on_primary", "secondary", "on_secondary", "tertiary", "on_tertiary",
         "error", "on_error", "surface", "on_surface", "surface_container", "on_surface_container",
@@ -738,7 +758,10 @@ test("kaze.styles & kaze-style: renders all 11 presets safely, manages palettes/
         "bright_blue", "bright_magenta", "bright_cyan", "bright_white",
         "foreground", "background", "selection_fg", "selection_bg", "cursor", "cursor_text",
     }
-    for _, pal_name in ipairs({ "Kaze-Swiss", "Kaze-Phosphor", "Kaze-Amber", "Kaze-Retro90s" }) do
+    for _, pal_name in ipairs({
+        "Kaze-Swiss", "Kaze-Phosphor", "Kaze-Amber", "Kaze-Retro90s",
+        "Kaze-RosePine", "Kaze-Everforest", "Kaze-Monochrome", "Kaze-Sakura",
+    }) do
         local raw = assert(fs.read_file(repo_dir .. "/config/noctalia/palettes/" .. pal_name .. ".json"))
         local pal = json.decode(raw)
         assert_eq(pal.version, 2, pal_name .. " must be format version 2")

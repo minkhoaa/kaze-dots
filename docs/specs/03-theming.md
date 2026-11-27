@@ -6,7 +6,8 @@
 
 Default theme seed in [config/noctalia/config.toml](../../config/noctalia/config.toml):
 - `mode = "dark"` (instant Dark/Light toggle via `Super + Shift + T` → `noctalia msg theme-mode-toggle`)
-- `source = "builtin"`, `builtin = "Tokyo-Night"` (users can switch to any built-in theme, wallpaper-derived `m3-content` palette, or the bundled Version-2 custom palettes `Kaze-Swiss`, `Kaze-Phosphor`, `Kaze-Amber`, and `Kaze-Retro90s` symlinked into `~/.config/noctalia/palettes/`).
+- `source = "builtin"`, `builtin = "Tokyo-Night"` (users can switch across Noctalia's 8 built-in themes, wallpaper-derived `m3-content` palettes, or the 8 bundled Version-2 custom palettes — `Kaze-Swiss`, `Kaze-Phosphor`, `Kaze-Amber`, `Kaze-Retro90s`, `Kaze-RosePine`, `Kaze-Everforest`, `Kaze-Monochrome`, and `Kaze-Sakura` — symlinked into `~/.config/noctalia/palettes/`).
+- `[wallpaper]`: `directory = "~/Pictures/Wallpapers"`, `default = "~/Pictures/Wallpapers/01-tokyo-night-waves.jpg"` (expanded to `$HOME` by `scripts/apply.sh`). Ten curated 4K sRGB wallpapers curated from MIT-licensed `omacom/omarchy` live in [assets/wallpapers/](../../assets/wallpapers/), are symlinked into `~/Pictures/Wallpapers/` for Noctalia's Wallpaper Picker (`Super + Shift + W`), and `01-tokyo-night-waves.jpg` is copied to `/var/lib/noctalia-greeter/wallpaper.jpg` (`0644`, `greeter:greeter`) for the default login screen.
 - Palette-locked presets (`swiss-grid`, `tui-hacker`, `retro-90s`) save the user's prior `[theme]` in `~/.config/kaze/saved-theme.json` and automatically restore it when switching back to any theme-agnostic preset.
 - `sync_color_scheme = true` (syncs `prefer-dark` / `prefer-light` natively)
 - `enable_community_templates = false` (strictly offline, built-in templates only)

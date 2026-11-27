@@ -556,12 +556,19 @@ EOF
                 rm -f -- "$tmp_gt"
             fi
 
+            local greeter_wall="/usr/share/noctalia/assets/noctalia-wallpaper.png"
+            local wall_src="${REPO_DIR:-}/assets/wallpapers/01-tokyo-night-waves.jpg"
+            if [[ -n "${REPO_DIR:-}" && -f "$wall_src" ]]; then
+                greeter_wall="$greeter_dir/wallpaper.jpg"
+                sudo install -m 0644 -- "$wall_src" "$greeter_wall"
+            fi
+
             local sync_toml="$greeter_dir/sync.toml"
             if [[ ! -f "$sync_toml" ]] || ! grep -Eq '^\[appearance\.wallpaper\]' "$sync_toml" 2>/dev/null; then
                 local tmp_st
                 tmp_st="$(mktemp "${TMPDIR:-/tmp}/kaze-sync.XXXXXX")"
-                cat > "$tmp_st" <<'EOF'
-# Seeded Kaze appearance (Tokyo-Night + Noctalia wallpaper; freely updated by UI & Noctalia Sync)
+                cat > "$tmp_st" <<EOF
+# Seeded Kaze appearance (Tokyo-Night + bundled 4K wallpaper; freely updated by UI & Noctalia Sync)
 [appearance]
 scheme = "Tokyo-Night"
 theme_mode = "dark"
@@ -569,7 +576,7 @@ font_family = "JetBrainsMono Nerd Font"
 corner_radius_scale = 1.0
 
 [appearance.wallpaper]
-path = "/usr/share/noctalia/assets/noctalia-wallpaper.png"
+path = "${greeter_wall}"
 blur = 0.25
 tint = 0.15
 
@@ -581,7 +588,9 @@ EOF
             fi
 
             if [[ -z "${KAZE_NOCTALIA_GREETER_DIR:-}" ]] && id greeter >/dev/null 2>&1; then
-                sudo chown greeter:greeter -- "$greeter_toml" "$sync_toml" 2>/dev/null || true
+                local chown_targets=("$greeter_toml" "$sync_toml")
+                [[ -f "$greeter_dir/wallpaper.jpg" ]] && chown_targets+=("$greeter_dir/wallpaper.jpg")
+                sudo chown greeter:greeter -- "${chown_targets[@]}" 2>/dev/null || true
             fi
             if [[ -z "${KAZE_NOCTALIA_GREETER_DIR:-}" && -n "$target_user" ]] && command -v noctalia-greeter >/dev/null 2>&1; then
                 sudo noctalia-greeter passwordless-sync enable "$target_user" >/dev/null 2>&1 || true

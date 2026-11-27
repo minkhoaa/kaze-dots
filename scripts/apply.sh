@@ -145,7 +145,7 @@ seed_editable_noctalia_config() {
     backup_existing "$dst"
     local home_escaped
     home_escaped=$(printf '%s\n' "$HOME" | sed 's/[&|\\]/\\&/g')
-    sed "s|directory = \"~/Pictures/Wallpapers\"|directory = \"${home_escaped}/Pictures/Wallpapers\"|" "$src" > "$dst"
+    sed "s|~/Pictures/Wallpapers|${home_escaped}/Pictures/Wallpapers|g" "$src" > "$dst"
 }
 
 seed_editable_file() {
@@ -262,6 +262,13 @@ if [ -d "$REPO_DIR/config/noctalia/palettes" ]; then
     for pal_file in "$REPO_DIR"/config/noctalia/palettes/*.json; do
         [ -e "$pal_file" ] || continue
         backup_and_link "$pal_file" "$CONFIG_HOME/noctalia/palettes/$(basename "$pal_file")"
+    done
+fi
+
+if [ -d "$REPO_DIR/assets/wallpapers" ]; then
+    for wall_file in "$REPO_DIR"/assets/wallpapers/*; do
+        [ -f "$wall_file" ] || continue
+        backup_and_link "$wall_file" "$HOME/Pictures/Wallpapers/$(basename "$wall_file")"
     done
 fi
 

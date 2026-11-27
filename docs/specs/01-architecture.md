@@ -93,7 +93,8 @@ lua/kaze/
 | `$XDG_CONFIG_HOME/hypr/xdph.conf` | Symlink → `<repo>/config/hypr/xdph.conf` |
 | `$XDG_CONFIG_HOME/hypr/user.lua` | Seeded once from `templates/hypr-user.lua.example` (auto-seeding `drm_devices` + `prefer_mesa_egl` on hybrid laptops when absent); never overwritten or deleted on rollback |
 | `$XDG_CONFIG_HOME/noctalia/config.toml` | Seeded editable file from `config/noctalia/config.toml`; preserved across re-applies |
-| `$XDG_CONFIG_HOME/noctalia/palettes/*.json` | Symlinks → `<repo>/config/noctalia/palettes/*.json` (Version-2 custom palettes) |
+| `$XDG_CONFIG_HOME/noctalia/palettes/*.json` | Symlinks → `<repo>/config/noctalia/palettes/*.json` (8 Version-2 custom palettes) |
+| `~/Pictures/Wallpapers/*.jpg` | Symlinks → `<repo>/assets/wallpapers/*.jpg` (10 bundled 4K MIT-licensed wallpapers; user-owned wallpapers preserved) |
 | `$XDG_CONFIG_HOME/foot/foot.ini` | Symlink → `<repo>/config/foot/foot.ini` |
 | `$XDG_CONFIG_HOME/foot/themes/noctalia` | Empty placeholder created on first apply (plus symlink at `~/.config/foot/themes/noctalia` when `XDG_CONFIG_HOME` is customized); populated live by Noctalia's `foot` template |
 | `$XDG_CONFIG_HOME/gtk-3.0/{settings.ini,kaze-thunar.css,gtk.css,noctalia.css,kaze-style.css}` | Symlinks + managed `gtk.css` imports and preset CSS overlay for GTK3/Thunar |
