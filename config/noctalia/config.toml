@@ -108,7 +108,7 @@ capsule = false
 capsule_border_width = 1.0
 start = [ "launcher", "ws" ]
 center = [ "vclock" ]
-end = [ "record", "tray", "display", "mirror", "net", "vol", "bat", "notifications", "control-center", "session" ]
+end = [ "record", "tray", "display", "mirror", "net", "vol", "bat", "theme", "notifications", "control-center", "session" ]
 
 [widget.ws]
 type = "workspaces"
@@ -168,6 +168,17 @@ tooltip = "Mirror Optimizer (Left: Menu, Right: TUI)"
 [widget.mirror.actions]
 left = "exec kaze-mirror --menu"
 right = "exec kaze-mirror --tui-window"
+
+[widget.theme]
+type = "custom_button"
+glyph = "palette"
+icon_color = "on_surface_variant"
+tooltip = "Theme Hub (Left: Hub, Right: Visual Styles, Middle: Dark/Light)"
+
+[widget.theme.actions]
+left = "exec kaze-style --hub"
+right = "exec kaze-style --menu"
+middle = "exec noctalia msg theme-mode-toggle"
 
 [widget.hclock]
 type = "clock"

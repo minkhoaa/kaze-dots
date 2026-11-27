@@ -171,7 +171,7 @@ docs/specs/              Architecture, layout presets, theming, CLI/keybinds, an
 
 - `kaze-session` — start/stop `kaze-session.target`, lock screen, wake displays
 - `kaze-footclient` — launch `footclient` with live Noctalia theme overrides
-- `kaze-style` — switch across 11 Noctalia + Hyprland + GTK3 visual presets
+- `kaze-style` — 2-column illustrated visual Theme Hub with live preview & `Esc` rollback (`--hub`, bar palette button beside notifications), color theme switcher (`--theme`), and 11-preset visual style switcher (`--menu`)
 - `kaze-display` — multi-monitor layout picker, HDMI presentation, and Virtual Share 1080p (Meet/Discord)
 - `kaze-record` — full/region screen, audio & GIF recording (`wf-recorder` + `ffmpeg`, `noctalia dmenu`)
 - `kaze-mirror` — Arch/CachyOS HTTPS mirror ranker & `ParallelDownloads` benchmark (`--tui-window`, `--apply`, `--rollback`)
@@ -193,7 +193,7 @@ Press `Super + /` anytime to search all bindings (`kaze-keys`).
 | `Super + Shift + Z` | Focus / Game Mode (0 animations/blur/gaps + DND) |
 | `Super + A` / `Super + N` | Control Center / Notifications |
 | `Super + I` / `Super + Shift + I` | Noctalia Settings / Visual style switcher (`kaze-style`) |
-| `Super + Shift + T` | Toggle Dark / Light mode |
+| `Super + Shift + T` / `Super + Alt + T` | Toggle Dark / Light mode / Theme Hub (`kaze-style --hub`, also on bar beside notifications) |
 | `Super + Shift + W` | Wallpaper picker |
 | `Super + V` | Clipboard history |
 | `Super + /` | Search keybinds |

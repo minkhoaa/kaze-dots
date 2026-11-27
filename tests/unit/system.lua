@@ -2067,13 +2067,13 @@ exit 0
             fs.write_atomic(snapper_cfg, "SUBVOLUME=\"/\"\n")
 
             -- 1. Hard conflict in --yes mode without --replace-conflicts MUST abort before pacman -Syu
-            local conf_fail_out, conf_fail_ok = read_all(env .. " KAZE_SNAPPER_CONFIG=" .. q(tmp .. "/no-snapper") .. " TEST_PACMAN_QQ='pulseaudio\nxdg-desktop-portal-wlr\ndunst' " .. installer .. " --profile minimal --yes 2>&1")
+            local conf_fail_out, conf_fail_ok = read_all(env .. " KAZE_SNAPPER_CONFIG=" .. q(tmp .. "/no-snapper") .. " TEST_PACMAN_QQ='pulseaudio\nxdg-desktop-portal-wlr\ndunst' " .. installer .. " --profile minimal --no-log --yes 2>&1")
             assert_true(not conf_fail_ok, "hard conflict without --replace-conflicts must fail in --yes mode")
             assert_contains(conf_fail_out, "--replace-conflicts")
             assert_true(not fs.file_exists(home .. "/pacman-calls"), "aborted conflict check must not run pacman -Syu")
 
             -- 1b. --snapshot when snapper root config is absent must fail cleanly before touching pacman
-            local snap_fail_out, snap_fail_ok = read_all(env .. " KAZE_SNAPPER_CONFIG=" .. q(tmp .. "/no-snapper") .. " " .. installer .. " --profile minimal --snapshot --yes 2>&1")
+            local snap_fail_out, snap_fail_ok = read_all(env .. " KAZE_SNAPPER_CONFIG=" .. q(tmp .. "/no-snapper") .. " " .. installer .. " --profile minimal --snapshot --no-log --yes 2>&1")
             assert_true(not snap_fail_ok, "--snapshot without snapper config must fail")
             assert_contains(snap_fail_out, "--snapshot")
             assert_true(not fs.file_exists(home .. "/pacman-calls"), "failed --snapshot must not run pacman -Syu")

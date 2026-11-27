@@ -100,6 +100,14 @@ hl.window_rule({
 })
 
 hl.window_rule({
+    name = "kaze-theme-hub",
+    match = { class = "^kaze-theme-hub$" },
+    float = true,
+    center = true,
+    size = "(monitor_w*0.64) (monitor_h*0.74)",
+})
+
+hl.window_rule({
     name = "kaze-top-dropdown",
     match = { class = "^kaze-dropdown$" },
     float = true,

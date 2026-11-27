@@ -77,6 +77,7 @@ lua/kaze/
 ├── projects.lua       # Pure-Lua zoxide/fd project discovery & launch command builder
 ├── session.lua        # kaze-session.target lifecycle, session.env renderer, lock/DPMS helpers
 ├── styles.lua         # Pure-Lua Noctalia v5 visual preset definitions & surgical TOML updater
+├── theme_hub_tui.lua  # Pure-Lua 2-column visual Theme Hub with TrueColor illustrations & live preview
 ├── toml_diff.lua      # Pure-Lua Noctalia config.toml section/key/widget drift checker
 └── utility.lua        # Shared systemd user unit query/start/stop helpers
 ```

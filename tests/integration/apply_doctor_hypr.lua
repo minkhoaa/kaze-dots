@@ -1617,6 +1617,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
         "kaze-share-control",
         "kaze-tui-drawer",
         "kaze-mirror-tui",
+        "kaze-theme-hub",
         "noctalia-settings",
       }
       for _, name in ipairs(required_wr) do

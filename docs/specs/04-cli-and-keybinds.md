@@ -30,7 +30,9 @@ All 11 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run s
 - Discovers project directories from `zoxide query -l` (frecent first) and `fd` across `cfg.project_dirs` (defaulting to existing `~/Projects`, `~/Code`, `~/src`, `~/dev`, `~/Workspace`), then prompts via `noctalia dmenu` (`Project > `).
 - Updates `zoxide` frecency and opens the selected directory in `kaze-footclient` (`shell`, `nvim`, or `split` for Neovim + companion terminal split).
 
-### `kaze-style [PRESET | --menu | --current | --list] [--no-reload]`
+### `kaze-style [PRESET | --hub | --hub-window | --hub-tui | --hub-dmenu | --menu | --theme [NAME] | --themes | --current | --list] [--tab styles|palettes] [--no-live] [--no-reload]`
+- **Visual Theme Hub (`--hub`, bound to `Super + Alt + T` and bar `[widget.theme]` right next to notifications):** pure-Lua floating centered Foot window (`kaze-theme-hub`, `lua/kaze/theme_hub_tui.lua`) rendering a **2-column illustrated TrueColor card grid** for all 11 visual styles (bespoke mini-desktop wireframes) and 17 color palettes (mini-desktop + 6-chip color swatches + hex) with keyboard & SGR-1006 mouse support, **real-time live desktop preview**, Dark/Light toggle (`d`), Wallpaper Picker (`w`), Settings GUI (`s`), and **atomic `Esc` rollback** (zero extra daemons, zero polling; falls back to `--hub-dmenu` when headless).
+- **Color Theme switcher (`--theme [NAME]`, `--themes`):** switches across Noctalia's 8 built-in themes, all custom palettes in `~/.config/noctalia/palettes/*.json`, and Material 3 `wallpaper` mode, validating via `noctalia config validate` and applying live templates (`config-reload` + `templates-apply` + `hyprctl reload`).
 - Switches across all **11 visual presets** (`omarchy-rail`, `swiss-grid`, `corner-hud`, `ghost-zero`, `dynamic-island`, `hardware-notch`, `glass-studio`, `floating-rail`, `tui-hacker`, `retro-90s`, `cinema-frame`, plus aliases like `floating-islands` → `corner-hud` and `concave-notch` → `hardware-notch`) via `lua/kaze/styles.lua` with `0` extra resident daemons or polling, while preserving user edits outside style-managed TOML keys and preserving `~/.config/hypr/user.lua`.
 - Synchronizes Noctalia (`~/.config/noctalia/config.toml`), Hyprland geometry (`~/.config/hypr/kaze-style.lua`), and GTK3/Thunar CSS (`~/.config/gtk-3.0/kaze-style.css`), plus saves/restores `[theme]` across palette-locked presets (`~/.config/kaze/saved-theme.json`).
 - `dynamic-island` renders a 3-cluster top bar (`group:island_left` launcher + `focus_hint` workspace dots, centered theme-synced `surface_container` Live Activity `group:island` pill with clock, MPRIS media, `kaze-record`, `kaze-display`, notifications, and control-center, and `group:island_right` quick controls); `ghost-zero` enables `auto_hide = true`, `reserve_space = false`, `0px` gaps, and `Super_L` hold-to-peek; `glass-studio` enables the auto-hiding bottom `[dock]`; `floating-rail` runs dual bars (`default` + `rail`).
@@ -70,7 +72,7 @@ All 11 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run s
 | **Launchers** | `Super + A` / `Super + N` | Control Center / Notifications tab |
 | **Launchers** | `Super + I` / `Super + Shift + I` | Noctalia Settings GUI / Visual style switcher (`kaze-style`) |
 | **Launchers** | `Super + /` | Search Hyprland shortcuts (`kaze-keys`) |
-| **Launchers** | `Super + Shift + T` | Toggle Dark / Light mode (Noctalia) |
+| **Launchers** | `Super + Shift + T` / `Super + Alt + T` | Toggle Dark / Light mode / Open Theme Hub (`kaze-style --hub`) |
 | **Launchers** | `Super + Shift + W` | Noctalia wallpaper picker |
 | **Launchers** | `Super + V` | Noctalia clipboard history |
 | **System** | `Ctrl + Alt + Delete` | Noctalia session menu |

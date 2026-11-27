@@ -1,17 +1,18 @@
 #!/usr/bin/env lua
--- Pure-Lua Noctalia v5 + Hyprland + GTK3 visual preset switcher (11 presets across 3 groups).
+-- Pure-Lua Noctalia v5 + Hyprland + GTK3 visual preset & Theme Hub switcher.
 
-local function resolve_script_dir()
+local function resolve_script_paths()
     local src = arg[0] or "kaze-style"
     local p = io.popen("readlink -f -- '" .. src:gsub("'", "'\\''") .. "' 2>/dev/null")
     local resolved = p and p:read("*l") or src
     if p then
         p:close()
     end
-    return resolved:match("^(.*)/[^/]+$") or "."
+    local dir = resolved:match("^(.*)/[^/]+$") or "."
+    return resolved, dir
 end
 
-local script_dir = resolve_script_dir()
+local self_path, script_dir = resolve_script_paths()
 local paths = {}
 local repo_dir = os.getenv("KAZE_DOTS_DIR")
 if repo_dir and repo_dir ~= "" then
@@ -24,12 +25,27 @@ paths[#paths + 1] = package.path
 package.path = table.concat(paths, ";")
 
 local fs = require("kaze.fs")
+local json = require("kaze.json")
 local popups = require("kaze.popups")
 local styles = require("kaze.styles")
+local q = fs.shell_quote
 
 local function print_usage(out)
-    out:write("Usage: kaze-style [PRESET | --menu | --current | --list] [--no-reload] [-h|--help]\n")
-    out:write("Switch Noctalia v5 + Hyprland + GTK3 visual presets without extra daemons or polling.\n\n")
+    out:write("Usage: kaze-style [PRESET | --hub | --hub-window | --hub-tui | --hub-dmenu | --menu | --theme [NAME] | --themes | --current | --list] [--tab styles|palettes] [--no-live] [--no-reload] [-h|--help]\n")
+    out:write("Switch Noctalia v5 + Hyprland + GTK3 visual presets and color themes without extra daemons or polling.\n\n")
+    out:write("Modes:\n")
+    out:write("  --hub            Open 2-column visual Theme Hub with illustrations & live preview (dmenu fallback headless)\n")
+    out:write("  --hub-window     Open/focus/toggle floating kaze-theme-hub Foot window\n")
+    out:write("  --hub-tui        Run 2-column visual Theme Hub directly in the current terminal\n")
+    out:write("  --hub-dmenu      Open compact noctalia dmenu Theme Hub\n")
+    out:write("  --menu           Open interactive 11-preset visual style picker (default when no args)\n")
+    out:write("  --theme [NAME]   Apply a color theme directly, or open the interactive color theme picker\n")
+    out:write("  --themes         List built-in, custom, and wallpaper color themes\n")
+    out:write("  --current        Print active visual preset\n")
+    out:write("  --list           List all 11 visual presets\n")
+    out:write("  --tab NAME       Initial Theme Hub tab: styles (default) or palettes\n")
+    out:write("  --no-live        Start visual Theme Hub with live preview paused (Space previews, Enter applies)\n")
+    out:write("  --no-reload      Write configs without calling noctalia/hyprctl reload\n\n")
     out:write("Presets:\n")
     for _, grp in ipairs(styles.groups()) do
         out:write(string.format("  [%s]\n", grp.title))
@@ -59,21 +75,293 @@ local function resolve_template_path()
     return nil
 end
 
+local function apply_style_preset(style_id, reload)
+    local res, apply_err = styles.apply(style_id, {
+        reload = reload,
+        template_path = resolve_template_path(),
+    })
+    if not res then
+        io.stderr:write("kaze-style: " .. tostring(apply_err) .. "\n")
+        os.exit(style_id and not styles.is_valid(style_id) and 2 or 1)
+    end
+    local preset = styles.get(res.style)
+    io.stdout:write(string.format("Applied style '%s' (%s)\n", res.style, preset.summary))
+    if preset.note and os.getenv("KAZE_STYLE_QUIET") ~= "1" then
+        io.stdout:write("Note: " .. preset.note .. "\n")
+    end
+end
+
+local function apply_color_theme(theme_name, reload)
+    local res, apply_err = styles.apply_theme(theme_name, {
+        reload = reload,
+        template_path = resolve_template_path(),
+    })
+    if not res then
+        io.stderr:write("kaze-style: " .. tostring(apply_err) .. "\n")
+        os.exit(theme_name and not styles.resolve_theme(theme_name) and 2 or 1)
+    end
+    io.stdout:write(string.format("Applied theme '%s' (%s, %s)\n", res.theme, res.kind, res.mode))
+end
+
+local function run_style_menu(reload, allow_back)
+    local cur = styles.current_style() or styles.DEFAULT
+    local entries = {}
+    for _, grp in ipairs(styles.groups()) do
+        for _, preset in ipairs(grp.items) do
+            local prefix = (preset.id == cur) and "* " or "  "
+            entries[#entries + 1] = string.format("%s%-16s | %-17s | %s", prefix, preset.id, "[" .. grp.title .. "]", preset.summary)
+        end
+    end
+    if allow_back then
+        entries[#entries + 1] = "  <- Back          | [Hub]             | Return to Theme Hub"
+    end
+    local picked, pick_err = popups.run_dmenu(entries, { prompt = "Style > " })
+    if not picked then
+        io.stderr:write("kaze-style: " .. tostring(pick_err) .. "\n")
+        os.exit(1)
+    end
+    if picked == "" then
+        return "cancel"
+    end
+    if allow_back and picked:find("<- Back", 1, true) then
+        return "back"
+    end
+    local chosen = picked:match("^[%*%s]*([%a%d%-_]+)")
+    if not chosen or not styles.is_valid(chosen) then
+        io.stderr:write("kaze-style: invalid selection: " .. picked .. "\n")
+        os.exit(1)
+    end
+    apply_style_preset(chosen, reload)
+    return "applied"
+end
+
+local function run_theme_menu(reload, allow_back)
+    local cur = styles.current_theme({ template_path = resolve_template_path() })
+    local kind_tag = {
+        builtin = "Built-in",
+        custom = "Custom palette",
+        wallpaper = "Material 3 (wallpaper)",
+    }
+    local entries = {}
+    for _, item in ipairs(styles.list_themes()) do
+        local prefix = (item.id:lower() == (cur.active_id or ""):lower()) and "* " or "  "
+        entries[#entries + 1] = string.format("%s%-18s | %s", prefix, item.id, kind_tag[item.kind] or "Theme")
+    end
+    if allow_back then
+        entries[#entries + 1] = "  <- Back            | Return to Theme Hub"
+    end
+    local picked, pick_err = popups.run_dmenu(entries, { prompt = "Theme > " })
+    if not picked then
+        io.stderr:write("kaze-style: " .. tostring(pick_err) .. "\n")
+        os.exit(1)
+    end
+    if picked == "" then
+        return "cancel"
+    end
+    if allow_back and picked:find("<- Back", 1, true) then
+        return "back"
+    end
+    local chosen = picked:match("^[%*%s]*([%a%d%-_]+)")
+    if not chosen or not styles.resolve_theme(chosen) then
+        io.stderr:write("kaze-style: invalid theme selection: " .. picked .. "\n")
+        os.exit(1)
+    end
+    apply_color_theme(chosen, reload)
+    return "applied"
+end
+
+local function run_noctalia_msg(subcmd)
+    local ok = os.execute("noctalia msg " .. subcmd .. " >/dev/null 2>&1")
+    if not (ok == true or ok == 0) then
+        io.stderr:write("kaze-style: failed to run 'noctalia msg " .. subcmd .. "'\n")
+        os.exit(1)
+    end
+end
+
+local function sibling_or_path(bin)
+    if script_dir and fs.file_exists(script_dir .. "/" .. bin) then
+        return script_dir .. "/" .. bin
+    end
+    return bin
+end
+
+local function find_existing_hub_window()
+    local sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
+    if not sig or sig == "" then return nil, false end
+    local act_out = fs.capture("hyprctl -j activewindow 2>/dev/null") or ""
+    local ok_a, act = pcall(json.decode, act_out)
+    local active_addr = (ok_a and type(act) == "table" and type(act.address) == "string")
+        and act.address:gsub("^0x", "") or nil
+    local cli_out = fs.capture("hyprctl -j clients 2>/dev/null") or ""
+    local ok_c, clients = pcall(json.decode, cli_out)
+    if ok_c and type(clients) == "table" then
+        for _, c in ipairs(clients) do
+            if type(c) == "table" and c.class == "kaze-theme-hub" and type(c.address) == "string" then
+                local addr = c.address:gsub("^0x", "")
+                return addr, addr == active_addr
+            end
+        end
+    end
+    return nil, false
+end
+
+local function open_hub_window(reload, initial_tab, live_preview)
+    local addr, is_active = find_existing_hub_window()
+    if addr then
+        local win_arg = "'address:0x" .. addr .. "'"
+        if is_active then
+            os.execute("hyprctl dispatch " .. q("hl.dsp.window.close({ window = " .. win_arg .. " })") .. " >/dev/null 2>&1")
+        else
+            os.execute("hyprctl dispatch " .. q("hl.dsp.focus({ window = " .. win_arg .. " })") .. " >/dev/null 2>&1")
+        end
+        os.exit(0)
+    end
+    local foot_bin = sibling_or_path("kaze-footclient")
+    local cmd_parts = {
+        q(foot_bin), "-N",
+        "-o", "main.locked-title=yes",
+        "-o", q("main.pad=6x4 center"),
+        "-a", "kaze-theme-hub",
+        "-T", q("Kaze Theme Hub"),
+        q(self_path), "--hub-tui",
+    }
+    if initial_tab then
+        cmd_parts[#cmd_parts + 1] = "--tab"
+        cmd_parts[#cmd_parts + 1] = q(initial_tab)
+    end
+    if not live_preview then
+        cmd_parts[#cmd_parts + 1] = "--no-live"
+    end
+    if not reload then
+        cmd_parts[#cmd_parts + 1] = "--no-reload"
+    end
+    local ok = os.execute(table.concat(cmd_parts, " "))
+    if not (ok == true or ok == 0) then
+        io.stderr:write("kaze-style: failed to launch kaze-theme-hub window via kaze-footclient\n")
+        os.exit(1)
+    end
+    os.exit(0)
+end
+
+local function run_hub_tui(reload, initial_tab, live_preview)
+    local hub = require("kaze.theme_hub_tui")
+    local res, err = hub.run_interactive({
+        reload = reload,
+        initial_tab = initial_tab,
+        live_preview = live_preview,
+        template_path = resolve_template_path(),
+    })
+    if not res then
+        io.stderr:write("kaze-style: " .. tostring(err) .. "\n")
+        os.exit(1)
+    end
+    os.exit(0)
+end
+
+local function is_interactive_tty()
+    local ok = os.execute("test -t 0 && test -t 1")
+    return ok == true or ok == 0
+end
+
+local function run_theme_hub_dmenu(reload)
+    while true do
+        local cur_style = styles.current_style() or styles.DEFAULT
+        local cur_theme = styles.current_theme({ template_path = resolve_template_path() })
+        local themes_count = #styles.list_themes()
+        local entries = {
+            string.format("Color Palette     | %s (%d + M3)", cur_theme.display, themes_count - 1),
+            string.format("Visual Style      | %s (11 layouts)", cur_style),
+            string.format("Toggle Dark/Light | Current: %s", cur_theme.mode),
+            "Wallpaper Picker  | 10 curated 4K wallpapers",
+            "Noctalia Settings | Native Appearance & Bar GUI",
+        }
+        local picked, pick_err = popups.run_dmenu(entries, { prompt = "Theme Hub > " })
+        if not picked then
+            io.stderr:write("kaze-style: " .. tostring(pick_err) .. "\n")
+            os.exit(1)
+        end
+        if picked == "" then
+            os.exit(0)
+        end
+        if picked:find("^Color Palette") then
+            if run_theme_menu(reload, true) ~= "back" then
+                os.exit(0)
+            end
+        elseif picked:find("^Visual Style") then
+            if run_style_menu(reload, true) ~= "back" then
+                os.exit(0)
+            end
+        elseif picked:find("^Toggle Dark/Light") then
+            run_noctalia_msg("theme-mode-toggle")
+            os.exit(0)
+        elseif picked:find("^Wallpaper Picker") then
+            run_noctalia_msg("panel-toggle wallpaper")
+            os.exit(0)
+        elseif picked:find("^Noctalia Settings") then
+            run_noctalia_msg("settings-toggle")
+            os.exit(0)
+        else
+            io.stderr:write("kaze-style: invalid hub selection: " .. picked .. "\n")
+            os.exit(1)
+        end
+    end
+end
+
 local mode = nil
 local target_style = nil
+local target_theme = nil
+local hub_tab = nil
+local live_preview = true
 local reload = true
 
-for i = 1, #arg do
+local i = 1
+while i <= #arg do
     local a = arg[i]
     if a == "-h" or a == "--help" then
         print_usage(io.stdout)
         os.exit(0)
+    elseif a == "--hub" then
+        mode = "hub"
+    elseif a == "--hub-window" then
+        mode = "hub_window"
+    elseif a == "--hub-tui" then
+        mode = "hub_tui"
+    elseif a == "--hub-dmenu" then
+        mode = "hub_dmenu"
+    elseif a == "--tab" then
+        i = i + 1
+        hub_tab = arg[i]
+        if hub_tab ~= "styles" and hub_tab ~= "palettes" then
+            io.stderr:write("kaze-style: --tab requires 'styles' or 'palettes'\n")
+            os.exit(2)
+        end
+    elseif a:match("^%-%-tab=(.+)$") then
+        hub_tab = a:match("^%-%-tab=(.+)$")
+        if hub_tab ~= "styles" and hub_tab ~= "palettes" then
+            io.stderr:write("kaze-style: --tab requires 'styles' or 'palettes'\n")
+            os.exit(2)
+        end
+    elseif a == "--no-live" then
+        live_preview = false
     elseif a == "--menu" then
         mode = "menu"
     elseif a == "--current" then
         mode = "current"
     elseif a == "--list" then
         mode = "list"
+    elseif a == "--themes" then
+        mode = "themes"
+    elseif a == "--theme" then
+        if i < #arg and arg[i + 1]:sub(1, 1) ~= "-" then
+            i = i + 1
+            target_theme = arg[i]
+            mode = "theme_apply"
+        else
+            mode = "theme_menu"
+        end
+    elseif a:match("^%-%-theme=(.+)$") then
+        target_theme = a:match("^%-%-theme=(.+)$")
+        mode = "theme_apply"
     elseif a == "--no-reload" then
         reload = false
     elseif a:sub(1, 1) == "-" then
@@ -88,6 +376,7 @@ for i = 1, #arg do
         target_style = a
         mode = "apply"
     end
+    i = i + 1
 end
 
 if not mode then
@@ -113,41 +402,34 @@ elseif mode == "list" then
         end
     end
     os.exit(0)
+elseif mode == "themes" then
+    local cur = styles.current_theme({ template_path = resolve_template_path() })
+    for _, item in ipairs(styles.list_themes()) do
+        local mark = (item.id:lower() == (cur.active_id or ""):lower()) and "*" or " "
+        io.stdout:write(string.format("%s %-18s [%s] %s\n", mark, item.id, item.kind, item.detail))
+    end
+    os.exit(0)
+elseif mode == "hub" then
+    local sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
+    if sig and sig ~= "" then
+        open_hub_window(reload, hub_tab, live_preview)
+    elseif is_interactive_tty() then
+        run_hub_tui(reload, hub_tab, live_preview)
+    else
+        run_theme_hub_dmenu(reload)
+    end
+elseif mode == "hub_window" then
+    open_hub_window(reload, hub_tab, live_preview)
+elseif mode == "hub_tui" then
+    run_hub_tui(reload, hub_tab, live_preview)
+elseif mode == "hub_dmenu" then
+    run_theme_hub_dmenu(reload)
 elseif mode == "menu" then
-    local cur = styles.current_style() or styles.DEFAULT
-    local entries = {}
-    for _, grp in ipairs(styles.groups()) do
-        for _, preset in ipairs(grp.items) do
-            local prefix = (preset.id == cur) and "* " or "  "
-            entries[#entries + 1] = string.format("%s%-16s | %-17s | %s", prefix, preset.id, "[" .. grp.title .. "]", preset.summary)
-        end
-    end
-    local picked, pick_err = popups.run_dmenu(entries, { prompt = "Style > " })
-    if not picked then
-        io.stderr:write("kaze-style: " .. tostring(pick_err) .. "\n")
-        os.exit(1)
-    end
-    if picked == "" then
-        os.exit(0)
-    end
-    target_style = picked:match("^[%*%s]*([%a%d%-_]+)")
-    if not target_style or not styles.is_valid(target_style) then
-        io.stderr:write("kaze-style: invalid selection: " .. picked .. "\n")
-        os.exit(1)
-    end
-end
-
-local res, apply_err = styles.apply(target_style, {
-    reload = reload,
-    template_path = resolve_template_path(),
-})
-if not res then
-    io.stderr:write("kaze-style: " .. tostring(apply_err) .. "\n")
-    os.exit(target_style and not styles.is_valid(target_style) and 2 or 1)
-end
-
-local preset = styles.get(res.style)
-io.stdout:write(string.format("Applied style '%s' (%s)\n", res.style, preset.summary))
-if preset.note and os.getenv("KAZE_STYLE_QUIET") ~= "1" then
-    io.stdout:write("Note: " .. preset.note .. "\n")
+    run_style_menu(reload, false)
+elseif mode == "theme_menu" then
+    run_theme_menu(reload, false)
+elseif mode == "theme_apply" then
+    apply_color_theme(target_theme, reload)
+else
+    apply_style_preset(target_style, reload)
 end

@@ -5,6 +5,17 @@ local M = {}
 
 M.DEFAULT = "dynamic-island"
 
+M.BUILTIN_THEMES = {
+    "Kanagawa",
+    "Tokyo-Night",
+    "Catppuccin",
+    "Dracula",
+    "Eldritch",
+    "Gruvbox",
+    "Nord",
+    "Pine",
+}
+
 M.GROUPS = {
     {
         id = "angular",
@@ -298,7 +309,7 @@ M.PRESETS = {
                 capsule_border_width = 1.0,
                 start = { "launcher", "ws" },
                 center = { "vclock" },
-                ["end"] = { "record", "tray", "display", "mirror", "net", "vol", "bat", "notifications", "control-center", "session" },
+                ["end"] = { "record", "tray", "display", "mirror", "net", "vol", "bat", "theme", "notifications", "control-center", "session" },
             },
             drop = {
                 capsule_group = true,
@@ -394,7 +405,7 @@ M.PRESETS = {
             radius = 0,
             start = { "ws" },
             center = { "swiss_clock" },
-            ["end"] = { "swiss_net", "swiss_sep", "swiss_vol", "swiss_bat" },
+            ["end"] = { "swiss_net", "swiss_sep", "swiss_vol", "swiss_bat", "swiss_sep", "swiss_theme" },
         }),
         capsule_groups = {},
         dock = {
@@ -459,6 +470,23 @@ M.PRESETS = {
                     text = "—",
                 },
             },
+            ["widget.swiss_theme"] = {
+                order = { "type", "glyph", "label", "tooltip" },
+                values = {
+                    type = "custom_button",
+                    glyph = "",
+                    label = "THEME",
+                    tooltip = "Theme Hub (Left: Hub, Right: Visual Styles, Middle: Dark/Light)",
+                },
+            },
+            ["widget.swiss_theme.actions"] = {
+                order = { "left", "right", "middle" },
+                values = {
+                    left = "exec kaze-style --hub",
+                    right = "exec kaze-style --menu",
+                    middle = "exec noctalia msg theme-mode-toggle",
+                },
+            },
         },
         notification = make_notif("top_right", 1.0, 16, 16),
         osd = make_notif("top_right", 1.0, 16, 16),
@@ -516,7 +544,7 @@ M.PRESETS = {
             },
             {
                 id = "corner_right",
-                members = { "record", "present", "tray", "display", "mirror", "net", "vol", "bat", "notifications", "hclock", "control-center", "session" },
+                members = { "record", "present", "tray", "display", "mirror", "net", "vol", "bat", "theme", "notifications", "hclock", "control-center", "session" },
                 fill = "surface_container",
                 border = "outline_variant",
                 border_width = 1.5,
@@ -605,7 +633,7 @@ M.PRESETS = {
             radius = 0,
             start = { "launcher", "ws" },
             center = { "hclock" },
-            ["end"] = { "record", "present", "tray", "display", "mirror", "net", "vol", "bat", "notifications", "control-center", "session" },
+            ["end"] = { "record", "present", "tray", "display", "mirror", "net", "vol", "bat", "theme", "notifications", "control-center", "session" },
         }),
         capsule_groups = {},
         dock = {
@@ -698,7 +726,7 @@ M.PRESETS = {
             },
             {
                 id = "island",
-                members = { "island_clock", "media", "record", "present", "notifications", "control-center" },
+                members = { "island_clock", "media", "record", "present", "theme", "notifications", "control-center" },
                 fill = "surface_container",
                 border = "outline_variant",
                 border_width = 1.0,
@@ -823,7 +851,7 @@ M.PRESETS = {
             concave_edge_corners = true,
             start = { "ws" },
             center = { "notch_clock", "media" },
-            ["end"] = { "record", "present", "net", "vol", "bat", "notifications" },
+            ["end"] = { "record", "present", "net", "vol", "bat", "theme", "notifications" },
         }),
         capsule_groups = {},
         dock = {
@@ -917,7 +945,7 @@ M.PRESETS = {
             radius = 0,
             start = { "launcher", "active_window" },
             center = { "hclock" },
-            ["end"] = { "record", "present", "tray", "net", "vol", "bat", "notifications", "control-center" },
+            ["end"] = { "record", "present", "tray", "net", "vol", "bat", "theme", "notifications", "control-center" },
         }),
         capsule_groups = {},
         dock = {
@@ -1028,7 +1056,7 @@ M.PRESETS = {
         capsule_groups = {
             {
                 id = "top_pill",
-                members = { "active_window", "hclock", "record", "present", "net", "vol", "bat", "notifications" },
+                members = { "active_window", "hclock", "record", "present", "net", "vol", "bat", "theme", "notifications" },
                 fill = "surface_container",
                 border = "outline_variant",
                 border_width = 1.5,
@@ -1184,7 +1212,7 @@ M.PRESETS = {
             radius = 0,
             start = { "tui_lbr", "tui_ws_lbl", "ws", "tui_rbr" },
             center = { "tui_lbr", "tui_clock", "tui_rbr" },
-            ["end"] = { "tui_lbr", "tui_net", "tui_rbr", "tui_lbr", "tui_vol", "tui_rbr", "tui_bat" },
+            ["end"] = { "tui_lbr", "tui_net", "tui_rbr", "tui_lbr", "tui_vol", "tui_rbr", "tui_bat", "tui_lbr", "tui_theme", "tui_rbr" },
         }),
         capsule_groups = {},
         dock = {
@@ -1254,6 +1282,23 @@ M.PRESETS = {
                     custom_label = "BAT ",
                 },
             },
+            ["widget.tui_theme"] = {
+                order = { "type", "glyph", "label", "tooltip" },
+                values = {
+                    type = "custom_button",
+                    glyph = "",
+                    label = "THEME",
+                    tooltip = "Theme Hub (Left: Hub, Right: Visual Styles, Middle: Dark/Light)",
+                },
+            },
+            ["widget.tui_theme.actions"] = {
+                order = { "left", "right", "middle" },
+                values = {
+                    left = "exec kaze-style --hub",
+                    right = "exec kaze-style --menu",
+                    middle = "exec noctalia msg theme-mode-toggle",
+                },
+            },
         },
         notification = make_notif("top_right", 1.0, 8, 8),
         osd = make_notif("top_right", 1.0, 8, 8),
@@ -1304,7 +1349,7 @@ M.PRESETS = {
             capsule_border_width = 2.0,
             start = { "retro_start", "ws", "taskbar" },
             center = {},
-            ["end"] = { "record", "tray", "net", "vol", "bat", "retro_clock" },
+            ["end"] = { "record", "tray", "net", "vol", "bat", "theme", "retro_clock" },
         }),
         capsule_groups = {},
         dock = {
@@ -1409,7 +1454,7 @@ M.PRESETS = {
             radius = 0,
             start = { "ws" },
             center = { "cinema_clock" },
-            ["end"] = { "media", "record", "cinema_bat" },
+            ["end"] = { "media", "record", "theme", "cinema_bat" },
         }),
         capsule_groups = {},
         dock = {
@@ -1524,6 +1569,25 @@ local EXTRA_WIDGETS = {
             'right = "exec kaze-mirror --tui-window"',
         },
     },
+    {
+        name = "widget.theme",
+        lines = {
+            "[widget.theme]",
+            'type = "custom_button"',
+            'glyph = "palette"',
+            'icon_color = "on_surface_variant"',
+            'tooltip = "Theme Hub (Left: Hub, Right: Visual Styles, Middle: Dark/Light)"',
+        },
+    },
+    {
+        name = "widget.theme.actions",
+        lines = {
+            "[widget.theme.actions]",
+            'left = "exec kaze-style --hub"',
+            'right = "exec kaze-style --menu"',
+            'middle = "exec noctalia msg theme-mode-toggle"',
+        },
+    },
 }
 
 -- Preset-only widget sections removed when switching to a preset that does not declare them.
@@ -1537,6 +1601,8 @@ local MANAGED_PRESET_WIDGETS = {
     ["widget.swiss_vol"] = true,
     ["widget.swiss_bat"] = true,
     ["widget.swiss_sep"] = true,
+    ["widget.swiss_theme"] = true,
+    ["widget.swiss_theme.actions"] = true,
     ["widget.island_clock"] = true,
     ["widget.bt"] = true,
     ["widget.notch_clock"] = true,
@@ -1551,6 +1617,8 @@ local MANAGED_PRESET_WIDGETS = {
     ["widget.tui_net"] = true,
     ["widget.tui_vol"] = true,
     ["widget.tui_bat"] = true,
+    ["widget.tui_theme"] = true,
+    ["widget.tui_theme.actions"] = true,
     ["widget.retro_start"] = true,
     ["widget.retro_start.actions"] = true,
     ["widget.retro_clock"] = true,
@@ -2644,6 +2712,208 @@ function M.apply(style_name, opts)
         gtk_style_path = gtk_path,
         state_file = st_path,
         theme_changed = theme_changed,
+    }
+end
+
+function M.list_custom_palettes(opts)
+    opts = opts or {}
+    local dir = opts.palettes_dir or (fs.config_dir() .. "/noctalia/palettes")
+    local out = {}
+    local p = io.popen("LC_ALL=C ls -1 -- " .. fs.shell_quote(dir) .. " 2>/dev/null")
+    if p then
+        for line in p:lines() do
+            local name = line:match("^(.+)%.json$")
+            if name and name ~= "" then
+                out[#out + 1] = name
+            end
+        end
+        p:close()
+    end
+    table.sort(out)
+    return out
+end
+
+function M.list_themes(opts)
+    local out = {}
+    for _, name in ipairs(M.BUILTIN_THEMES) do
+        out[#out + 1] = {
+            id = name,
+            kind = "builtin",
+            detail = "Noctalia built-in scheme",
+        }
+    end
+    for _, name in ipairs(M.list_custom_palettes(opts)) do
+        out[#out + 1] = {
+            id = name,
+            kind = "custom",
+            detail = "Custom palette (~/.config/noctalia/palettes)",
+        }
+    end
+    out[#out + 1] = {
+        id = "wallpaper",
+        kind = "wallpaper",
+        detail = "Material 3 palette from active wallpaper",
+    }
+    return out
+end
+
+function M.current_theme(opts)
+    opts = opts or {}
+    local cfg_path = opts.config_path or (fs.config_dir() .. "/noctalia/config.toml")
+    local raw = fs.read_file(cfg_path)
+    if not raw and opts.template_path then
+        raw = fs.read_file(opts.template_path)
+    end
+    local tbl = raw and M.extract_theme(raw) or {}
+    local mode = tbl.mode or "dark"
+    local source = tbl.source or "builtin"
+    local active_id
+    if source == "custom" and type(tbl.custom_palette) == "string" and tbl.custom_palette ~= "" then
+        active_id = tbl.custom_palette
+    elseif source == "wallpaper" then
+        active_id = "wallpaper"
+    else
+        active_id = tbl.builtin or "Kanagawa"
+    end
+    local label = active_id == "wallpaper" and "Wallpaper M3" or active_id
+    return {
+        mode = mode,
+        source = source,
+        builtin = tbl.builtin,
+        custom_palette = tbl.custom_palette,
+        pure_black_dark = tbl.pure_black_dark,
+        active_id = active_id,
+        display = string.format("%s (%s)", label, mode),
+    }
+end
+
+function M.resolve_theme(target, opts)
+    if type(target) ~= "string" then
+        return nil
+    end
+    local key = target:match("^%s*(.-)%s*$")
+    if key == "" then
+        return nil
+    end
+    local low = key:lower()
+    if low == "wallpaper" or low == "m3" or low == "wallpaper-m3" then
+        return { id = "wallpaper", kind = "wallpaper" }
+    end
+    for _, item in ipairs(M.list_themes(opts)) do
+        if item.id:lower() == low then
+            return item
+        end
+    end
+    return nil
+end
+
+function M.render_theme_config(toml_text, theme_tbl, drop_keys)
+    if type(toml_text) ~= "string" then
+        return nil, "expected config.toml text"
+    end
+    local spec = make_theme_spec(theme_tbl)
+    local blocks = split_blocks(toml_text)
+    local seen = false
+    for _, blk in ipairs(blocks) do
+        if not blk.is_array and blk.sec == "theme" then
+            patch_section_block(blk, spec, drop_keys)
+            seen = true
+            break
+        end
+    end
+    if not seen then
+        local nb = build_section_block("theme", spec)
+        ensure_trailing_blank(nb)
+        table.insert(blocks, 1, nb)
+    end
+    local rendered_lines = {}
+    for _, blk in ipairs(blocks) do
+        for _, ln in ipairs(blk.lines) do
+            rendered_lines[#rendered_lines + 1] = ln
+        end
+    end
+    while #rendered_lines > 0 and rendered_lines[#rendered_lines]:match("^%s*$") do
+        table.remove(rendered_lines)
+    end
+    return table.concat(rendered_lines, "\n") .. "\n"
+end
+
+function M.apply_theme(target, opts)
+    opts = opts or {}
+    local resolved = M.resolve_theme(target, opts)
+    if not resolved then
+        local names = {}
+        for _, item in ipairs(M.list_themes(opts)) do
+            names[#names + 1] = item.id
+        end
+        return nil, string.format("unknown color theme '%s' (available: %s)", tostring(target), table.concat(names, ", "))
+    end
+
+    local cfg_path = opts.config_path or (fs.config_dir() .. "/noctalia/config.toml")
+    local src_text = fs.read_file(cfg_path)
+    if not src_text and opts.template_path then
+        src_text = fs.read_file(opts.template_path)
+    end
+    if not src_text then
+        return nil, "Noctalia config not found: " .. cfg_path
+    end
+
+    local cur = M.extract_theme(src_text)
+    local next_theme = {
+        mode = opts.mode or cur.mode or "dark",
+    }
+    local drop_keys = nil
+    if resolved.kind == "builtin" then
+        next_theme.source = "builtin"
+        next_theme.builtin = resolved.id
+        drop_keys = { custom_palette = true }
+    elseif resolved.kind == "custom" then
+        next_theme.source = "custom"
+        next_theme.custom_palette = resolved.id
+    else
+        next_theme.source = "wallpaper"
+        drop_keys = { custom_palette = true }
+    end
+
+    local rendered, render_err = M.render_theme_config(src_text, next_theme, drop_keys)
+    if not rendered then
+        return nil, render_err
+    end
+
+    if opts.validate ~= false then
+        local ok_val, val_err = validate_noctalia_text(cfg_path, rendered)
+        if not ok_val then
+            return nil, val_err
+        end
+    end
+
+    local ok_cfg, cfg_err = fs.write_atomic(cfg_path, rendered)
+    if not ok_cfg then
+        return nil, cfg_err
+    end
+
+    -- Explicit color-theme choice supersedes any saved pre-locked-style theme backup.
+    local backup_path = M.theme_backup_file(opts)
+    if fs.file_exists(backup_path) then
+        os.remove(backup_path)
+    end
+
+    if opts.reload ~= false then
+        if cmd_exists("noctalia") then
+            os.execute("noctalia msg config-reload >/dev/null 2>&1")
+            os.execute("noctalia msg templates-apply >/dev/null 2>&1")
+        end
+        local hypr_sig = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
+        if hypr_sig and hypr_sig ~= "" and cmd_exists("hyprctl") then
+            os.execute("hyprctl reload >/dev/null 2>&1")
+        end
+    end
+
+    return {
+        theme = resolved.id,
+        kind = resolved.kind,
+        mode = next_theme.mode,
+        config_path = cfg_path,
     }
 end
 

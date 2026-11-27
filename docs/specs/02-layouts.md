@@ -48,6 +48,8 @@ Layout geometry is unified across Noctalia (`config/noctalia/config.toml`) and H
 - **Floating TUI Drawer (`^kaze-tui$`):** slides in from the left edge (`x = 58`, `y = 12`, `42%` width × `monitor_h - 24`), flush next to the `42px` bar (`8px + 42px + 8px = 58px`).
 - **Mirror Optimizer TUI (`^kaze-mirror-tui$`):** centered floating Foot window (`62% × 78%`, `center = true`) with responsive wide/medium/compact table breakpoints.
 - **Noctalia Mirror Widget (`[widget.mirror]`):** `glyph = "server"` (switches to `"refresh"` + `"primary"` while a scan runs, zero polling), Left-click `kaze-mirror --menu`, Right-click `kaze-mirror --tui-window`.
+- **Theme Hub Window (`^kaze-theme-hub$`):** centered floating Foot window (`64% × 74%`, `center = true`) rendering a 2-column illustrated TrueColor grid for all 11 visual styles and 17 color palettes with real-time live desktop preview and atomic `Esc` rollback (`lua/kaze/theme_hub_tui.lua`).
+- **Theme Hub Widget (`[widget.theme]`):** `glyph = "palette"` (placed right beside `notifications` on every style with notifications, and on the status tray—or text-only `THEME` / `[ THEME ]` in `swiss-grid` / `tui-hacker`—across all 11 styles), Left-click `kaze-style --hub` (opens/toggles `kaze-theme-hub`), Right-click `kaze-style --menu`, Middle-click `noctalia msg theme-mode-toggle`.
 - **Virtual Share Preview (`^at\.yrlf\.wl_mirror$`):** pinned bottom-right PiP (`28% × 28%`, `keep_aspect_ratio = true`, `opaque = true`, `no_blur = true`).
 
 ## 3. 11-Preset Visual Theme Suite (`kaze-style` + `lua/kaze/styles.lua`)

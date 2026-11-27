@@ -862,7 +862,7 @@ test("kaze.styles & kaze-style: renders all 11 presets safely, manages palettes/
     assert_contains(di, 'end = [ "group:island_right" ]\n', "dynamic-island places full status top-right")
     assert_contains(di, 'id = "island_left"\n', "dynamic-island defines island_left group")
     assert_contains(di, 'id = "island"\n', "dynamic-island defines island group")
-    assert_contains(di, 'members = [ "island_clock", "media", "record", "present", "notifications", "control-center" ]\n', "dynamic-island places notifications & full menu in center island")
+    assert_contains(di, 'members = [ "island_clock", "media", "record", "present", "theme", "notifications", "control-center" ]\n', "dynamic-island places theme hub, notifications & full menu in center island")
     assert_contains(di, 'id = "island_right"\n', "dynamic-island defines island_right group")
     assert_contains(di, 'members = [ "tray", "display", "mirror", "net", "bt", "vol", "bat", "session" ]\n', "dynamic-island places quick Wi-Fi/BT/Audio/Tray/Session controls top-right")
     assert_contains(di, "[widget.bt]\ntype = \"bluetooth\"\nshow_label = false\n", "dynamic-island defines bluetooth widget")

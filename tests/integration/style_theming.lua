@@ -565,7 +565,7 @@ local function create_sandbox(abs_repo)
     }, "\n")
   )
 
-  -- Stub hyprctl
+  -- Stub hyprctl (supports -j clients / -j activewindow via env for window toggle tests)
   write_executable(
     sb.stub_bin .. "/hyprctl",
     table.concat({
@@ -573,6 +573,15 @@ local function create_sandbox(abs_repo)
       "set -euo pipefail",
       'log_file="${STUB_HYPRCTL_LOG:-' .. sb.hyprctl_log .. '}"',
       'printf "%s\\n" "$*" >> "$log_file"',
+      'if [[ "${1:-}" == "-j" && "${2:-}" == "clients" ]]; then',
+      '  printf "%s\\n" "${STUB_HYPRCTL_CLIENTS:-[]}"',
+      '  exit "${STUB_HYPRCTL_RC:-0}"',
+      "fi",
+      'if [[ "${1:-}" == "-j" && "${2:-}" == "activewindow" ]]; then',
+      '  default_obj="{}"',
+      '  printf "%s\\n" "${STUB_HYPRCTL_ACTIVE:-$default_obj}"',
+      '  exit "${STUB_HYPRCTL_RC:-0}"',
+      "fi",
       'exit "${STUB_HYPRCTL_RC:-0}"',
       "",
     }, "\n")
@@ -1951,6 +1960,340 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
         "Status: up to date",
         "post-121-transition kaze-doctor --diff must report Status: up to date"
       )
+    end)
+  end)
+
+  ------------------------------------------------------------------------------
+  -- 13. Theme Hub widget placement (all 11 styles) + --hub / --theme / --themes
+  ------------------------------------------------------------------------------
+  test("bb.style.theme_hub_widget_and_cli_flows", function()
+    with_sandbox(abs_repo, function(sb)
+      sb:apply_seed()
+
+      -- A) Verify Theme Hub widget exists on every single one of the 11 styles,
+      -- and sits directly adjacent to notifications wherever notifications is present.
+      local notif_styles = {
+        ["omarchy-rail"] = true,
+        ["corner-hud"] = true,
+        ["ghost-zero"] = true,
+        ["dynamic-island"] = true,
+        ["hardware-notch"] = true,
+        ["glass-studio"] = true,
+        ["floating-rail"] = true,
+      }
+      for _, preset_id in ipairs(ALL_PRESETS) do
+        local r = sb:style({ preset_id, "--no-reload" })
+        assert_eq(r.code, 0, "[" .. preset_id .. "] apply failed: " .. r.combined)
+        local txt = read_file(sb:config_toml_path()) or ""
+        local doc = parse_toml(txt)
+        assert_true(doc.section_exists["widget.theme"], "[" .. preset_id .. "] [widget.theme] must exist")
+        assert_true(doc.section_exists["widget.theme.actions"], "[" .. preset_id .. "] [widget.theme.actions] must exist")
+        assert_eq(
+          toml_get_str(doc, "widget.theme.actions", "left"),
+          "exec kaze-style --hub",
+          "[" .. preset_id .. "] widget.theme left action must launch Theme Hub"
+        )
+        if notif_styles[preset_id] then
+          assert_true(
+            txt:find('"theme", "notifications"', 1, true) ~= nil,
+            "[" .. preset_id .. '] "theme" must be placed right next to "notifications"'
+          )
+        elseif preset_id == "swiss-grid" then
+          assert_true(doc.section_exists["widget.swiss_theme"], "[swiss-grid] [widget.swiss_theme] must exist")
+          assert_true(txt:find('"swiss_theme"', 1, true) ~= nil, '[swiss-grid] bar must include "swiss_theme"')
+        elseif preset_id == "tui-hacker" then
+          assert_true(doc.section_exists["widget.tui_theme"], "[tui-hacker] [widget.tui_theme] must exist")
+          assert_true(txt:find('"tui_theme"', 1, true) ~= nil, '[tui-hacker] bar must include "tui_theme"')
+        else
+          assert_true(txt:find('"theme"', 1, true) ~= nil, "[" .. preset_id .. '] bar must include "theme"')
+        end
+      end
+
+      -- B) --themes lists built-in, custom palettes, and wallpaper with * on active
+      assert_eq(sb:style({ "dynamic-island", "--no-reload" }).code, 0)
+      local lt = sb:style({ "--themes" })
+      assert_eq(lt.code, 0, "--themes must exit 0: " .. lt.combined)
+      assert_contains(lt.stdout, "* Kanagawa", "--themes marks active Kanagawa")
+      assert_contains(lt.stdout, "Tokyo-Night", "--themes lists Tokyo-Night")
+      assert_contains(lt.stdout, "Kaze-RosePine", "--themes discovers custom palette Kaze-RosePine")
+      assert_contains(lt.stdout, "wallpaper", "--themes lists wallpaper M3 option")
+
+      -- C) --theme <builtin|custom|wallpaper> updates [theme] cleanly + triggers reload
+      sb:clear_logs()
+      local t1 = sb:style({ "--theme", "catppuccin" }, {
+        env = { HYPRLAND_INSTANCE_SIGNATURE = "sig-theme-test" },
+      })
+      assert_eq(t1.code, 0, "--theme catppuccin must exit 0: " .. t1.combined)
+      local d1 = parse_toml(read_file(sb:config_toml_path()) or "")
+      assert_eq(toml_get_str(d1, "theme", "source"), "builtin", "source = builtin")
+      assert_eq(toml_get_str(d1, "theme", "builtin"), "Catppuccin", "builtin = Catppuccin")
+      local nlog1 = read_file(sb.noctalia_log) or ""
+      assert_contains(nlog1, "msg config-reload", "--theme reloads Noctalia")
+      assert_contains(nlog1, "msg templates-apply", "--theme applies templates")
+      assert_contains(read_file(sb.hyprctl_log) or "", "reload", "--theme reloads Hyprland")
+
+      local t2 = sb:style({ "--theme=Kaze-RosePine", "--no-reload" })
+      assert_eq(t2.code, 0, "--theme=Kaze-RosePine must exit 0: " .. t2.combined)
+      local d2 = parse_toml(read_file(sb:config_toml_path()) or "")
+      assert_eq(toml_get_str(d2, "theme", "source"), "custom", "source = custom")
+      assert_eq(toml_get_str(d2, "theme", "custom_palette"), "Kaze-RosePine", "custom_palette = Kaze-RosePine")
+
+      local t3 = sb:style({ "--theme", "wallpaper", "--no-reload" })
+      assert_eq(t3.code, 0, "--theme wallpaper must exit 0: " .. t3.combined)
+      local d3 = parse_toml(read_file(sb:config_toml_path()) or "")
+      assert_eq(toml_get_str(d3, "theme", "source"), "wallpaper", "source = wallpaper")
+
+      local tbad = sb:style({ "--theme", "nonexistent-palette", "--no-reload" })
+      assert_eq(tbad.code, 2, "invalid --theme must exit 2")
+
+      -- D) --hub dmenu flows (Toggle Dark/Light, Wallpaper Picker, Noctalia Settings, cancel)
+      sb:clear_logs()
+      local h_mode = sb:style({ "--hub" }, {
+        env = { STUB_DMENU_MODE = "match", STUB_DMENU_MATCH = "Toggle Dark/Light" },
+      })
+      assert_eq(h_mode.code, 0, "--hub Toggle Dark/Light must exit 0: " .. h_mode.combined)
+      assert_contains(read_file(sb.noctalia_log) or "", "msg theme-mode-toggle", "--hub Toggle Dark/Light invokes theme-mode-toggle")
+
+      sb:clear_logs()
+      local h_wall = sb:style({ "--hub" }, {
+        env = { STUB_DMENU_MODE = "match", STUB_DMENU_MATCH = "Wallpaper Picker" },
+      })
+      assert_eq(h_wall.code, 0, "--hub Wallpaper Picker must exit 0: " .. h_wall.combined)
+      assert_contains(read_file(sb.noctalia_log) or "", "msg panel-toggle wallpaper", "--hub Wallpaper Picker opens wallpaper panel")
+
+      sb:clear_logs()
+      local h_set = sb:style({ "--hub" }, {
+        env = { STUB_DMENU_MODE = "match", STUB_DMENU_MATCH = "Noctalia Settings" },
+      })
+      assert_eq(h_set.code, 0, "--hub Noctalia Settings must exit 0: " .. h_set.combined)
+      assert_contains(read_file(sb.noctalia_log) or "", "msg settings-toggle", "--hub Noctalia Settings opens settings GUI")
+
+      local h_cancel = sb:style({ "--hub" }, { env = { STUB_DMENU_MODE = "empty" } })
+      assert_eq(h_cancel.code, 0, "--hub cancel must exit 0 cleanly")
+
+      -- E) --theme (interactive picker without arg) applies selected palette
+      local tm = sb:style({ "--theme", "--no-reload" }, {
+        env = { STUB_DMENU_MODE = "match", STUB_DMENU_MATCH = "Nord" },
+      })
+      assert_eq(tm.code, 0, "--theme interactive Nord must exit 0: " .. tm.combined)
+      local dm = parse_toml(read_file(sb:config_toml_path()) or "")
+      assert_eq(toml_get_str(dm, "theme", "builtin"), "Nord", "interactive --theme selected Nord")
+    end)
+  end)
+
+  ------------------------------------------------------------------------------
+  -- 14. Visual 2-Column Theme Hub: frame geometry, mouse/key input, rollback
+  ------------------------------------------------------------------------------
+  test("bb.style.theme_hub_visual_tui_render_and_rollback", function()
+    with_sandbox(abs_repo, function(sb)
+      sb:apply_seed()
+      local script = [[
+        package.path = os.getenv("KAZE_DOTS_DIR") .. "/lua/?.lua;" .. package.path
+        local hub = require("kaze.theme_hub_tui")
+        local styles = require("kaze.styles")
+        local fs = require("kaze.fs")
+
+        -- 1) Render every style & palette across multiple sizes and assert exact cols x rows geometry
+        local sizes = { { 132, 42 }, { 96, 34 }, { 78, 26 }, { 56, 24 } }
+        for _, sz in ipairs(sizes) do
+          local cols, rows = sz[1], sz[2]
+          for _, tab in ipairs({ "styles", "palettes" }) do
+            local st = hub.initial_state({ initial_tab = tab })
+            local gcols = hub.grid_columns(cols)
+            local items = (tab == "styles") and st.style_items or st.theme_items
+            local total_rows = math.ceil(#items / gcols)
+            for sc = 0, math.max(0, total_rows - 1) do
+              if tab == "styles" then st.scroll_styles = sc else st.scroll_palettes = sc end
+              local frame = hub.render_frame(st, cols, rows)
+              local lines = {}
+              for ln in (frame .. "\r\n"):gmatch("(.-)\r\n") do
+                lines[#lines + 1] = ln
+              end
+              assert(#lines == rows, string.format("%s %dx%d sc=%d: expected %d lines, got %d", tab, cols, rows, sc, rows, #lines))
+              for idx, ln in ipairs(lines) do
+                local w = hub.display_width(ln)
+                assert(w == cols, string.format("%s %dx%d sc=%d line %d: width %d ~= %d (%s)", tab, cols, rows, sc, idx, w, cols, hub.strip_ansi(ln)))
+              end
+              for _, h in ipairs(st.hits.controls) do
+                assert(h.row >= 1 and h.row <= rows and h.col1 >= 1 and h.col2 <= cols and h.col1 <= h.col2, "control hitbox out of bounds")
+              end
+              for _, c in ipairs(st.hits.cards) do
+                assert(c.row1 >= 1 and c.row2 <= rows and c.col1 >= 1 and c.col2 <= cols and c.col1 <= c.col2, "card hitbox out of bounds")
+              end
+            end
+          end
+        end
+
+        -- 2) Grid navigation & input parser (keyboard + SGR-1006 mouse)
+        local st = hub.initial_state({ initial_tab = "styles" })
+        st.style_idx = 1
+        assert(hub.move_selection(st, "RIGHT", 116, 3) and st.style_idx == 2)
+        assert(hub.move_selection(st, "DOWN", 116, 3) and st.style_idx == 4)
+        assert(hub.move_selection(st, "LEFT", 116, 3) and st.style_idx == 3)
+        assert(hub.move_selection(st, "UP", 116, 3) and st.style_idx == 1)
+        assert(hub.move_selection(st, "END", 116, 3) and st.style_idx == 11)
+        assert(hub.move_selection(st, "HOME", 116, 3) and st.style_idx == 1)
+
+        local m = hub.parse_input("\27[<0;42;12M")
+        assert(m.kind == "MOUSE" and m.button == 0 and m.col == 42 and m.row == 12 and not m.release)
+        local mr = hub.parse_input("\27[<65;10;5m")
+        assert(mr.kind == "MOUSE" and mr.button == 65 and mr.release)
+        assert(hub.parse_input("\27").kind == "ESC")
+        assert(hub.parse_input("\27[C").kind == "RIGHT")
+        assert(hub.parse_input("\t").kind == "TAB")
+
+        -- 3) Snapshot & atomic Esc rollback restores all 5 files byte-for-byte
+        local snap = hub.capture_snapshot()
+        assert(styles.apply("swiss-grid", { reload = false }))
+        assert(fs.read_file(snap.style_path) == "swiss-grid\n")
+        assert(fs.file_exists(snap.saved_path))
+        assert(styles.apply_theme("Catppuccin", { reload = false }))
+        hub.restore_snapshot(snap, { reload = false })
+        assert(fs.read_file(snap.config_path) == snap.config_text, "config.toml not restored byte-for-byte")
+        assert(fs.read_file(snap.style_path) == snap.style_text, "kaze/style not restored")
+        assert(fs.read_file(snap.saved_path) == snap.saved_text, "saved-theme.json not restored")
+        assert(fs.read_file(snap.hypr_path) == snap.hypr_text, "hypr/kaze-style.lua not restored")
+        assert(fs.read_file(snap.gtk_path) == snap.gtk_text, "gtk-3.0/kaze-style.css not restored")
+        print("THEME_HUB_TUI_UNIT_OK")
+      ]]
+      local r = sb:exec("lua", { "-e", script })
+      assert_eq(r.code, 0, "theme_hub_tui unit checks failed:\n" .. r.combined)
+      assert_contains(r.stdout, "THEME_HUB_TUI_UNIT_OK")
+    end)
+  end)
+
+  ------------------------------------------------------------------------------
+  -- 15. Visual Theme Hub window toggle (--hub-window) & real PTY live preview/Esc
+  ------------------------------------------------------------------------------
+  test("bb.style.theme_hub_window_toggle_and_pty_live_rollback", function()
+    with_sandbox(abs_repo, function(sb)
+      sb:apply_seed()
+
+      -- A) --hub inside Hyprland launches floating kaze-theme-hub Foot window
+      sb:clear_logs()
+      local w1 = sb:style({ "--hub", "--tab", "palettes", "--no-live", "--no-reload" }, {
+        env = { HYPRLAND_INSTANCE_SIGNATURE = "sig-hub-win" },
+      })
+      assert_eq(w1.code, 0, "--hub in Hyprland must launch kaze-theme-hub: " .. w1.combined)
+      local olog = read_file(sb.other_log) or ""
+      assert_contains(olog, "footclient", "must spawn via footclient")
+      assert_contains(olog, "-a kaze-theme-hub", "must set app-id kaze-theme-hub")
+      assert_contains(olog, "--hub-tui", "must invoke --hub-tui inside Foot window")
+      assert_contains(olog, "--tab palettes", "must forward --tab palettes")
+      assert_contains(olog, "--no-live", "must forward --no-live")
+
+      -- B) Existing unfocused window -> focuses instead of spawning a second instance
+      sb:clear_logs()
+      local w2 = sb:style({ "--hub-window" }, {
+        env = {
+          HYPRLAND_INSTANCE_SIGNATURE = "sig-hub-win",
+          STUB_HYPRCTL_CLIENTS = '[{"address":"0xdeadbeef","class":"kaze-theme-hub"}]',
+          STUB_HYPRCTL_ACTIVE = '{"address":"0x11111111"}',
+        },
+      })
+      assert_eq(w2.code, 0, "unfocused --hub-window must exit 0: " .. w2.combined)
+      assert_contains(read_file(sb.hyprctl_log) or "", "hl.dsp.focus", "must focus existing hub window")
+      assert_eq(read_file(sb.other_log) or "", "", "must not spawn second footclient when focusing")
+
+      -- C) Existing focused window -> closes (toggle behavior)
+      sb:clear_logs()
+      local w3 = sb:style({ "--hub-window" }, {
+        env = {
+          HYPRLAND_INSTANCE_SIGNATURE = "sig-hub-win",
+          STUB_HYPRCTL_CLIENTS = '[{"address":"0xdeadbeef","class":"kaze-theme-hub"}]',
+          STUB_HYPRCTL_ACTIVE = '{"address":"0xdeadbeef"}',
+        },
+      })
+      assert_eq(w3.code, 0, "focused --hub-window must exit 0: " .. w3.combined)
+      assert_contains(read_file(sb.hyprctl_log) or "", "hl.dsp.window.close", "must close active hub window on toggle")
+
+      -- D) Invalid --tab exits 2; --hub-dmenu forces dmenu even with HYPRLAND_INSTANCE_SIGNATURE
+      local bad_tab = sb:style({ "--hub-window", "--tab", "nope" })
+      assert_eq(bad_tab.code, 2, "invalid --tab must exit 2")
+      sb:clear_logs()
+      local dm_force = sb:style({ "--hub-dmenu" }, {
+        env = {
+          HYPRLAND_INSTANCE_SIGNATURE = "sig-hub-win",
+          STUB_DMENU_MODE = "match",
+          STUB_DMENU_MATCH = "Noctalia Settings",
+        },
+      })
+      assert_eq(dm_force.code, 0, "--hub-dmenu must exit 0: " .. dm_force.combined)
+      assert_contains(read_file(sb.noctalia_log) or "", "msg settings-toggle")
+
+      -- E) Real PTY end-to-end: live preview on arrow move -> atomic Esc revert, then Tab -> Right -> Enter commit
+      local orig_cfg = read_file(sb:config_toml_path())
+      local orig_style = read_file(sb:style_state_path())
+      local pty_script = [[
+import fcntl, os, pty, select, struct, subprocess, sys, termios, time
+
+exe, mode = sys.argv[1], sys.argv[2]
+mfd, sfd = pty.openpty()
+fcntl.ioctl(sfd, termios.TIOCSWINSZ, struct.pack("HHHH", 38, 116, 0, 0))
+
+def child_setup():
+    os.setsid()
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+proc = subprocess.Popen(
+    [exe, "--hub-tui", "--no-reload"],
+    stdin=sfd, stdout=sfd, stderr=sfd,
+    preexec_fn=child_setup, close_fds=True,
+)
+os.close(sfd)
+
+def drain(timeout):
+    buf = bytearray()
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        r, _, _ = select.select([mfd], [], [], max(0.02, end - time.monotonic()))
+        if not r:
+            continue
+        try:
+            chunk = os.read(mfd, 8192)
+            if not chunk:
+                break
+            buf.extend(chunk)
+        except OSError:
+            break
+    return bytes(buf)
+
+out = drain(0.45)
+assert b"KAZE THEME HUB" in out, "missing initial Theme Hub frame"
+if mode == "revert":
+    os.write(mfd, b"\x1b[C")  # Right arrow -> live preview next style
+    out_r = drain(0.45)
+    assert b"Previewing style" in out_r, "expected live preview status message"
+    style_path = os.path.join(os.environ["XDG_CONFIG_HOME"], "kaze", "style")
+    mid_style = open(style_path).read().strip()
+    assert mid_style != "dynamic-island", f"live preview did not apply on arrow move: {mid_style}"
+    os.write(mfd, b"\x1b")    # Esc -> atomic revert & exit
+    drain(0.30)
+else:
+    os.write(mfd, b"\t")      # Tab -> Palettes
+    out2 = drain(0.35)
+    assert b"Tokyo-Night" in out2, "missing Palettes tab content"
+    os.write(mfd, b"\x1b[C")  # Right arrow -> Tokyo-Night
+    drain(0.40)
+    os.write(mfd, b"\r")      # Enter -> commit & exit
+    drain(0.30)
+
+proc.wait(timeout=5)
+os.close(mfd)
+assert proc.returncode == 0, f"unexpected exit code: {proc.returncode}"
+print("PTY_OK_" + mode)
+]]
+      local p1 = sb:exec("python3", { "-c", pty_script, abs_repo .. "/bin/kaze-style", "revert" })
+      assert_eq(p1.code, 0, "PTY live-preview + Esc revert failed:\n" .. p1.combined)
+      assert_contains(p1.stdout, "PTY_OK_revert")
+      assert_eq(read_file(sb:config_toml_path()), orig_cfg, "Esc must revert config.toml byte-for-byte")
+      assert_eq(read_file(sb:style_state_path()), orig_style, "Esc must revert kaze/style byte-for-byte")
+
+      local p2 = sb:exec("python3", { "-c", pty_script, abs_repo .. "/bin/kaze-style", "commit" })
+      assert_eq(p2.code, 0, "PTY Tab + Right + Enter commit failed:\n" .. p2.combined)
+      assert_contains(p2.stdout, "PTY_OK_commit")
+      local committed_doc = parse_toml(read_file(sb:config_toml_path()) or "")
+      assert_eq(toml_get_str(committed_doc, "theme", "builtin"), "Tokyo-Night", "Enter must commit Tokyo-Night palette")
     end)
   end)
 end

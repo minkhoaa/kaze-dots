@@ -92,6 +92,14 @@ function M.build(cfg)
         },
         {
             group = "Launchers",
+            chord = "SUPER + ALT + T",
+            display = "Super + Alt + T",
+            desc = "Open Theme Hub (palettes, styles, wallpaper)",
+            kind = "exec",
+            cmd = "kaze-style --hub",
+        },
+        {
+            group = "Launchers",
             chord = "SUPER + SHIFT + W",
             display = "Super + Shift + W",
             desc = "Open Noctalia wallpaper picker",
