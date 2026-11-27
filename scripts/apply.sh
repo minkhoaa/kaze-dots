@@ -212,6 +212,7 @@ backup_and_link "$REPO_DIR/config/hypr/xdph.conf" "$CONFIG_HOME/hypr/xdph.conf"
 
 backup_and_link "$REPO_DIR/config/foot/foot.ini" "$CONFIG_HOME/foot/foot.ini"
 backup_and_link "$REPO_DIR/config/starship/starship.toml" "$CONFIG_HOME/starship.toml"
+backup_and_link "$REPO_DIR/config/fastfetch/config.jsonc" "$CONFIG_HOME/fastfetch/config.jsonc"
 backup_and_link "$REPO_DIR/config/zsh/zshrc" "$HOME/.zshrc"
 backup_and_link "$REPO_DIR/config/zsh/zprofile" "$HOME/.zprofile"
 backup_and_link "$REPO_DIR/config/zsh/conf.d" "$CONFIG_HOME/zsh/conf.d"

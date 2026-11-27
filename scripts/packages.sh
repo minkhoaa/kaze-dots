@@ -28,7 +28,7 @@ PKG_AUR_PREREQS=(base-devel git)
 PKG_FULL_CAPTURE=(slurp wf-recorder ffmpeg hyprpicker wl-mirror)
 PKG_FULL_APPS=(thunar adw-gtk-theme yazi imv zathura zathura-pdf-poppler)
 PKG_FULL_IME=(gnome-keyring fcitx5 fcitx5-bamboo fcitx5-gtk noto-fonts noto-fonts-emoji)
-PKG_FULL_CLI=(fzf zoxide eza bat ripgrep fd starship)
+PKG_FULL_CLI=(fzf zoxide eza bat ripgrep fd starship fastfetch)
 
 FULL_EXTRA_PACKAGES=(
     "${PKG_FULL_CAPTURE[@]}"

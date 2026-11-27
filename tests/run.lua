@@ -247,6 +247,11 @@ test("native configs: config/noctalia/config.toml and config/foot/foot.ini valid
     assert_contains(starship_src, "❯", "starship character symbol")
     assert_true(not starship_src:find("#[0-9a-fA-F][0-9a-fA-F]"), "starship.toml must use ANSI colors only, not hex")
 
+    local ff_src = assert(fs.read_file(repo_dir .. "/config/fastfetch/config.jsonc"))
+    local ff_cfg = json.decode(ff_src)
+    assert_true(type(ff_cfg.modules) == "table" and #ff_cfg.modules >= 10, "fastfetch config defines modules")
+    assert_true(not ff_src:find("#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]"), "fastfetch config must use ANSI colors only, not hex")
+
     local tmp = make_tmp_dir()
     if cmd_exists("noctalia") then
         local val_out = assert(fs.capture("noctalia config validate " .. fs.shell_quote(repo_dir .. "/config/noctalia/config.toml") .. " 2>&1"))
@@ -346,6 +351,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         assert_contains(manifest, cfg .. "/systemd/user/kaze-noctalia.service\n")
         assert_contains(manifest, cfg .. "/foot/foot.ini\n")
         assert_contains(manifest, cfg .. "/starship.toml\n")
+        assert_contains(manifest, cfg .. "/fastfetch/config.jsonc\n")
         assert_contains(manifest, cfg .. "/yazi/yazi.toml\n")
         assert_contains(manifest, cfg .. "/yazi/theme.toml\n")
         assert_contains(manifest, cfg .. "/yazi/keymap.toml\n")
@@ -406,6 +412,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
             cfg .. "/yazi/yazi.toml",
             cfg .. "/zathura/zathurarc",
             cfg .. "/imv/config",
+            cfg .. "/fastfetch/config.jsonc",
             cfg .. "/mimeapps.list",
             cfg .. "/gtk-3.0/settings.ini",
             cfg .. "/gtk-3.0/kaze-thunar.css",

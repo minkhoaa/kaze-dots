@@ -100,6 +100,7 @@ lua/kaze/
 | `$XDG_CONFIG_HOME/gtk-3.0/{settings.ini,kaze-thunar.css,gtk.css,noctalia.css,kaze-style.css}` | Symlinks + managed `gtk.css` imports and preset CSS overlay for GTK3/Thunar |
 | `$XDG_CONFIG_HOME/Thunar/{uca.xml,accels.scm}` & `$XDG_CONFIG_HOME/xfce4/xfconf/xfce-perchannel-xml/thunar.xml` | Symlinked custom actions (`uca.xml`) + editable seeded shortcuts & xfconf defaults |
 | `$XDG_CONFIG_HOME/starship.toml` | Symlink → `<repo>/config/starship/starship.toml` |
+| `$XDG_CONFIG_HOME/fastfetch/config.jsonc` | Symlink → `<repo>/config/fastfetch/config.jsonc` |
 | `$XDG_CONFIG_HOME/yazi/{yazi,theme,keymap}.toml` | Symlinks → `<repo>/config/yazi/*.toml` |
 | `$XDG_CONFIG_HOME/zathura/zathurarc` | Symlink → `<repo>/config/zathura/zathurarc` |
 | `$XDG_CONFIG_HOME/imv/config` | Symlink → `<repo>/config/imv/config` |

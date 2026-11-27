@@ -57,7 +57,7 @@ Rollback cleanly to your pre-install snapshot at any time (preserves `~/.config/
 | Profile | Official Packages | Included |
 | --- | --- | --- |
 | `minimal` | 27 core + add-ons | Hyprland, Noctalia, Foot, Zsh (+ plugins), PipeWire/WirePlumber, NetworkManager, BlueZ, `btop`, JetBrainsMono Nerd Font, Lua, XDG portals |
-| `full` | 51 core + add-ons | Everything in `minimal` + Thunar, Yazi (Sixel), Zathura, `imv`, `wf-recorder`/`ffmpeg`/`slurp`, `hyprpicker`, `wl-mirror`, `gnome-keyring`, `fcitx5-bamboo`, Noto fonts/emoji, `fzf`, `zoxide`, `eza`, `bat`, `ripgrep`, `fd`, `starship` |
+| `full` | 52 core + add-ons | Everything in `minimal` + Thunar, Yazi (Sixel), Zathura, `imv`, `wf-recorder`/`ffmpeg`/`slurp`, `hyprpicker`, `wl-mirror`, `gnome-keyring`, `fcitx5-bamboo`, Noto fonts/emoji, `fzf`, `zoxide`, `eza`, `bat`, `ripgrep`, `fd`, `starship`, `fastfetch` |
 
 *(Default add-ons: `greetd` + `noctalia-greeter` for login screen and `base-devel` + `git` for `yay-bin`; disable with `--dm none --aur none`.)*
 
@@ -76,6 +76,7 @@ config/zathura/          Minimal flat Zathura PDF viewer config
 config/imv/              Minimal Wayland imv image viewer config
 config/mimeapps.list     Default XDG file associations (thunar, imv, zathura)
 config/starship/         Single-line ANSI Starship prompt config
+config/fastfetch/        Minimal ANSI-colored Fastfetch system info config
 config/zsh/              Modular Zsh config (~/.zprofile, ~/.zshrc, conf.d/*.zsh)
 config/systemd/user/     Session target and user service units (Noctalia, Foot, Fcitx5, Recorder)
 lua/kaze/                Pure-Lua helper modules (hypr_user, styles, display, projects, mirror, session)

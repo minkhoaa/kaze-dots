@@ -201,7 +201,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
         "thunar", "adw-gtk-theme", "yazi", "imv", "zathura",
         "zathura-pdf-poppler", "gnome-keyring", "fcitx5", "fcitx5-bamboo",
         "fcitx5-gtk", "noto-fonts", "noto-fonts-emoji", "fzf", "zoxide",
-        "eza", "bat", "ripgrep", "fd", "starship",
+        "eza", "bat", "ripgrep", "fd", "starship", "fastfetch",
     }
 
     local FULL_PKGS = {}
@@ -1389,7 +1389,7 @@ exit 0
             end)
         end)
 
-        test("bb.pkg.full_manifest_exact_51", function()
+        test("bb.pkg.full_manifest_exact_52", function()
             with_sandbox({}, function(sb)
                 for _, args in ipairs({
                     { "--profile", "full", "--dry-run" },
