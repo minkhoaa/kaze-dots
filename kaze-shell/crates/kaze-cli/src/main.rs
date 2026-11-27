@@ -30,6 +30,13 @@ IPC Commands (via `kaze-shell msg`):\n\
   island-activity <id> <json>       Update a Dynamic Island Live Activity (display|record|<id>)\n\
   island-clear <id|all>             Clear a Dynamic Island Live Activity\n\
   island-style <floating|notch>     Switch Dynamic Island geometry style\n\
+  cc-toggle | cc-open | cc-close    Toggle, open, or close Control Center\n\
+  clipboard-toggle                  Toggle Clipboard History overlay (cliphist)\n\
+  tray-list | tray-open-menu [id]   Inspect SNI tray items or open DBusMenu popup\n\
+  wallpaper-set <path>              Set wallpaper & extract dynamic Dark/Light theme\n\
+  wallpaper-next | wallpaper-clear  Cycle or clear wallpaper background\n\
+  nightlight-toggle | nightlight-set <on|off|K>\n\
+  caffeine-toggle | caffeine-set <on|off>\n\
   theme-mode-toggle                 Toggle Dark/Light mode & regenerate templates\n\
   templates-apply                   Regenerate Hyprland, Foot, GTK3/4, btop themes\n\
   display-status <mode> [detail]    Update Display Slot dot (idle|present|virtual-share|virtual-control|recording)\n\

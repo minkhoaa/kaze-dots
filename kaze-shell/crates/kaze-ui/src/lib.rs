@@ -35,9 +35,17 @@ use smithay_client_toolkit::{
     delegate_registry, delegate_seat, delegate_shm, registry_handlers,
 };
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
+use std::os::fd::{AsFd, FromRawFd, OwnedFd};
+use wayland_protocols::wp::idle_inhibit::zv1::client::zwp_idle_inhibit_manager_v1::ZwpIdleInhibitManagerV1;
+use wayland_protocols::wp::idle_inhibit::zv1::client::zwp_idle_inhibitor_v1::ZwpIdleInhibitorV1;
 use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_manager_v3::ZwpTextInputManagerV3;
 use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::{
     self, ContentHint, ContentPurpose, ZwpTextInputV3,
+};
+use wayland_protocols_wlr::gamma_control::v1::client::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1;
+use wayland_protocols_wlr::gamma_control::v1::client::zwlr_gamma_control_v1::{
+    self, ZwlrGammaControlV1,
 };
 
 const BTN_LEFT: u32 = 0x110;
@@ -113,6 +121,20 @@ struct PendingIme {
     delete_surrounding: Option<(u32, u32)>,
 }
 
+struct WallpaperSurface {
+    layer: LayerSurface,
+    pool: SlotPool,
+    width: u32,
+    height: u32,
+    configured: bool,
+    pending_bgra: Option<Vec<u8>>,
+}
+
+struct GammaEntry {
+    control: ZwlrGammaControlV1,
+    ramp_size: Option<u32>,
+}
+
 pub struct UiState {
     registry_state: RegistryState,
     seat_state: SeatState,
@@ -122,12 +144,20 @@ pub struct UiState {
     layer_shell: LayerShell,
     text_input_manager: Option<ZwpTextInputManagerV3>,
     text_input: Option<ZwpTextInputV3>,
+    idle_inhibit_manager: Option<ZwpIdleInhibitManagerV1>,
+    idle_inhibitor: Option<ZwpIdleInhibitorV1>,
+    idle_anchor_surface: Option<LayerSurface>,
+    gamma_manager: Option<ZwlrGammaControlManagerV1>,
+    gamma_controls: HashMap<String, GammaEntry>,
+    nightlight_enabled: bool,
+    nightlight_temp_k: u32,
     ime_surface: Option<ObjectId>,
     ime_pending: PendingIme,
     qh: QueueHandle<Self>,
     pointer: Option<wl_pointer::WlPointer>,
     pointer_surface: Option<ObjectId>,
     pointer_pos: (f64, f64),
+    pointer_drag: Option<(String, String)>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     keyboard_surface: Option<ObjectId>,
     modifiers: KeyModifiers,
@@ -135,6 +165,8 @@ pub struct UiState {
     output_obj_by_name: HashMap<String, ObjectId>,
     surfaces: HashMap<String, ManagedSurface>,
     surface_key_by_obj: HashMap<ObjectId, String>,
+    wallpapers: HashMap<String, WallpaperSurface>,
+    wallpaper_output_by_obj: HashMap<ObjectId, String>,
     anim_clock: AnimationClock,
     renderer: Renderer,
     pending_events: Vec<SystemEvent>,
@@ -156,6 +188,12 @@ impl UiState {
         let text_input_manager = globals
             .bind::<ZwpTextInputManagerV3, _, _>(&qh, 1..=1, ())
             .ok();
+        let idle_inhibit_manager = globals
+            .bind::<ZwpIdleInhibitManagerV1, _, _>(&qh, 1..=1, ())
+            .ok();
+        let gamma_manager = globals
+            .bind::<ZwlrGammaControlManagerV1, _, _>(&qh, 1..=1, ())
+            .ok();
 
         let state = Self {
             registry_state: RegistryState::new(&globals),
@@ -166,12 +204,20 @@ impl UiState {
             layer_shell,
             text_input_manager,
             text_input: None,
+            idle_inhibit_manager,
+            idle_inhibitor: None,
+            idle_anchor_surface: None,
+            gamma_manager,
+            gamma_controls: HashMap::new(),
+            nightlight_enabled: false,
+            nightlight_temp_k: 4000,
             ime_surface: None,
             ime_pending: PendingIme::default(),
             qh,
             pointer: None,
             pointer_surface: None,
             pointer_pos: (0.0, 0.0),
+            pointer_drag: None,
             keyboard: None,
             keyboard_surface: None,
             modifiers: KeyModifiers::default(),
@@ -179,6 +225,8 @@ impl UiState {
             output_obj_by_name: HashMap::new(),
             surfaces: HashMap::new(),
             surface_key_by_obj: HashMap::new(),
+            wallpapers: HashMap::new(),
+            wallpaper_output_by_obj: HashMap::new(),
             anim_clock: AnimationClock::default(),
             renderer: Renderer::new(font_hint),
             pending_events: Vec::new(),
@@ -196,11 +244,197 @@ impl UiState {
     }
 
     pub fn surface_count(&self) -> usize {
-        self.surfaces.len()
+        self.surfaces.len() + self.wallpapers.len()
     }
 
     pub fn animating_surface_count(&self) -> usize {
         self.surfaces.values().filter(|s| s.spec.animating).count()
+    }
+
+    pub fn has_idle_inhibit(&self) -> bool {
+        self.idle_inhibit_manager.is_some()
+    }
+
+    pub fn has_gamma_control(&self) -> bool {
+        self.gamma_manager.is_some()
+    }
+
+    pub fn wallpaper_count(&self) -> usize {
+        self.wallpapers.len()
+    }
+
+    /// Enables or disables Wayland idle inhibition (`zwp_idle_inhibit_manager_v1`) for Caffeine.
+    pub fn set_caffeine(&mut self, enabled: bool) -> bool {
+        if !enabled {
+            if let Some(inh) = self.idle_inhibitor.take() {
+                inh.destroy();
+            }
+            self.idle_anchor_surface = None;
+            return true;
+        }
+        if self.idle_inhibitor.is_some() {
+            return true;
+        }
+        let Some(ref mgr) = self.idle_inhibit_manager else {
+            return false;
+        };
+        let target_surface = if let Some(s) = self.surfaces.values().next() {
+            s.layer.wl_surface().clone()
+        } else {
+            // In Ghost preset with 0 visible surfaces, bind a tiny 1x1 transparent anchor
+            // strictly while Caffeine is enabled, and drop it immediately when disabled.
+            let wl = self.compositor_state.create_surface(&self.qh);
+            let layer = self.layer_shell.create_layer_surface(
+                &self.qh,
+                wl,
+                WlrLayer::Background,
+                Some("kaze-caffeine-anchor".to_string()),
+                None,
+            );
+            layer.set_size(1, 1);
+            layer.set_exclusive_zone(0);
+            layer.commit();
+            let s = layer.wl_surface().clone();
+            self.idle_anchor_surface = Some(layer);
+            s
+        };
+        self.idle_inhibitor = Some(mgr.create_inhibitor(&target_surface, &self.qh, ()));
+        true
+    }
+
+    /// Applies color temperature via `zwlr_gamma_control_manager_v1` across physical outputs.
+    /// Returns `false` if the protocol is unavailable so the daemon can invoke `hyprsunset` fallback.
+    pub fn set_nightlight(&mut self, enabled: bool, temp_k: u32) -> bool {
+        self.nightlight_enabled = enabled;
+        self.nightlight_temp_k = temp_k.clamp(2500, 6500);
+        if !enabled {
+            for (_, entry) in self.gamma_controls.drain() {
+                entry.control.destroy();
+            }
+            return true;
+        }
+        let Some(ref mgr) = self.gamma_manager else {
+            return false;
+        };
+        let targets: Vec<(String, wl_output::WlOutput)> = self
+            .outputs_by_obj
+            .values()
+            .filter_map(|t| {
+                let info = t.info.as_ref()?;
+                if info.name == "kaze-share" {
+                    return None;
+                }
+                Some((info.name.clone(), t.wl_output.clone()))
+            })
+            .collect();
+        for (name, wl_out) in targets {
+            if let Some(existing) = self.gamma_controls.get(&name) {
+                if let Some(size) = existing.ramp_size {
+                    apply_gamma_ramp(&existing.control, size, self.nightlight_temp_k);
+                }
+            } else {
+                let control = mgr.get_gamma_control(&wl_out, &self.qh, name.clone());
+                self.gamma_controls.insert(
+                    name,
+                    GammaEntry {
+                        control,
+                        ramp_size: None,
+                    },
+                );
+            }
+        }
+        true
+    }
+
+    /// Uploads a decoded, pre-scaled BGRA wallpaper frame into a single-slot SHM `Background`
+    /// surface (`kaze-wallpaper-<output>`) and drops the heap pixel vector immediately.
+    pub fn set_wallpaper_buffer(
+        &mut self,
+        output_name: &str,
+        width: u32,
+        height: u32,
+        bgra_premul: Vec<u8>,
+    ) {
+        if output_name == "kaze-share" || width == 0 || height == 0 {
+            return;
+        }
+        let Some(wl_out) = self
+            .output_obj_by_name
+            .get(output_name)
+            .and_then(|obj| self.outputs_by_obj.get(obj))
+            .map(|t| t.wl_output.clone())
+        else {
+            return;
+        };
+
+        let expected_len = (width as usize)
+            .saturating_mul(height as usize)
+            .saturating_mul(4);
+        if bgra_premul.len() < expected_len {
+            return;
+        }
+
+        if let Some(existing) = self.wallpapers.get_mut(output_name) {
+            if existing.width == width
+                && existing.height == height
+                && existing.configured
+                && write_wallpaper_frame(existing, &bgra_premul)
+            {
+                drop(bgra_premul);
+                trim_glibc_heap();
+                return;
+            }
+        }
+
+        self.remove_wallpaper_for_output(output_name);
+        let wl_surface = self.compositor_state.create_surface(&self.qh);
+        let obj_id = wl_surface.id();
+        let layer = self.layer_shell.create_layer_surface(
+            &self.qh,
+            wl_surface,
+            WlrLayer::Background,
+            Some(format!("kaze-wallpaper-{output_name}")),
+            Some(&wl_out),
+        );
+        layer.set_anchor(
+            LayerAnchor::TOP | LayerAnchor::BOTTOM | LayerAnchor::LEFT | LayerAnchor::RIGHT,
+        );
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.commit();
+
+        let Ok(pool) = SlotPool::new(expected_len.max(4096), &self.shm) else {
+            eprintln!("kaze-ui: failed allocating wallpaper SHM pool for {output_name}");
+            return;
+        };
+
+        self.wallpaper_output_by_obj
+            .insert(obj_id, output_name.to_string());
+        self.wallpapers.insert(
+            output_name.to_string(),
+            WallpaperSurface {
+                layer,
+                pool,
+                width,
+                height,
+                configured: false,
+                pending_bgra: Some(bgra_premul),
+            },
+        );
+    }
+
+    pub fn clear_wallpapers(&mut self) {
+        self.wallpaper_output_by_obj.clear();
+        self.wallpapers.clear();
+        trim_glibc_heap();
+    }
+
+    fn remove_wallpaper_for_output(&mut self, output_name: &str) {
+        if let Some(wp) = self.wallpapers.remove(output_name) {
+            let obj_id = wp.layer.wl_surface().id();
+            self.wallpaper_output_by_obj.remove(&obj_id);
+            drop(wp);
+        }
     }
 
     pub fn active_namespaces(&self) -> Vec<String> {
@@ -208,6 +442,11 @@ impl UiState {
             .surfaces
             .values()
             .map(|s| s.spec.namespace.clone())
+            .chain(
+                self.wallpapers
+                    .keys()
+                    .map(|out| format!("kaze-wallpaper-{out}")),
+            )
             .collect();
         names.sort();
         names
@@ -239,6 +478,8 @@ impl UiState {
                         | DirtyFlags::OSD
                         | DirtyFlags::NOTIFY
                         | DirtyFlags::LAUNCHER
+                        | DirtyFlags::CC
+                        | DirtyFlags::TRAY
                         | DirtyFlags::THEME,
                 );
 
@@ -383,6 +624,10 @@ impl UiState {
     }
 
     fn remove_surfaces_for_output(&mut self, output_name: &str) {
+        self.remove_wallpaper_for_output(output_name);
+        if let Some(entry) = self.gamma_controls.remove(output_name) {
+            entry.control.destroy();
+        }
         let matching: Vec<String> = self
             .surfaces
             .iter()
@@ -789,6 +1034,10 @@ impl OutputHandler for UiState {
 impl LayerShellHandler for UiState {
     fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, layer: &LayerSurface) {
         let obj_id = layer.wl_surface().id();
+        if let Some(out_name) = self.wallpaper_output_by_obj.remove(&obj_id) {
+            self.wallpapers.remove(&out_name);
+            return;
+        }
         if let Some(id) = self.surface_key_by_obj.get(&obj_id).cloned() {
             self.remove_surface(&id);
             self.pending_events
@@ -805,6 +1054,17 @@ impl LayerShellHandler for UiState {
         _serial: u32,
     ) {
         let obj_id = layer.wl_surface().id();
+        if let Some(out_name) = self.wallpaper_output_by_obj.get(&obj_id).cloned() {
+            if let Some(wp) = self.wallpapers.get_mut(&out_name) {
+                wp.configured = true;
+                if let Some(bgra) = wp.pending_bgra.take() {
+                    let _ = write_wallpaper_frame(wp, &bgra);
+                    drop(bgra);
+                    trim_glibc_heap();
+                }
+            }
+            return;
+        }
         let Some(id) = self.surface_key_by_obj.get(&obj_id).cloned() else {
             return;
         };
@@ -1009,11 +1269,23 @@ impl PointerHandler for UiState {
                 PointerEventKind::Leave { .. } => {
                     if self.pointer_surface.as_ref() == Some(&event.surface.id()) {
                         self.pointer_surface = None;
+                        self.pointer_drag = None;
                     }
                 }
                 PointerEventKind::Motion { .. } => {
                     self.pointer_surface = Some(event.surface.id());
                     self.pointer_pos = event.position;
+                    if let Some((ref surf_id, ref target_id)) = self.pointer_drag {
+                        self.pending_events.push(SystemEvent::PointerDrag {
+                            surface_id: surf_id.clone(),
+                            target_id: target_id.clone(),
+                            x: event.position.0 as f32,
+                            y: event.position.1 as f32,
+                        });
+                    }
+                }
+                PointerEventKind::Release { .. } => {
+                    self.pointer_drag = None;
                 }
                 PointerEventKind::Press { button, .. } => {
                     let btn = match button {
@@ -1028,10 +1300,22 @@ impl PointerHandler for UiState {
                         if let Some(managed) = self.surfaces.get(surface_id) {
                             for target in &managed.spec.hit_targets {
                                 if target.rect.contains(px, py) {
+                                    if btn == PointerButton::Left && target.id.contains(":slider:")
+                                    {
+                                        self.pointer_drag =
+                                            Some((surface_id.clone(), target.id.clone()));
+                                    }
                                     self.pending_events.push(SystemEvent::PointerClick {
                                         surface_id: surface_id.clone(),
                                         target_id: target.id.clone(),
                                         button: btn,
+                                    });
+                                    self.pending_events.push(SystemEvent::PointerClickAt {
+                                        surface_id: surface_id.clone(),
+                                        target_id: target.id.clone(),
+                                        button: btn,
+                                        x: px,
+                                        y: py,
                                     });
                                     break;
                                 }
@@ -1065,8 +1349,148 @@ impl PointerHandler for UiState {
                         }
                     }
                 }
-                _ => {}
             }
+        }
+    }
+}
+
+fn trim_glibc_heap() {
+    #[cfg(target_env = "gnu")]
+    // SAFETY: `malloc_trim(0)` releases unused glibc arena pages back to the kernel.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+fn write_wallpaper_frame(wp: &mut WallpaperSurface, bgra: &[u8]) -> bool {
+    let stride = (wp.width as i32).saturating_mul(4);
+    let Ok((buffer, canvas)) = wp.pool.create_buffer(
+        wp.width as i32,
+        wp.height as i32,
+        stride,
+        wl_shm::Format::Argb8888,
+    ) else {
+        return false;
+    };
+    let len = canvas.len().min(bgra.len());
+    canvas[..len].copy_from_slice(&bgra[..len]);
+    let wl_surface = wp.layer.wl_surface();
+    wl_surface.set_buffer_scale(1);
+    if buffer.attach_to(wl_surface).is_err() {
+        return false;
+    }
+    wl_surface.damage_buffer(0, 0, wp.width as i32, wp.height as i32);
+    wl_surface.commit();
+    true
+}
+
+/// Computes normalized RGB multipliers for color temperature `temp_k` (Tanner approximation).
+pub fn kelvin_to_rgb_multipliers(temp_k: u32) -> (f64, f64, f64) {
+    let t = (f64::from(temp_k.clamp(2000, 6500))) / 100.0;
+    let r = 1.0;
+    let g = ((99.470_802_586_1 * t.ln() - 161.119_568_166_1) / 255.0).clamp(0.35, 1.0);
+    let b = if t >= 65.0 {
+        1.0
+    } else {
+        ((138.517_731_223_1 * (t - 10.0).max(1.0).ln() - 305.044_792_730_7) / 255.0)
+            .clamp(0.15, 1.0)
+    };
+    (r, g, b)
+}
+
+fn apply_gamma_ramp(control: &ZwlrGammaControlV1, size: u32, temp_k: u32) {
+    let n = size as usize;
+    if n == 0 || n > 65_536 {
+        return;
+    }
+    let (rm, gm, bm) = kelvin_to_rgb_multipliers(temp_k);
+    let mut bytes = Vec::with_capacity(n * 3 * 2);
+    for mult in [rm, gm, bm] {
+        for i in 0..n {
+            let frac = if n > 1 {
+                i as f64 / (n - 1) as f64
+            } else {
+                1.0
+            };
+            let v = (frac * mult * 65_535.0).round().clamp(0.0, 65_535.0) as u16;
+            bytes.extend_from_slice(&v.to_ne_bytes());
+        }
+    }
+    let name = c"kaze-gamma-ramp";
+    // SAFETY: valid C string pointer, MFD_CLOEXEC flag.
+    let raw_fd = unsafe { libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC) };
+    if raw_fd < 0 {
+        return;
+    }
+    // SAFETY: `raw_fd` is a fresh owned file descriptor from `memfd_create`.
+    let owned = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+    let mut file = std::fs::File::from(owned);
+    if file.write_all(&bytes).is_ok() {
+        let _ = file.flush();
+        control.set_gamma(file.as_fd());
+    }
+}
+
+impl Dispatch<ZwpIdleInhibitManagerV1, ()> for UiState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwpIdleInhibitManagerV1,
+        _event: <ZwpIdleInhibitManagerV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZwpIdleInhibitorV1, ()> for UiState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwpIdleInhibitorV1,
+        _event: <ZwpIdleInhibitorV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZwlrGammaControlManagerV1, ()> for UiState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwlrGammaControlManagerV1,
+        _event: <ZwlrGammaControlManagerV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZwlrGammaControlV1, String> for UiState {
+    fn event(
+        state: &mut Self,
+        proxy: &ZwlrGammaControlV1,
+        event: zwlr_gamma_control_v1::Event,
+        output_name: &String,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwlr_gamma_control_v1::Event::GammaSize { size } => {
+                if let Some(entry) = state.gamma_controls.get_mut(output_name) {
+                    entry.ramp_size = Some(size);
+                }
+                if state.nightlight_enabled {
+                    apply_gamma_ramp(proxy, size, state.nightlight_temp_k);
+                }
+            }
+            zwlr_gamma_control_v1::Event::Failed => {
+                if let Some(entry) = state.gamma_controls.remove(output_name) {
+                    entry.control.destroy();
+                }
+            }
+            _ => {}
         }
     }
 }

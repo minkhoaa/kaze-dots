@@ -22,7 +22,7 @@ background_opacity = 0.94
 exclusive = true
 persistent_workspaces = 5
 font = "JetBrainsMono Nerd Font"
-end_slots = ["display", "net", "vol", "bat", "notifications"]
+end_slots = ["tray", "display", "net", "vol", "bat", "notifications", "cc"]
 
 [island]
 enabled = false
@@ -63,3 +63,7 @@ offset_y = 120
 [display]
 left_click_cmd = ["kaze-display", "--menu"]
 right_click_cmd = ["kaze-display", "toggle-window-share"]
+
+[wallpaper]
+enabled = true
+dynamic_palette = true

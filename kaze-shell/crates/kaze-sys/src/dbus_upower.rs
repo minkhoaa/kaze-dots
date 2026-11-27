@@ -10,11 +10,7 @@ const DEVICE_IFACE: &str = "org.freedesktop.UPower.Device";
 
 /// Event-driven UPower DisplayDevice observer on the System Bus (0 polling).
 /// Automatically reports `present = false` on desktops/VMs without a battery.
-pub async fn run_upower_task(event_tx: CalloopSender<SystemEvent>) {
-    let Ok(conn) = Connection::system().await else {
-        return;
-    };
-
+pub async fn run_upower_task(conn: Connection, event_tx: CalloopSender<SystemEvent>) {
     let mut last = BatteryState::default();
     if let Some(st) = query_battery(&conn).await {
         if st != last {

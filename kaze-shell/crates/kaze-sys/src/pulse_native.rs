@@ -53,6 +53,7 @@ const TAG_FORMAT_INFO: u8 = b'f';
 #[derive(Debug, Clone, Copy)]
 pub enum AudioCmd {
     StepVolume(i32),
+    SetVolume(u8),
     ToggleMute,
     ToggleMicMute,
 }
@@ -609,6 +610,11 @@ pub async fn run_audio_task(
                                             let cvol = vec![pct_to_pa_volume(next_pct); sink_channels.max(1)];
                                             conn.set_sink_volume(&cur.sink_name, &cvol).await
                                         }
+                                        AudioCmd::SetVolume(pct) => {
+                                            let clamped = pct.min(PA_VOLUME_MAX_PCT);
+                                            let cvol = vec![pct_to_pa_volume(clamped); sink_channels.max(1)];
+                                            conn.set_sink_volume(&cur.sink_name, &cvol).await
+                                        }
                                         AudioCmd::ToggleMute => {
                                             conn.set_sink_mute(&cur.sink_name, !cur.muted).await
                                         }
@@ -628,6 +634,7 @@ pub async fn run_audio_task(
                                         sink_channels = ch;
                                         let trigger = match cmd {
                                             AudioCmd::StepVolume(_) | AudioCmd::ToggleMute => Some(OsdKind::Volume),
+                                            AudioCmd::SetVolume(_) => None,
                                             AudioCmd::ToggleMicMute => Some(OsdKind::Mic),
                                         };
                                         let _ = event_tx.send(SystemEvent::AudioChanged {

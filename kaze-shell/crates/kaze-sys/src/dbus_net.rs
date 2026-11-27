@@ -1,6 +1,7 @@
 use calloop::channel::Sender as CalloopSender;
 use futures_util::StreamExt;
 use kaze_core::{NetworkKind, NetworkState, SystemEvent};
+use tokio::sync::mpsc;
 use zbus::fdo::DBusProxy;
 use zbus::zvariant::OwnedObjectPath;
 use zbus::{Connection, Proxy};
@@ -11,13 +12,13 @@ const NM_IFACE: &str = "org.freedesktop.NetworkManager";
 const NM_ACTIVE_IFACE: &str = "org.freedesktop.NetworkManager.Connection.Active";
 const NM_AP_IFACE: &str = "org.freedesktop.NetworkManager.AccessPoint";
 
-/// Event-driven NetworkManager observer on the System Bus (0 polling).
+/// Event-driven NetworkManager observer & Wi-Fi toggle controller on the System Bus (0 polling).
 /// Treats absent NetworkManager cleanly as unavailable and only wakes on D-Bus signals.
-pub async fn run_network_task(event_tx: CalloopSender<SystemEvent>) {
-    let Ok(conn) = Connection::system().await else {
-        return;
-    };
-
+pub async fn run_network_task(
+    conn: Connection,
+    event_tx: CalloopSender<SystemEvent>,
+    mut cmd_rx: mpsc::UnboundedReceiver<()>,
+) {
     let mut last = NetworkState::default();
     if let Some(st) = query_network_state(&conn).await {
         if st != last {
@@ -61,6 +62,20 @@ pub async fn run_network_task(event_tx: CalloopSender<SystemEvent>) {
                 if let Ok(args) = ev.args() {
                     if args.name().as_str() == NM_DEST {
                         let st = query_network_state(&conn).await.unwrap_or_default();
+                        if st != last {
+                            let _ = event_tx.send(SystemEvent::NetworkChanged(st.clone()));
+                            last = st;
+                        }
+                    }
+                }
+            }
+            toggle = cmd_rx.recv() => {
+                if toggle.is_none() {
+                    break;
+                }
+                if let Ok(enabled) = nm_proxy.get_property::<bool>("WirelessEnabled").await {
+                    let _ = nm_proxy.set_property("WirelessEnabled", !enabled).await;
+                    if let Some(st) = query_network_state(&conn).await {
                         if st != last {
                             let _ = event_tx.send(SystemEvent::NetworkChanged(st.clone()));
                             last = st;

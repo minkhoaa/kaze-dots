@@ -206,12 +206,13 @@ async fn try_claim_name(conn: &Connection) -> bool {
 }
 
 pub async fn run_notify_task(
+    mut initial_conn: Option<Connection>,
     event_tx: CalloopSender<SystemEvent>,
     mut sig_rx: mpsc::UnboundedReceiver<NotifySignal>,
 ) {
     let mut backoff = Duration::from_millis(500);
     loop {
-        match run_notify_session(event_tx.clone(), &mut sig_rx).await {
+        match run_notify_session(initial_conn.take(), event_tx.clone(), &mut sig_rx).await {
             Ok(()) => return,
             Err(err) => {
                 eprintln!("kaze-sys: notifications D-Bus disconnected ({err}); reconnecting");
@@ -224,12 +225,16 @@ pub async fn run_notify_task(
 }
 
 async fn run_notify_session(
+    initial_conn: Option<Connection>,
     event_tx: CalloopSender<SystemEvent>,
     sig_rx: &mut mpsc::UnboundedReceiver<NotifySignal>,
 ) -> Result<(), String> {
-    let conn = Connection::session()
-        .await
-        .map_err(|e| format!("session bus connect: {e}"))?;
+    let conn = match initial_conn {
+        Some(c) => c,
+        None => Connection::session()
+            .await
+            .map_err(|e| format!("session bus connect: {e}"))?,
+    };
 
     let service = NotificationsService::new(event_tx.clone());
     conn.object_server()

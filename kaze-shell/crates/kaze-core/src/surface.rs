@@ -1,4 +1,5 @@
 use bitflags::bitflags;
+use std::sync::Arc;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -150,6 +151,17 @@ pub enum IconKind {
     Record,
     Cast,
     Close,
+    Bluetooth,
+    NightLight,
+    Caffeine,
+    ThemeMode,
+    Sliders,
+    Lock,
+    Suspend,
+    Reboot,
+    PowerOff,
+    Settings,
+    Layout,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -214,6 +226,13 @@ pub enum PaintCmd {
         color: Color,
         stroke_width: f32,
         level: Option<u8>,
+    },
+    /// Premultiplied RGBA raster image (SNI tray icons, thumbnails).
+    Image {
+        rect: Rect,
+        width: u32,
+        height: u32,
+        rgba_premul: Arc<[u8]>,
     },
 }
 

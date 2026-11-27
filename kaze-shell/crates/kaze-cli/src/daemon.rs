@@ -11,10 +11,13 @@ use kaze_core::{
     ResolvedPalette, ShellAction, ShellContext, SystemEvent, ThemePaths,
 };
 use kaze_ext_bar::BarExtension;
+use kaze_ext_cc::ControlCenterExtension;
 use kaze_ext_island::IslandExtension;
 use kaze_ext_launcher::{desktop as launcher_desktop, LauncherExtension};
 use kaze_ext_notify::NotifyExtension;
 use kaze_ext_osd::OsdExtension;
+use kaze_ext_tray::TrayExtension;
+use kaze_ext_wallpaper::{load_wallpaper_job, WallpaperExtension};
 use kaze_hypr::{HyprClient, HyprEvent, ReconnectBackoff};
 use kaze_ipc::{default_socket_path, IpcRequest, IpcResponder, IpcResponse, IpcServer};
 use kaze_sys::{backlight, SysCommand, SysHandle};
@@ -52,6 +55,7 @@ struct Daemon {
     config_reload_armed: bool,
     timers: HashMap<String, RegistrationToken>,
     pending_dmenu: Option<IpcResponder>,
+    event_tx: channel::Sender<SystemEvent>,
     sys: Option<SysHandle>,
     _fs_watcher: Option<RecommendedWatcher>,
     children: Vec<Child>,
@@ -70,6 +74,36 @@ impl Daemon {
     }
 
     fn dispatch_system_event(&mut self, event: SystemEvent) {
+        let mut wallpaper_updated_palette = false;
+        let event = match event {
+            SystemEvent::WallpaperReady {
+                path,
+                palette,
+                buffers,
+            } => {
+                self.state.wallpaper_path = Some(path.clone());
+                let mut uploaded_meta = Vec::with_capacity(buffers.len());
+                for (out_name, w, h, bgra) in buffers {
+                    self.ui.set_wallpaper_buffer(&out_name, w, h, bgra);
+                    uploaded_meta.push((out_name, w, h, Vec::new()));
+                }
+                let _ = self.wayland_conn.flush();
+                if let Some(pal) = palette {
+                    self.state.palette = *pal;
+                    if let Err(err) = self.apply_templates() {
+                        eprintln!("kaze-shell: dynamic wallpaper template apply failed: {err}");
+                    }
+                    wallpaper_updated_palette = true;
+                }
+                SystemEvent::WallpaperReady {
+                    path,
+                    palette: None,
+                    buffers: uploaded_meta,
+                }
+            }
+            other => other,
+        };
+
         match &event {
             SystemEvent::OutputAdded(info) | SystemEvent::OutputUpdated(info) => {
                 self.state.outputs.insert(info.name.clone(), info.clone());
@@ -132,6 +166,9 @@ impl Daemon {
             SystemEvent::NetworkChanged(net) => {
                 self.state.network = net.clone();
             }
+            SystemEvent::BluetoothChanged(bt) => {
+                self.state.bluetooth = bt.clone();
+            }
             SystemEvent::BatteryChanged(bat) => {
                 self.state.battery = bat.clone();
             }
@@ -150,17 +187,35 @@ impl Daemon {
             SystemEvent::DndChanged(dnd) => {
                 self.state.dnd = *dnd;
             }
+            SystemEvent::NightLightChanged { enabled, temp_k } => {
+                self.state.nightlight_enabled = *enabled;
+                self.state.nightlight_temp_k = *temp_k;
+            }
+            SystemEvent::CaffeineChanged(enabled) => {
+                self.state.caffeine_enabled = *enabled;
+            }
+            SystemEvent::TrayBusStatus { owned } => {
+                self.state.tray_bus_owned = *owned;
+            }
+            SystemEvent::TrayItemsChanged(items) => {
+                self.state.tray_items = items.clone();
+            }
             SystemEvent::ConfigReloaded
             | SystemEvent::FrameTick { .. }
             | SystemEvent::PointerClick { .. }
+            | SystemEvent::PointerClickAt { .. }
+            | SystemEvent::PointerDrag { .. }
             | SystemEvent::PointerScroll { .. }
             | SystemEvent::KeyInput { .. }
             | SystemEvent::ImeInput { .. }
             | SystemEvent::TimerFired { .. }
             | SystemEvent::NotificationReceived(_)
             | SystemEvent::NotificationCloseRequested { .. }
+            | SystemEvent::NotificationDismissHistory { .. }
             | SystemEvent::NotificationClearAll
             | SystemEvent::NotificationsCountChanged(_)
+            | SystemEvent::TrayMenuLoaded(_)
+            | SystemEvent::WallpaperReady { .. }
             | SystemEvent::SurfaceClosed { .. }
             | SystemEvent::KeyboardFocusLost { .. }
             | SystemEvent::ApplicationsChanged => {}
@@ -181,6 +236,9 @@ impl Daemon {
         self.execute_actions(actions);
         if !dirty.is_empty() {
             self.sync_ui_surfaces(dirty);
+        }
+        if wallpaper_updated_palette {
+            self.dispatch_system_event(SystemEvent::ThemeChanged(self.state.theme_mode));
         }
 
         if !matches!(event, SystemEvent::NotificationsCountChanged(_))
@@ -247,6 +305,11 @@ impl Daemon {
                         sys.send(SysCommand::AudioStepVolume(delta));
                     }
                 }
+                ShellAction::AudioSetVolume(pct) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::AudioSetVolume(pct));
+                    }
+                }
                 ShellAction::AudioToggleMute => {
                     if let Some(ref sys) = self.sys {
                         sys.send(SysCommand::AudioToggleMute);
@@ -262,9 +325,50 @@ impl Daemon {
                         sys.send(SysCommand::BacklightStep(delta));
                     }
                 }
+                ShellAction::BacklightSet(pct) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::BacklightSet(pct));
+                    }
+                }
                 ShellAction::MediaCommand(cmd) => {
                     if let Some(ref sys) = self.sys {
                         sys.send(SysCommand::MediaCommand(cmd));
+                    }
+                }
+                ShellAction::WifiToggle => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::WifiToggle);
+                    }
+                }
+                ShellAction::BluetoothToggle => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::BluetoothToggle);
+                    }
+                }
+                ShellAction::SetNightLight { enabled, temp_k } => {
+                    self.apply_nightlight(enabled, temp_k);
+                }
+                ShellAction::SetCaffeine(enabled) => {
+                    self.apply_caffeine(enabled);
+                }
+                ShellAction::ThemeModeToggle => {
+                    let next = self.state.theme_mode.toggled();
+                    self.state.theme_mode = next;
+                    if let Err(err) = self.apply_templates() {
+                        eprintln!("kaze-shell: theme toggle template apply failed: {err}");
+                    }
+                    self.dispatch_system_event(SystemEvent::ThemeChanged(next));
+                }
+                ShellAction::LayoutCycle => {
+                    let next = self.state.layout_preset.next();
+                    let _ = self.apply_layout_preset(next, true);
+                }
+                ShellAction::ToggleControlCenter => {
+                    self.invoke_extension_ipc("cc-toggle", &[]);
+                }
+                ShellAction::SystemPower(action) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::SystemPower(action));
                     }
                 }
                 ShellAction::NotifyClosed { id, reason } => {
@@ -277,11 +381,81 @@ impl Daemon {
                         sys.send(SysCommand::NotifyActionInvoked { id, action_key });
                     }
                 }
+                ShellAction::DismissHistoryNotification(id) => {
+                    self.dispatch_system_event(SystemEvent::NotificationDismissHistory { id });
+                }
                 ShellAction::SetDnd(dnd) => {
                     self.dispatch_system_event(SystemEvent::DndChanged(dnd));
                 }
                 ShellAction::ClearNotifications => {
                     self.dispatch_system_event(SystemEvent::NotificationClearAll);
+                }
+                ShellAction::TrayActivate {
+                    service,
+                    object_path,
+                    x,
+                    y,
+                    secondary,
+                } => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::TrayActivate {
+                            service,
+                            object_path,
+                            x,
+                            y,
+                            secondary,
+                        });
+                    }
+                }
+                ShellAction::TrayOpenMenu { service, menu_path } => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::TrayOpenMenu { service, menu_path });
+                    }
+                }
+                ShellAction::TrayMenuClick {
+                    service,
+                    menu_path,
+                    item_id,
+                } => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::TrayMenuClick {
+                            service,
+                            menu_path,
+                            item_id,
+                        });
+                    }
+                }
+                ShellAction::RequestWallpaperLoad {
+                    path,
+                    outputs,
+                    extract_palette,
+                } => {
+                    let tx = self.event_tx.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("kaze-wallpaper".to_string())
+                        .spawn(move || {
+                            match load_wallpaper_job(&path, &outputs, extract_palette) {
+                                Ok((palette, buffers)) => {
+                                    let _ = tx.send(SystemEvent::WallpaperReady {
+                                        path,
+                                        palette: palette.map(Box::new),
+                                        buffers,
+                                    });
+                                }
+                                Err(err) => {
+                                    eprintln!("kaze-shell: wallpaper load failed: {err}");
+                                }
+                            }
+                            #[cfg(target_env = "gnu")]
+                            // SAFETY: releases decoded source image arena pages back to the kernel.
+                            unsafe {
+                                libc::malloc_trim(0);
+                            }
+                        });
+                }
+                ShellAction::ClearWallpaper => {
+                    self.ui.clear_wallpapers();
+                    let _ = self.wayland_conn.flush();
                 }
                 ShellAction::DmenuReply { selected } => {
                     if let Some(responder) = self.pending_dmenu.take() {
@@ -432,6 +606,52 @@ impl Daemon {
         let geom = preset.hypr_geometry();
         if let Err(err) = client.apply_layout_geometry(&geom) {
             eprintln!("kaze-shell: applying Hyprland layout geometry failed: {err}");
+        }
+    }
+
+    fn apply_nightlight(&mut self, enabled: bool, temp_k: u32) {
+        let clamped = temp_k.clamp(2500, 6500);
+        let applied_native = self.ui.set_nightlight(enabled, clamped);
+        let _ = self.wayland_conn.flush();
+        if !applied_native {
+            // Fallback for compositors without zwlr_gamma_control_manager_v1: hyprsunset.
+            if enabled {
+                self.spawn_child("hyprsunset", &["-t".to_string(), clamped.to_string()]);
+            } else {
+                self.spawn_child("pkill", &["-x".to_string(), "hyprsunset".to_string()]);
+            }
+        }
+        self.dispatch_system_event(SystemEvent::NightLightChanged {
+            enabled,
+            temp_k: clamped,
+        });
+    }
+
+    fn apply_caffeine(&mut self, enabled: bool) {
+        let _ = self.ui.set_caffeine(enabled);
+        let _ = self.wayland_conn.flush();
+        self.dispatch_system_event(SystemEvent::CaffeineChanged(enabled));
+    }
+
+    fn invoke_extension_ipc(&mut self, cmd: &str, args: &[String]) {
+        let mut dirty = DirtyFlags::NONE;
+        let mut actions = Vec::new();
+        {
+            let mut ctx = ShellContext::new(&mut self.state);
+            for ext in &mut self.extensions {
+                if let IpcResult::Handled {
+                    dirty: ext_dirty, ..
+                } = ext.on_ipc(cmd, args, &mut ctx)
+                {
+                    dirty |= ext_dirty | ctx.dirty;
+                    break;
+                }
+            }
+            actions.extend(ctx.actions);
+        }
+        self.execute_actions(actions);
+        if !dirty.is_empty() {
+            self.sync_ui_surfaces(dirty);
         }
     }
 
@@ -614,6 +834,64 @@ impl Daemon {
                 self.dispatch_system_event(SystemEvent::NotificationClearAll);
                 IpcResponse::ok("cleared")
             }
+            "nightlight-status" => IpcResponse::ok(if self.state.nightlight_enabled {
+                format!("on {}K", self.state.nightlight_temp_k)
+            } else {
+                "off".into()
+            }),
+            "nightlight-toggle" => {
+                let next = !self.state.nightlight_enabled;
+                self.apply_nightlight(next, self.state.nightlight_temp_k);
+                IpcResponse::ok(if next {
+                    format!("on {}K", self.state.nightlight_temp_k)
+                } else {
+                    "off".into()
+                })
+            }
+            "nightlight-set" => match req.args.first().map(String::as_str) {
+                Some("off" | "0" | "false") => {
+                    self.apply_nightlight(false, self.state.nightlight_temp_k);
+                    IpcResponse::ok("off")
+                }
+                Some("on" | "true") => {
+                    self.apply_nightlight(true, self.state.nightlight_temp_k);
+                    IpcResponse::ok(format!("on {}K", self.state.nightlight_temp_k))
+                }
+                Some(raw) => match raw.trim_end_matches(['K', 'k']).parse::<u32>() {
+                    Ok(temp_k) => {
+                        let enabled = temp_k < 6500;
+                        self.apply_nightlight(enabled, temp_k);
+                        IpcResponse::ok(if enabled {
+                            format!("on {}K", self.state.nightlight_temp_k)
+                        } else {
+                            "off".into()
+                        })
+                    }
+                    Err(_) => IpcResponse::err("usage: nightlight-set <on|off|2500..6500>"),
+                },
+                None => IpcResponse::err("usage: nightlight-set <on|off|2500..6500>"),
+            },
+            "caffeine-status" => IpcResponse::ok(if self.state.caffeine_enabled {
+                "on"
+            } else {
+                "off"
+            }),
+            "caffeine-toggle" => {
+                let next = !self.state.caffeine_enabled;
+                self.apply_caffeine(next);
+                IpcResponse::ok(if next { "on" } else { "off" })
+            }
+            "caffeine-set" => match req.args.first().map(String::as_str) {
+                Some("on" | "true" | "1") => {
+                    self.apply_caffeine(true);
+                    IpcResponse::ok("on")
+                }
+                Some("off" | "false" | "0") => {
+                    self.apply_caffeine(false);
+                    IpcResponse::ok("off")
+                }
+                _ => IpcResponse::err("usage: caffeine-set <on|off>"),
+            },
             "status" => {
                 let outputs: Vec<&String> = self.state.outputs.keys().collect();
                 let hidden: Vec<&String> = self.state.hidden_bars.iter().collect();
@@ -628,12 +906,23 @@ impl Daemon {
                     "island_expanded": self.state.island_expanded,
                     "live_activities": self.state.active_live_activity_ids(),
                     "dnd": self.state.dnd,
+                    "cc_open": self.state.cc_open,
+                    "nightlight_enabled": self.state.nightlight_enabled,
+                    "nightlight_temp_k": self.state.nightlight_temp_k,
+                    "caffeine_enabled": self.state.caffeine_enabled,
+                    "has_idle_inhibit": self.ui.has_idle_inhibit(),
+                    "has_gamma_control": self.ui.has_gamma_control(),
+                    "tray_bus_owned": self.state.tray_bus_owned,
+                    "tray_items_count": self.state.tray_items.len(),
+                    "wallpaper_path": self.state.wallpaper_path.as_ref().map(|p| p.display().to_string()),
+                    "wallpaper_count": self.ui.wallpaper_count(),
                     "unread_notifications": self.state.unread_notifications,
                     "active_notifications": self.state.active_notifications,
                     "history_notifications": self.state.history_notifications,
                     "notifications_bus_owned": self.state.notifications_bus_owned,
                     "audio": self.state.audio,
                     "network": self.state.network,
+                    "bluetooth": self.state.bluetooth,
                     "battery": self.state.battery,
                     "backlight": self.state.backlight,
                     "media": self.state.media,
@@ -923,6 +1212,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
 
     // Single background `tokio` current_thread runtime for D-Bus + native pipewire-pulse (1 thread).
     let (sys_tx, sys_rx) = channel::channel::<SystemEvent>();
+    let event_tx = sys_tx.clone();
     let sys_handle = match SysHandle::spawn(sys_tx) {
         Ok(h) => Some(h),
         Err(err) => {
@@ -952,6 +1242,9 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     let extensions: Vec<Box<dyn KazeExtension>> = vec![
         Box::new(BarExtension::new()),
         Box::new(IslandExtension::new()),
+        Box::new(ControlCenterExtension::new()),
+        Box::new(TrayExtension::new()),
+        Box::new(WallpaperExtension::new()),
         Box::new(OsdExtension::new()),
         Box::new(NotifyExtension::new()),
         Box::new(LauncherExtension::new()),
@@ -975,6 +1268,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         config_reload_armed: false,
         timers: HashMap::new(),
         pending_dmenu: None,
+        event_tx,
         sys: sys_handle,
         _fs_watcher: fs_watcher,
         children: Vec::new(),

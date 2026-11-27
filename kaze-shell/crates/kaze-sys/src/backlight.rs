@@ -68,7 +68,6 @@ pub fn step_backlight(delta_pct: i32) -> Option<BacklightState> {
         .is_ok_and(|s| s.success());
 
     if !ran_ctl {
-        // Fallback: direct sysfs write if user has `video` group permissions.
         if let (Ok(cur_s), Ok(max_s)) = (
             fs::read_to_string(dir.join("brightness")),
             fs::read_to_string(dir.join("max_brightness")),
@@ -77,6 +76,35 @@ pub fn step_backlight(delta_pct: i32) -> Option<BacklightState> {
                 if max > 0 {
                     let step = (max * i64::from(delta_pct)) / 100;
                     let next = (cur + step).clamp(1, max);
+                    let _ = fs::write(dir.join("brightness"), next.to_string());
+                }
+            }
+        }
+    }
+
+    read_backlight_from_dir(&dir)
+}
+
+/// Sets absolute screen brightness percentage (`1..=100`) via `brightnessctl`
+/// (with direct sysfs fallback) and returns the updated state if a backlight exists.
+pub fn set_backlight(pct: u8) -> Option<BacklightState> {
+    let dir = discover_device()?;
+    let clamped = pct.clamp(1, 100);
+    let arg = format!("{clamped}%");
+
+    let ran_ctl = Command::new("brightnessctl")
+        .args(["set", &arg])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+
+    if !ran_ctl {
+        if let Ok(max_s) = fs::read_to_string(dir.join("max_brightness")) {
+            if let Ok(max) = max_s.trim().parse::<i64>() {
+                if max > 0 {
+                    let next = ((max * i64::from(clamped)) / 100).clamp(1, max);
                     let _ = fs::write(dir.join("brightness"), next.to_string());
                 }
             }

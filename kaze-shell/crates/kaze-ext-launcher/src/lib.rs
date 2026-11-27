@@ -25,12 +25,21 @@ const KEY_PAGE_DOWN: u32 = 0xff56;
 const KEY_END: u32 = 0xff57;
 const KEY_KP_ENTER: u32 = 0xff8d;
 const KEY_ISO_LEFT_TAB: u32 = 0xfe20;
+const KEY_DELETE: u32 = 0xffff;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipboardEntry {
+    pub raw_line: String,
+    pub display: String,
+    pub is_image: bool,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LauncherMode {
     Closed,
     Apps,
     Dmenu { prompt: String, items: Vec<String> },
+    Clipboard { entries: Vec<ClipboardEntry> },
 }
 
 #[derive(Debug, Clone)]
@@ -145,6 +154,26 @@ impl LauncherExtension {
                         .sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.index.cmp(&b.index)));
                 }
             }
+            LauncherMode::Clipboard { entries } => {
+                for (index, entry) in entries.iter().enumerate() {
+                    if let Some(score) = fuzzy_score(&q, &entry.display) {
+                        self.filtered.push(FilteredItem {
+                            index,
+                            title: entry.display.clone(),
+                            subtitle: if entry.is_image {
+                                "Image · Enter copy · Shift+Del remove".to_string()
+                            } else {
+                                "Enter copy · Shift+Del remove".to_string()
+                            },
+                            score,
+                        });
+                    }
+                }
+                if !q.trim().is_empty() {
+                    self.filtered
+                        .sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.index.cmp(&b.index)));
+                }
+            }
         }
 
         if self.filtered.is_empty() {
@@ -208,6 +237,46 @@ impl LauncherExtension {
         DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT
     }
 
+    fn open_clipboard(&mut self, raw_payload: &str, ctx: &mut ShellContext) -> DirtyFlags {
+        if matches!(self.mode, LauncherMode::Dmenu { .. }) {
+            ctx.push_action(ShellAction::DmenuReply { selected: None });
+        }
+        let entries = parse_cliphist_output(raw_payload);
+        self.mode = LauncherMode::Clipboard { entries };
+        self.query.clear();
+        self.preedit.clear();
+        self.selected = 0;
+        self.scroll_offset = 0;
+        self.refilter(ctx.state.config.launcher.max_rows);
+        self.rebuild(ctx.state);
+        DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT
+    }
+
+    fn delete_selected_clipboard(&mut self, ctx: &mut ShellContext) -> DirtyFlags {
+        let Some(chosen) = self.filtered.get(self.selected).cloned() else {
+            return DirtyFlags::NONE;
+        };
+        let LauncherMode::Clipboard { ref mut entries } = self.mode else {
+            return DirtyFlags::NONE;
+        };
+        if chosen.index >= entries.len() {
+            return DirtyFlags::NONE;
+        }
+        let removed = entries.remove(chosen.index);
+        ctx.push_action(ShellAction::SpawnCommand {
+            program: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "printf '%s\\n' \"$1\" | cliphist delete".to_string(),
+                "--".to_string(),
+                removed.raw_line,
+            ],
+        });
+        self.refilter(ctx.state.config.launcher.max_rows);
+        self.rebuild(ctx.state);
+        DirtyFlags::LAUNCHER
+    }
+
     fn close_cancel(&mut self, ctx: &mut ShellContext) -> DirtyFlags {
         if !self.is_open() {
             return DirtyFlags::NONE;
@@ -261,6 +330,28 @@ impl LauncherExtension {
                 self.cached_spec = None;
                 if let Some((program, args)) = cmd {
                     ctx.push_action(ShellAction::SpawnDetachedApp { program, args });
+                }
+                DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT
+            }
+            LauncherMode::Clipboard { entries } => {
+                let raw = entries.get(chosen.index).map(|e| e.raw_line.clone());
+                self.mode = LauncherMode::Closed;
+                self.query.clear();
+                self.preedit.clear();
+                self.filtered.clear();
+                self.selected = 0;
+                self.scroll_offset = 0;
+                self.cached_spec = None;
+                if let Some(raw_line) = raw {
+                    ctx.push_action(ShellAction::SpawnCommand {
+                        program: "sh".to_string(),
+                        args: vec![
+                            "-c".to_string(),
+                            "printf '%s\\n' \"$1\" | cliphist decode | wl-copy".to_string(),
+                            "--".to_string(),
+                            raw_line,
+                        ],
+                    });
                 }
                 DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT
             }
@@ -367,6 +458,7 @@ impl LauncherExtension {
                     DirtyFlags::NONE
                 }
             }
+            KEY_DELETE if key.modifiers.shift => self.delete_selected_clipboard(ctx),
             KEY_BACKSPACE => {
                 if !self.preedit.is_empty() {
                     self.preedit.pop();
@@ -595,6 +687,33 @@ impl KazeExtension for LauncherExtension {
                     dirty,
                 }
             }
+            "clipboard-toggle" => {
+                if !ctx.state.config.launcher.enabled {
+                    return IpcResult::Handled {
+                        ok: false,
+                        message: "launcher disabled in config".into(),
+                        dirty: DirtyFlags::NONE,
+                    };
+                }
+                if matches!(self.mode, LauncherMode::Clipboard { .. }) {
+                    let dirty = self.close_cancel(ctx);
+                    return IpcResult::Handled {
+                        ok: true,
+                        message: "closed".into(),
+                        dirty,
+                    };
+                }
+                let raw = match args.first() {
+                    Some(inline) => inline.clone(),
+                    None => read_cliphist_list(),
+                };
+                let dirty = self.open_clipboard(&raw, ctx);
+                IpcResult::Handled {
+                    ok: true,
+                    message: "opened".into(),
+                    dirty,
+                }
+            }
             _ => IpcResult::Unhandled,
         }
     }
@@ -602,6 +721,48 @@ impl KazeExtension for LauncherExtension {
     fn surfaces(&self) -> Vec<SurfaceSpec> {
         self.cached_spec.clone().into_iter().collect()
     }
+}
+
+fn read_cliphist_list() -> String {
+    match std::process::Command::new("cliphist")
+        .arg("list")
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
+        _ => String::new(),
+    }
+}
+
+/// Parses `cliphist list` lines (`<id>\t<preview>`), tagging binary images as `[IMG] ...`
+/// while preserving UTF-8 Vietnamese text and Emoji.
+pub fn parse_cliphist_output(raw: &str) -> Vec<ClipboardEntry> {
+    raw.lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(200)
+        .map(|line| {
+            let trimmed = line.trim_end_matches('\r');
+            let preview = trimmed
+                .split_once('\t')
+                .map(|(_, rest)| rest)
+                .unwrap_or(trimmed);
+            let is_image = preview.starts_with("[[ binary data");
+            let display = if is_image {
+                let inner = preview
+                    .trim_start_matches("[[ binary data")
+                    .trim_end_matches("]]")
+                    .trim();
+                format!("[IMG] {inner}")
+            } else {
+                preview.split_whitespace().collect::<Vec<_>>().join(" ")
+            };
+            ClipboardEntry {
+                raw_line: trimmed.to_string(),
+                display,
+                is_image,
+            }
+        })
+        .collect()
 }
 
 fn delete_prev_word(s: &mut String) {
@@ -733,14 +894,17 @@ fn build_launcher_surface(
     let surface_variant = colors.surface_variant_color();
 
     let is_apps = matches!(mode, LauncherMode::Apps);
+    let is_clip = matches!(mode, LauncherMode::Clipboard { .. });
     let prompt = match mode {
         LauncherMode::Apps => "Apps > ".to_string(),
         LauncherMode::Dmenu { prompt, .. } => prompt.clone(),
+        LauncherMode::Clipboard { .. } => "Clip > ".to_string(),
         LauncherMode::Closed => String::new(),
     };
     let total_count = match mode {
         LauncherMode::Apps => filtered.len(),
         LauncherMode::Dmenu { items, .. } => items.len(),
+        LauncherMode::Clipboard { entries } => entries.len(),
         LauncherMode::Closed => 0,
     };
 
@@ -792,6 +956,8 @@ fn build_launcher_surface(
     if query.is_empty() && preedit.is_empty() {
         let placeholder = if is_apps {
             "Type to launch..."
+        } else if is_clip {
+            "Filter clipboard (Shift+Del removes)..."
         } else {
             "Type to filter..."
         };
@@ -1113,5 +1279,59 @@ mod tests {
         let subseq = fuzzy_score("ftl", "Foot Terminal").expect("subseq");
         assert!(exact > prefix && prefix > subseq);
         assert!(fuzzy_score("xyz", "Foot").is_none());
+    }
+
+    #[test]
+    fn clipboard_mode_parses_images_vietnamese_deletes_and_copies() {
+        let mut state = AppState::new(Config::default());
+        let mut ext = LauncherExtension::new();
+        let sample = "101\t[[ binary data 42 KiB png 1920x1080 ]]\n102\tXin chào Việt Nam 🔥\n";
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            let res = ext.on_ipc("clipboard-toggle", &[sample.into()], &mut ctx);
+            assert!(matches!(res, IpcResult::Handled { ok: true, .. }));
+        }
+        assert_eq!(ext.surfaces().len(), 1);
+        assert_eq!(ext.filtered.len(), 2);
+        assert!(ext.filtered[0].title.starts_with("[IMG]"));
+        assert!(ext.filtered[1].title.contains("Việt Nam 🔥"));
+
+        // Shift+Delete removes item 0 and spawns cliphist delete.
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_event(
+                &SystemEvent::KeyInput {
+                    surface_id: SURFACE_ID.into(),
+                    key: KeyEvent {
+                        keysym: KEY_DELETE,
+                        utf8: None,
+                        modifiers: KeyModifiers {
+                            shift: true,
+                            ..KeyModifiers::default()
+                        },
+                        pressed: true,
+                    },
+                },
+                &mut ctx,
+            );
+            assert!(ctx.actions.iter().any(|a| matches!(
+                a,
+                ShellAction::SpawnCommand { program, args }
+                if program == "sh" && args.iter().any(|s| s.contains("cliphist delete"))
+            )));
+        }
+        assert_eq!(ext.filtered.len(), 1);
+
+        // Return copies remaining Vietnamese line via cliphist decode | wl-copy and frees surface.
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_event(&key(KEY_RETURN, None, false), &mut ctx);
+            assert!(ctx.actions.iter().any(|a| matches!(
+                a,
+                ShellAction::SpawnCommand { program, args }
+                if program == "sh" && args.iter().any(|s| s.contains("cliphist decode | wl-copy"))
+            )));
+        }
+        assert!(ext.surfaces().is_empty());
     }
 }

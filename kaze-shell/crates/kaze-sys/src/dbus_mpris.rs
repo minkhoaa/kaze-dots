@@ -14,13 +14,10 @@ const MPRIS_PLAYER_IFACE: &str = "org.mpris.MediaPlayer2.Player";
 
 /// Event-driven MPRIS2 observer & controller on the Session Bus (0 polling, 0 portals).
 pub async fn run_mpris_task(
+    conn: Connection,
     event_tx: CalloopSender<SystemEvent>,
     mut cmd_rx: mpsc::UnboundedReceiver<String>,
 ) {
-    let Ok(conn) = Connection::session().await else {
-        return;
-    };
-
     let Ok(dbus) = DBusProxy::new(&conn).await else {
         return;
     };

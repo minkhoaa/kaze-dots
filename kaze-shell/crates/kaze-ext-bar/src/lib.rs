@@ -173,10 +173,14 @@ impl KazeExtension for BarExtension {
             SystemEvent::HyprConnectionChanged { .. }
             | SystemEvent::ClockTick(_)
             | SystemEvent::NetworkChanged(_)
+            | SystemEvent::BluetoothChanged(_)
             | SystemEvent::BatteryChanged(_)
             | SystemEvent::AudioChanged { .. }
             | SystemEvent::MediaChanged(_)
             | SystemEvent::DndChanged(_)
+            | SystemEvent::NightLightChanged { .. }
+            | SystemEvent::CaffeineChanged(_)
+            | SystemEvent::TrayItemsChanged(_)
             | SystemEvent::NotificationsCountChanged(_)
             | SystemEvent::NotificationClearAll => {
                 self.sync_springs(ctx.state, false);
@@ -216,7 +220,55 @@ impl KazeExtension for BarExtension {
                     }
                     return DirtyFlags::NONE;
                 }
+                if let Some(idx_str) = target_id.strip_prefix("tray:item:") {
+                    if let Ok(idx) = idx_str.parse::<usize>() {
+                        if let Some(item) = ctx.state.tray_items.get(idx) {
+                            match button {
+                                PointerButton::Left => {
+                                    ctx.push_action(ShellAction::TrayActivate {
+                                        service: item.service.clone(),
+                                        object_path: item.object_path.clone(),
+                                        x: 0,
+                                        y: 0,
+                                        secondary: false,
+                                    });
+                                }
+                                PointerButton::Right => {
+                                    if !item.menu_path.is_empty() {
+                                        ctx.push_action(ShellAction::TrayOpenMenu {
+                                            service: item.service.clone(),
+                                            menu_path: item.menu_path.clone(),
+                                        });
+                                    } else {
+                                        ctx.push_action(ShellAction::TrayActivate {
+                                            service: item.service.clone(),
+                                            object_path: item.object_path.clone(),
+                                            x: 0,
+                                            y: 0,
+                                            secondary: true,
+                                        });
+                                    }
+                                }
+                                PointerButton::Middle => {
+                                    ctx.push_action(ShellAction::TrayActivate {
+                                        service: item.service.clone(),
+                                        object_path: item.object_path.clone(),
+                                        x: 0,
+                                        y: 0,
+                                        secondary: true,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    return DirtyFlags::NONE;
+                }
                 match target_id.as_str() {
+                    "cc" => {
+                        if *button == PointerButton::Left {
+                            ctx.push_action(ShellAction::ToggleControlCenter);
+                        }
+                    }
                     "display" => {
                         let cmd = match button {
                             PointerButton::Left => Some(&ctx.state.config.display.left_click_cmd),
@@ -281,11 +333,17 @@ impl KazeExtension for BarExtension {
             }
             SystemEvent::KeyInput { .. }
             | SystemEvent::ImeInput { .. }
+            | SystemEvent::PointerClickAt { .. }
+            | SystemEvent::PointerDrag { .. }
             | SystemEvent::TimerFired { .. }
             | SystemEvent::BacklightChanged { .. }
             | SystemEvent::NotificationReceived(_)
             | SystemEvent::NotificationCloseRequested { .. }
+            | SystemEvent::NotificationDismissHistory { .. }
             | SystemEvent::NotificationsBusStatus { .. }
+            | SystemEvent::TrayBusStatus { .. }
+            | SystemEvent::TrayMenuLoaded(_)
+            | SystemEvent::WallpaperReady { .. }
             | SystemEvent::SurfaceClosed { .. }
             | SystemEvent::KeyboardFocusLost { .. }
             | SystemEvent::ApplicationsChanged => DirtyFlags::NONE,
@@ -460,7 +518,9 @@ fn collect_workspaces(state: &AppState, output_name: &str) -> Vec<(i32, bool, bo
 
 struct SlotVisual {
     id: String,
-    icon: IconKind,
+    icon: Option<IconKind>,
+    image: Option<(u32, u32, std::sync::Arc<[u8]>)>,
+    monogram: Option<String>,
     icon_color: Color,
     fill: Color,
     stroke: Option<Color>,
@@ -482,11 +542,51 @@ fn active_end_slots(state: &AppState) -> Vec<SlotVisual> {
     let mut slots = Vec::new();
     for name in &state.config.bar.end_slots {
         match name.as_str() {
+            "tray" => {
+                for (idx, item) in state.tray_items.iter().take(6).enumerate() {
+                    let image = item
+                        .icon_rgba
+                        .as_ref()
+                        .filter(|_| item.icon_width > 0 && item.icon_height > 0)
+                        .map(|buf| {
+                            (
+                                item.icon_width,
+                                item.icon_height,
+                                std::sync::Arc::clone(buf),
+                            )
+                        });
+                    let monogram = if image.is_none() {
+                        let ch = item
+                            .title
+                            .chars()
+                            .chain(item.id.chars())
+                            .find(|c| !c.is_whitespace())
+                            .unwrap_or('•')
+                            .to_ascii_uppercase();
+                        Some(ch.to_string())
+                    } else {
+                        None
+                    };
+                    slots.push(SlotVisual {
+                        id: format!("tray:item:{idx}"),
+                        icon: None,
+                        image,
+                        monogram,
+                        icon_color: on_surface,
+                        fill: surface_container,
+                        stroke: None,
+                        level: None,
+                        dot: None,
+                    });
+                }
+            }
             "display" => {
                 let active = state.display_status.is_active();
                 slots.push(SlotVisual {
                     id: "display".into(),
-                    icon: IconKind::Display,
+                    icon: Some(IconKind::Display),
+                    image: None,
+                    monogram: None,
                     icon_color: if active { primary } else { on_surface },
                     fill: if active {
                         surface_variant
@@ -513,7 +613,9 @@ fn active_end_slots(state: &AppState) -> Vec<SlotVisual> {
                     };
                 slots.push(SlotVisual {
                     id: "net".into(),
-                    icon,
+                    icon: Some(icon),
+                    image: None,
+                    monogram: None,
                     icon_color,
                     fill: surface_container,
                     stroke: None,
@@ -530,7 +632,9 @@ fn active_end_slots(state: &AppState) -> Vec<SlotVisual> {
                 };
                 slots.push(SlotVisual {
                     id: "vol".into(),
-                    icon,
+                    icon: Some(icon),
+                    image: None,
+                    monogram: None,
                     icon_color,
                     fill: surface_container,
                     stroke: None,
@@ -555,7 +659,9 @@ fn active_end_slots(state: &AppState) -> Vec<SlotVisual> {
                 };
                 slots.push(SlotVisual {
                     id: "bat".into(),
-                    icon,
+                    icon: Some(icon),
+                    image: None,
+                    monogram: None,
                     icon_color,
                     fill: surface_container,
                     stroke: if state.battery.low {
@@ -586,10 +692,37 @@ fn active_end_slots(state: &AppState) -> Vec<SlotVisual> {
                 };
                 slots.push(SlotVisual {
                     id: "notifications".into(),
-                    icon,
+                    icon: Some(icon),
+                    image: None,
+                    monogram: None,
                     icon_color,
                     fill,
                     stroke,
+                    level: None,
+                    dot,
+                });
+            }
+            "cc" => {
+                let active = state.cc_open || state.caffeine_enabled || state.nightlight_enabled;
+                let dot = if state.caffeine_enabled {
+                    Some(secondary)
+                } else if state.nightlight_enabled {
+                    Some(tertiary)
+                } else {
+                    None
+                };
+                slots.push(SlotVisual {
+                    id: "cc".into(),
+                    icon: Some(IconKind::Sliders),
+                    image: None,
+                    monogram: None,
+                    icon_color: if state.cc_open { primary } else { on_surface },
+                    fill: if active {
+                        surface_variant
+                    } else {
+                        surface_container
+                    },
+                    stroke: if state.cc_open { Some(primary) } else { None },
                     level: None,
                     dot,
                 });
@@ -598,6 +731,46 @@ fn active_end_slots(state: &AppState) -> Vec<SlotVisual> {
         }
     }
     slots
+}
+
+fn push_slot_visual(
+    commands: &mut Vec<PaintCmd>,
+    slot: &SlotVisual,
+    icon_rect: Rect,
+    slot_rect: Rect,
+) {
+    if let Some((w, h, ref rgba)) = slot.image {
+        let side = icon_rect.w.min(icon_rect.h).max(14.0);
+        let img_rect = Rect::new(
+            slot_rect.x + (slot_rect.w - side) * 0.5,
+            slot_rect.y + (slot_rect.h - side) * 0.5,
+            side,
+            side,
+        );
+        commands.push(PaintCmd::Image {
+            rect: img_rect,
+            width: w,
+            height: h,
+            rgba_premul: std::sync::Arc::clone(rgba),
+        });
+    } else if let Some(kind) = slot.icon {
+        commands.push(PaintCmd::Icon {
+            rect: icon_rect,
+            kind,
+            color: slot.icon_color,
+            stroke_width: 1.5,
+            level: slot.level,
+        });
+    } else if let Some(ref mono) = slot.monogram {
+        commands.push(PaintCmd::Text {
+            rect: slot_rect,
+            text: mono.clone(),
+            color: slot.icon_color,
+            size: 11.0,
+            bold: true,
+            align: TextAlign::Center,
+        });
+    }
 }
 
 fn workspace_focus_index(state: &AppState, output_name: &str) -> usize {
@@ -904,13 +1077,7 @@ fn build_bar_surface(
                 icon_w,
                 icon_h,
             );
-            commands.push(PaintCmd::Icon {
-                rect: icon_rect,
-                kind: slot.icon,
-                color: slot.icon_color,
-                stroke_width: 1.5,
-                level: slot.level,
-            });
+            push_slot_visual(&mut commands, &slot, icon_rect, slot_rect);
 
             if let Some(dot_color) = slot.dot {
                 commands.push(PaintCmd::Circle {
@@ -1003,13 +1170,7 @@ fn build_bar_surface(
                 icon_w,
                 icon_h,
             );
-            commands.push(PaintCmd::Icon {
-                rect: icon_rect,
-                kind: slot.icon,
-                color: slot.icon_color,
-                stroke_width: 1.5,
-                level: slot.level,
-            });
+            push_slot_visual(&mut commands, &slot, icon_rect, slot_rect);
             if let Some(dot_color) = slot.dot {
                 commands.push(PaintCmd::Circle {
                     cx: slot_rect.x + slot_rect.w - 5.0,
@@ -1173,18 +1334,13 @@ fn build_island_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpe
         });
         let icon_w = 13.0f32;
         let icon_h = 12.0f32;
-        commands.push(PaintCmd::Icon {
-            rect: Rect::new(
-                slot_rect.x + (slot_rect.w - icon_w) * 0.5,
-                slot_rect.y + (slot_rect.h - icon_h) * 0.5,
-                icon_w,
-                icon_h,
-            ),
-            kind: slot.icon,
-            color: slot.icon_color,
-            stroke_width: 1.5,
-            level: slot.level,
-        });
+        let icon_rect = Rect::new(
+            slot_rect.x + (slot_rect.w - icon_w) * 0.5,
+            slot_rect.y + (slot_rect.h - icon_h) * 0.5,
+            icon_w,
+            icon_h,
+        );
+        push_slot_visual(&mut commands, &slot, icon_rect, slot_rect);
         if let Some(dot_color) = slot.dot {
             commands.push(PaintCmd::Circle {
                 cx: slot_rect.x + slot_rect.w - 4.0,
@@ -1379,6 +1535,18 @@ fn build_swiss_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec
             primary,
         ));
     }
+    if !state.tray_items.is_empty() {
+        tokens.push((
+            "tray:item:0".into(),
+            format!("TRAY {}", state.tray_items.len()),
+            on_surface,
+        ));
+    }
+    tokens.push((
+        "cc".into(),
+        "CC".into(),
+        if state.cc_open { primary } else { muted },
+    ));
 
     let mut right_edge = bw - 14.0;
     for (idx, (id, text, color)) in tokens.into_iter().rev().enumerate() {

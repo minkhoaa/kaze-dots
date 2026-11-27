@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
@@ -78,6 +80,44 @@ pub struct NetworkState {
     pub kind: NetworkKind,
     pub ssid: String,
     pub strength: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct BluetoothState {
+    pub available: bool,
+    pub powered: bool,
+    pub connected_device: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrayItem {
+    pub id: String,
+    pub service: String,
+    pub object_path: String,
+    pub title: String,
+    pub icon_name: String,
+    pub menu_path: String,
+    pub icon_width: u32,
+    pub icon_height: u32,
+    /// Premultiplied RGBA pixels decoded once in `kaze-sys` (`Arc` avoids copies across specs).
+    pub icon_rgba: Option<Arc<[u8]>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrayMenuEntry {
+    pub id: i32,
+    pub label: String,
+    pub enabled: bool,
+    pub separator: bool,
+    pub toggle_state: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrayMenuState {
+    pub service: String,
+    pub menu_path: String,
+    pub items: Vec<TrayMenuEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -333,11 +373,20 @@ pub struct AppState {
     pub custom_activities: BTreeMap<String, CustomActivity>,
     pub island_expanded: bool,
     pub network: NetworkState,
+    pub bluetooth: BluetoothState,
     pub battery: BatteryState,
     pub audio: AudioState,
     pub backlight: BacklightState,
     pub media: MediaState,
     pub dnd: bool,
+    pub nightlight_enabled: bool,
+    pub nightlight_temp_k: u32,
+    pub caffeine_enabled: bool,
+    pub cc_open: bool,
+    pub tray_bus_owned: bool,
+    pub tray_items: Vec<TrayItem>,
+    pub notification_history: Vec<NotificationItem>,
+    pub wallpaper_path: Option<PathBuf>,
     pub unread_notifications: u32,
     pub active_notifications: usize,
     pub history_notifications: usize,
@@ -371,11 +420,20 @@ impl AppState {
             custom_activities: BTreeMap::new(),
             island_expanded: false,
             network: NetworkState::default(),
+            bluetooth: BluetoothState::default(),
             battery: BatteryState::default(),
             audio: AudioState::default(),
             backlight: BacklightState::default(),
             media: MediaState::default(),
             dnd: false,
+            nightlight_enabled: false,
+            nightlight_temp_k: 4000,
+            caffeine_enabled: false,
+            cc_open: false,
+            tray_bus_owned: false,
+            tray_items: Vec::new(),
+            notification_history: Vec::new(),
+            wallpaper_path: None,
             unread_notifications: 0,
             active_notifications: 0,
             history_notifications: 0,

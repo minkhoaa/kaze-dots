@@ -10,6 +10,7 @@ workspace = true
 [dependencies]
 calloop.workspace = true
 futures-util.workspace = true
+image.workspace = true
 kaze-core.workspace = true
 tokio.workspace = true
 zbus.workspace = true

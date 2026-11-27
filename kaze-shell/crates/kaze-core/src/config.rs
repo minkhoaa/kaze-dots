@@ -78,11 +78,13 @@ impl Default for BarConfig {
             persistent_workspaces: 5,
             font: "JetBrainsMono Nerd Font".to_string(),
             end_slots: vec![
+                "tray".to_string(),
                 "display".to_string(),
                 "net".to_string(),
                 "vol".to_string(),
                 "bat".to_string(),
                 "notifications".to_string(),
+                "cc".to_string(),
             ],
         }
     }
@@ -243,6 +245,26 @@ pub struct LayoutConfig {
     pub preset: LayoutPreset,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WallpaperConfig {
+    pub enabled: bool,
+    pub path: Option<PathBuf>,
+    pub directory: Option<PathBuf>,
+    pub dynamic_palette: bool,
+}
+
+impl Default for WallpaperConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: None,
+            directory: None,
+            dynamic_palette: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
@@ -254,6 +276,7 @@ pub struct Config {
     pub notifications: NotifyConfig,
     pub launcher: LauncherConfig,
     pub display: DisplayConfig,
+    pub wallpaper: WallpaperConfig,
 }
 
 pub fn xdg_config_home() -> Result<PathBuf, String> {

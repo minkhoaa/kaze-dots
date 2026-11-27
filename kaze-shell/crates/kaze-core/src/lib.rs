@@ -11,7 +11,7 @@ pub mod theme;
 pub use anim::{Spring, SPRING_MAX_DT_SECS, SPRING_POS_EPSILON, SPRING_VEL_EPSILON};
 pub use config::{
     BarConfig, BarPosition, Config, DisplayConfig, IslandConfig, IslandStyle, LauncherConfig,
-    LayoutConfig, NotifyConfig, OsdConfig, ThemeConfig,
+    LayoutConfig, NotifyConfig, OsdConfig, ThemeConfig, WallpaperConfig,
 };
 pub use extension::{
     DirtyFlags, ImeEvent, IpcResult, KazeExtension, KeyEvent, KeyModifiers, OsdKind, PointerButton,
@@ -22,10 +22,10 @@ pub use layout::{
     HyprGeometrySpec, LayoutPreset,
 };
 pub use state::{
-    AppState, AudioState, BacklightState, BatteryState, ClockTime, CustomActivity, DisplayActivity,
-    DisplayStatus, MediaPlayback, MediaState, MonitorState, NetworkKind, NetworkState,
-    NotificationAction, NotificationItem, NotificationUrgency, OutputInfo, RecordActivity,
-    ThemeMode, WorkspaceState,
+    AppState, AudioState, BacklightState, BatteryState, BluetoothState, ClockTime, CustomActivity,
+    DisplayActivity, DisplayStatus, MediaPlayback, MediaState, MonitorState, NetworkKind,
+    NetworkState, NotificationAction, NotificationItem, NotificationUrgency, OutputInfo,
+    RecordActivity, ThemeMode, TrayItem, TrayMenuEntry, TrayMenuState, WorkspaceState,
 };
 pub use surface::{
     Anchor, Color, EdgeInsets, HitTarget, IconKind, KeyboardMode, Layer, PaintCmd, Rect,

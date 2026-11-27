@@ -519,6 +519,14 @@ impl Renderer {
                 } => {
                     draw_icon(&mut pixmap, *kind, *rect, *color, *stroke_width, *level, s);
                 }
+                PaintCmd::Image {
+                    rect,
+                    width,
+                    height,
+                    rgba_premul,
+                } => {
+                    draw_premul_rgba_image(&mut pixmap, *rect, *width, *height, rgba_premul, s);
+                }
                 PaintCmd::Text {
                     rect,
                     text,
@@ -1161,6 +1169,247 @@ fn draw_icon(
             if let Some(x_path) = pb.finish() {
                 pixmap.stroke_path(&x_path, &paint, &round_stroke, Transform::identity(), None);
             }
+        }
+        IconKind::Bluetooth => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.28, y + h * 0.30);
+            pb.line_to(x + w * 0.74, y + h * 0.70);
+            pb.line_to(x + w * 0.50, y + h * 0.90);
+            pb.line_to(x + w * 0.50, y + h * 0.10);
+            pb.line_to(x + w * 0.74, y + h * 0.30);
+            pb.line_to(x + w * 0.28, y + h * 0.70);
+            if let Some(p) = pb.finish() {
+                pixmap.stroke_path(&p, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::NightLight | IconKind::ThemeMode => {
+            let cx = x + w * 0.52;
+            let cy = y + h * 0.50;
+            let r = w.min(h) * 0.38;
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx + r * 0.35, cy - r * 0.85);
+            pb.cubic_to(
+                cx - r * 0.95,
+                cy - r * 0.65,
+                cx - r * 0.95,
+                cy + r * 0.65,
+                cx + r * 0.35,
+                cy + r * 0.85,
+            );
+            pb.cubic_to(
+                cx - r * 0.25,
+                cy + r * 0.45,
+                cx - r * 0.25,
+                cy - r * 0.45,
+                cx + r * 0.35,
+                cy - r * 0.85,
+            );
+            pb.close();
+            if let Some(moon) = pb.finish() {
+                pixmap.fill_path(
+                    &moon,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+        IconKind::Caffeine => {
+            if let Some(cup) =
+                rounded_rect_path(x + w * 0.16, y + h * 0.36, w * 0.54, h * 0.48, 1.8 * s)
+            {
+                pixmap.stroke_path(&cup, &paint, &round_stroke, Transform::identity(), None);
+            }
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.70, y + h * 0.44);
+            pb.quad_to(x + w * 0.92, y + h * 0.56, x + w * 0.70, y + h * 0.68);
+            pb.move_to(x + w * 0.34, y + h * 0.14);
+            pb.line_to(x + w * 0.34, y + h * 0.26);
+            pb.move_to(x + w * 0.52, y + h * 0.14);
+            pb.line_to(x + w * 0.52, y + h * 0.26);
+            if let Some(p) = pb.finish() {
+                pixmap.stroke_path(&p, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Sliders => {
+            let mut pb = PathBuilder::new();
+            for row in [0.28f32, 0.50, 0.72] {
+                pb.move_to(x + w * 0.14, y + h * row);
+                pb.line_to(x + w * 0.86, y + h * row);
+            }
+            if let Some(lines) = pb.finish() {
+                pixmap.stroke_path(&lines, &paint, &round_stroke, Transform::identity(), None);
+            }
+            for (kx, ky) in [(0.34f32, 0.28f32), (0.68, 0.50), (0.42, 0.72)] {
+                if let Some(knob) = PathBuilder::from_circle(x + w * kx, y + h * ky, 2.2 * s) {
+                    pixmap.fill_path(
+                        &knob,
+                        &paint,
+                        FillRule::Winding,
+                        Transform::identity(),
+                        None,
+                    );
+                }
+            }
+        }
+        IconKind::Lock => {
+            if let Some(body) =
+                rounded_rect_path(x + w * 0.20, y + h * 0.46, w * 0.60, h * 0.42, 1.5 * s)
+            {
+                pixmap.stroke_path(&body, &paint, &round_stroke, Transform::identity(), None);
+            }
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.32, y + h * 0.46);
+            pb.line_to(x + w * 0.32, y + h * 0.30);
+            pb.cubic_to(
+                x + w * 0.32,
+                y + h * 0.10,
+                x + w * 0.68,
+                y + h * 0.10,
+                x + w * 0.68,
+                y + h * 0.30,
+            );
+            pb.line_to(x + w * 0.68, y + h * 0.46);
+            if let Some(shackle) = pb.finish() {
+                pixmap.stroke_path(&shackle, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Suspend => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.24, y + h * 0.24);
+            pb.line_to(x + w * 0.76, y + h * 0.24);
+            pb.line_to(x + w * 0.24, y + h * 0.76);
+            pb.line_to(x + w * 0.76, y + h * 0.76);
+            if let Some(z) = pb.finish() {
+                pixmap.stroke_path(&z, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Reboot => {
+            let cx = x + w * 0.50;
+            let cy = y + h * 0.50;
+            let r = w.min(h) * 0.34;
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx + r, cy);
+            pb.cubic_to(cx + r, cy + r, cx - r, cy + r, cx - r, cy);
+            pb.cubic_to(
+                cx - r,
+                cy - r,
+                cx + r * 0.5,
+                cy - r,
+                cx + r * 0.85,
+                cy - r * 0.45,
+            );
+            if let Some(arc) = pb.finish() {
+                pixmap.stroke_path(&arc, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::PowerOff => {
+            let cx = x + w * 0.50;
+            let cy = y + h * 0.54;
+            let r = w.min(h) * 0.34;
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx, y + h * 0.14);
+            pb.line_to(cx, cy);
+            pb.move_to(cx - r * 0.72, cy - r * 0.62);
+            pb.cubic_to(
+                cx - r * 1.15,
+                cy + r * 0.95,
+                cx + r * 1.15,
+                cy + r * 0.95,
+                cx + r * 0.72,
+                cy - r * 0.62,
+            );
+            if let Some(p) = pb.finish() {
+                pixmap.stroke_path(&p, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Settings => {
+            let cx = x + w * 0.5;
+            let cy = y + h * 0.5;
+            if let Some(c) = PathBuilder::from_circle(cx, cy, w.min(h) * 0.24) {
+                pixmap.stroke_path(&c, &paint, &round_stroke, Transform::identity(), None);
+            }
+            let r_in = w.min(h) * 0.32;
+            let r_out = w.min(h) * 0.44;
+            let mut pb = PathBuilder::new();
+            for i in 0..6 {
+                let angle = (i as f32) * std::f32::consts::FRAC_PI_3;
+                let (sa, ca) = angle.sin_cos();
+                pb.move_to(cx + ca * r_in, cy + sa * r_in);
+                pb.line_to(cx + ca * r_out, cy + sa * r_out);
+            }
+            if let Some(teeth) = pb.finish() {
+                pixmap.stroke_path(&teeth, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Layout => {
+            if let Some(outer) = rounded_rect_path(
+                x + sw * 0.5,
+                y + sw * 0.5,
+                (w - sw).max(2.0),
+                (h - sw).max(2.0),
+                1.2 * s,
+            ) {
+                pixmap.stroke_path(&outer, &paint, &round_stroke, Transform::identity(), None);
+            }
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.38, y + sw);
+            pb.line_to(x + w * 0.38, y + h - sw);
+            if let Some(div) = pb.finish() {
+                pixmap.stroke_path(&div, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+    }
+}
+
+fn draw_premul_rgba_image(
+    pixmap: &mut Pixmap,
+    rect: Rect,
+    src_w: u32,
+    src_h: u32,
+    rgba_premul: &[u8],
+    scale: f32,
+) {
+    if src_w == 0 || src_h == 0 || rgba_premul.len() < (src_w as usize) * (src_h as usize) * 4 {
+        return;
+    }
+    let dst_x0 = (rect.x * scale).round() as i32;
+    let dst_y0 = (rect.y * scale).round() as i32;
+    let dst_w = (rect.w * scale).round().max(1.0) as i32;
+    let dst_h = (rect.h * scale).round().max(1.0) as i32;
+    let pm_w = pixmap.width() as i32;
+    let pm_h = pixmap.height() as i32;
+    let dst = pixmap.data_mut();
+
+    for dy in 0..dst_h {
+        let py = dst_y0 + dy;
+        if py < 0 || py >= pm_h {
+            continue;
+        }
+        let sy =
+            ((dy as u64 * u64::from(src_h)) / (dst_h as u64)).min(u64::from(src_h - 1)) as usize;
+        for dx in 0..dst_w {
+            let px = dst_x0 + dx;
+            if px < 0 || px >= pm_w {
+                continue;
+            }
+            let sx = ((dx as u64 * u64::from(src_w)) / (dst_w as u64)).min(u64::from(src_w - 1))
+                as usize;
+            let s_idx = (sy * (src_w as usize) + sx) * 4;
+            let sr = u32::from(rgba_premul[s_idx]);
+            let sg = u32::from(rgba_premul[s_idx + 1]);
+            let sb = u32::from(rgba_premul[s_idx + 2]);
+            let sa = u32::from(rgba_premul[s_idx + 3]);
+            if sa == 0 {
+                continue;
+            }
+            let d_idx = (py * pm_w + px) as usize * 4;
+            let inv = 255 - sa;
+            dst[d_idx] = (sr + (u32::from(dst[d_idx]) * inv + 127) / 255).min(255) as u8;
+            dst[d_idx + 1] = (sg + (u32::from(dst[d_idx + 1]) * inv + 127) / 255).min(255) as u8;
+            dst[d_idx + 2] = (sb + (u32::from(dst[d_idx + 2]) * inv + 127) / 255).min(255) as u8;
+            dst[d_idx + 3] = (sa + (u32::from(dst[d_idx + 3]) * inv + 127) / 255).min(255) as u8;
         }
     }
 }

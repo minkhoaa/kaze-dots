@@ -1,24 +1,30 @@
 use bitflags::bitflags;
+use std::path::PathBuf;
 
 use crate::layout::LayoutPreset;
 use crate::state::{
-    AppState, AudioState, BacklightState, BatteryState, ClockTime, MediaState, MonitorState,
-    NetworkState, NotificationItem, OutputInfo, ThemeMode, WorkspaceState,
+    AppState, AudioState, BacklightState, BatteryState, BluetoothState, ClockTime, MediaState,
+    MonitorState, NetworkState, NotificationItem, OutputInfo, ThemeMode, TrayItem, TrayMenuState,
+    WorkspaceState,
 };
 use crate::surface::SurfaceSpec;
+use crate::theme::ResolvedPalette;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
     pub struct DirtyFlags: u32 {
-        const NONE     = 0;
-        const BAR      = 1 << 0;
-        const ISLAND   = 1 << 1;
-        const OSD      = 1 << 2;
-        const LAYOUT   = 1 << 3;
-        const THEME    = 1 << 4;
-        const NOTIFY   = 1 << 5;
-        const LAUNCHER = 1 << 6;
-        const ALL      = 0b0111_1111;
+        const NONE      = 0;
+        const BAR       = 1 << 0;
+        const ISLAND    = 1 << 1;
+        const OSD       = 1 << 2;
+        const LAYOUT    = 1 << 3;
+        const THEME     = 1 << 4;
+        const NOTIFY    = 1 << 5;
+        const LAUNCHER  = 1 << 6;
+        const CC        = 1 << 7;
+        const TRAY      = 1 << 8;
+        const WALLPAPER = 1 << 9;
+        const ALL       = 0b0011_1111_1111;
     }
 }
 
@@ -103,6 +109,19 @@ pub enum SystemEvent {
         target_id: String,
         button: PointerButton,
     },
+    PointerClickAt {
+        surface_id: String,
+        target_id: String,
+        button: PointerButton,
+        x: f32,
+        y: f32,
+    },
+    PointerDrag {
+        surface_id: String,
+        target_id: String,
+        x: f32,
+        y: f32,
+    },
     PointerScroll {
         surface_id: String,
         target_id: String,
@@ -120,6 +139,7 @@ pub enum SystemEvent {
         id: String,
     },
     NetworkChanged(NetworkState),
+    BluetoothChanged(BluetoothState),
     BatteryChanged(BatteryState),
     AudioChanged {
         state: AudioState,
@@ -134,12 +154,30 @@ pub enum SystemEvent {
     NotificationCloseRequested {
         id: u32,
     },
+    NotificationDismissHistory {
+        id: u32,
+    },
     NotificationClearAll,
     NotificationsBusStatus {
         owned: bool,
     },
     NotificationsCountChanged(u32),
     DndChanged(bool),
+    NightLightChanged {
+        enabled: bool,
+        temp_k: u32,
+    },
+    CaffeineChanged(bool),
+    TrayBusStatus {
+        owned: bool,
+    },
+    TrayItemsChanged(Vec<TrayItem>),
+    TrayMenuLoaded(TrayMenuState),
+    WallpaperReady {
+        path: PathBuf,
+        palette: Option<Box<ResolvedPalette>>,
+        buffers: Vec<(String, u32, u32, Vec<u8>)>,
+    },
     SurfaceClosed {
         surface_id: String,
     },
@@ -152,23 +190,78 @@ pub enum SystemEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellAction {
     HyprDispatch(String),
-    SpawnCommand { program: String, args: Vec<String> },
-    SpawnDetachedApp { program: String, args: Vec<String> },
+    SpawnCommand {
+        program: String,
+        args: Vec<String>,
+    },
+    SpawnDetachedApp {
+        program: String,
+        args: Vec<String>,
+    },
     ApplyTemplates,
     ReloadConfig,
     SyncSurfaces,
-    ScheduleTimer { id: String, after_ms: u64 },
-    CancelTimer { id: String },
+    ScheduleTimer {
+        id: String,
+        after_ms: u64,
+    },
+    CancelTimer {
+        id: String,
+    },
     AudioStepVolume(i32),
+    AudioSetVolume(u8),
     AudioToggleMute,
     AudioToggleMicMute,
     BacklightStep(i32),
+    BacklightSet(u8),
     MediaCommand(String),
-    NotifyClosed { id: u32, reason: u32 },
-    NotifyActionInvoked { id: u32, action_key: String },
+    WifiToggle,
+    BluetoothToggle,
+    SetNightLight {
+        enabled: bool,
+        temp_k: u32,
+    },
+    SetCaffeine(bool),
+    ThemeModeToggle,
+    LayoutCycle,
+    ToggleControlCenter,
+    SystemPower(String),
+    NotifyClosed {
+        id: u32,
+        reason: u32,
+    },
+    NotifyActionInvoked {
+        id: u32,
+        action_key: String,
+    },
+    DismissHistoryNotification(u32),
     SetDnd(bool),
     ClearNotifications,
-    DmenuReply { selected: Option<String> },
+    TrayActivate {
+        service: String,
+        object_path: String,
+        x: i32,
+        y: i32,
+        secondary: bool,
+    },
+    TrayOpenMenu {
+        service: String,
+        menu_path: String,
+    },
+    TrayMenuClick {
+        service: String,
+        menu_path: String,
+        item_id: i32,
+    },
+    RequestWallpaperLoad {
+        path: PathBuf,
+        outputs: Vec<(String, u32, u32)>,
+        extract_palette: bool,
+    },
+    ClearWallpaper,
+    DmenuReply {
+        selected: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

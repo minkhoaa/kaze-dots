@@ -59,6 +59,7 @@ impl NotifyExtension {
     fn sync_counts(&self, state: &mut AppState) {
         state.active_notifications = self.visible.len();
         state.history_notifications = self.history.len();
+        state.notification_history = self.history.iter().cloned().collect();
     }
 
     fn rebuild(&mut self, state: &mut AppState) {
@@ -208,7 +209,7 @@ impl NotifyExtension {
     }
 
     fn clear_all(&mut self, ctx: &mut ShellContext) -> DirtyFlags {
-        let had_visible = !self.visible.is_empty();
+        let had_any = !self.visible.is_empty() || !self.history.is_empty();
         for item in self.visible.drain(..) {
             ctx.push_action(ShellAction::CancelTimer {
                 id: Self::timer_id(item.id),
@@ -218,12 +219,26 @@ impl NotifyExtension {
                 reason: REASON_DISMISSED,
             });
         }
+        self.history.clear();
         ctx.state.unread_notifications = 0;
         self.rebuild(ctx.state);
-        if had_visible {
+        if had_any {
             DirtyFlags::NOTIFY | DirtyFlags::LAYOUT
         } else {
             DirtyFlags::NONE
+        }
+    }
+
+    fn dismiss_history_by_id(&mut self, id: u32, ctx: &mut ShellContext) -> DirtyFlags {
+        let before = self.history.len();
+        self.history.retain(|n| n.id != id);
+        let removed_history = self.history.len() != before;
+        let vis_dirty = self.dismiss_by_id(id, REASON_DISMISSED, true, ctx);
+        self.sync_counts(ctx.state);
+        if removed_history {
+            vis_dirty | DirtyFlags::NOTIFY
+        } else {
+            vis_dirty
         }
     }
 
@@ -306,6 +321,7 @@ impl KazeExtension for NotifyExtension {
             SystemEvent::NotificationCloseRequested { id } => {
                 self.dismiss_by_id(*id, REASON_CLOSED_BY_CALL, true, ctx)
             }
+            SystemEvent::NotificationDismissHistory { id } => self.dismiss_history_by_id(*id, ctx),
             SystemEvent::NotificationClearAll => self.clear_all(ctx),
             SystemEvent::TimerFired { id } => {
                 if let Some(raw_id) = id.strip_prefix(EXPIRE_TIMER_PREFIX) {
