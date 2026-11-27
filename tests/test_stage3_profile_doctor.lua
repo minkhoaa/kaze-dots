@@ -61,8 +61,9 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             assert_contains(min_out, "  zsh-syntax-highlighting\n", "minimal includes zsh-syntax-highlighting")
             assert_contains(min_out, "sudo pacman -Syu --needed", "uses pacman -Syu")
             assert_contains(min_out, "Display manager: noctalia\n", "defaults display manager to noctalia")
-            assert_contains(min_out, "greetd noctalia-greeter", "default dry-run includes greetd noctalia-greeter")
-            assert_contains(min_out, "0 AUR", "zero AUR")
+            assert_contains(min_out, "AUR helper: yay-bin\n", "defaults AUR helper to yay-bin")
+            assert_contains(min_out, "greetd noctalia-greeter base-devel git", "default dry-run includes noctalia-greeter + AUR prereqs")
+            assert_contains(min_out, "0 AUR", "zero AUR at core")
 
             local function has_word(text, word)
                 local pat = "%f[%w_-]" .. word:gsub("%-", "%%-") .. "%f[^%w_-]"

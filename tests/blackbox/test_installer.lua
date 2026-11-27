@@ -1420,10 +1420,10 @@ exit 0
                 for _, prof in ipairs({ "minimal", "full" }) do
                     local expected = prof == "minimal" and MINIMAL_PKGS or FULL_PKGS
                     local r_pkg = sb:run({ INSTALL_PKGS_SH, "--profile", prof, "--dry-run" })
-                    local r_ins_none = sb:run({ INSTALL_SH, "--profile", prof, "--dm", "none", "--dry-run" })
+                    local r_ins_none = sb:run({ INSTALL_SH, "--profile", prof, "--dm", "none", "--aur", "none", "--dry-run" })
                     local r_ins_def = sb:run({ INSTALL_SH, "--profile", prof, "--dry-run" })
                     assert_eq(r_pkg.rc, 0, "install-packages dry-run " .. prof)
-                    assert_eq(r_ins_none.rc, 0, "install.sh --dm none dry-run " .. prof)
+                    assert_eq(r_ins_none.rc, 0, "install.sh --dm none --aur none dry-run " .. prof)
                     assert_eq(r_ins_def.rc, 0, "install.sh default dry-run " .. prof)
                     local p1 = extract_pacman_pkgs_from_text(r_pkg.combined)
                     local p2 = extract_pacman_pkgs_from_text(r_ins_none.combined)
@@ -1432,11 +1432,14 @@ exit 0
                     for i = 1, #expected do expected_def[#expected_def + 1] = expected[i] end
                     expected_def[#expected_def + 1] = "greetd"
                     expected_def[#expected_def + 1] = "noctalia-greeter"
+                    expected_def[#expected_def + 1] = "base-devel"
+                    expected_def[#expected_def + 1] = "git"
                     assert_pkg_set_eq(p1, expected, "install-packages " .. prof)
-                    assert_pkg_set_eq(p2, expected, "install.sh --dm none " .. prof)
+                    assert_pkg_set_eq(p2, expected, "install.sh --dm none --aur none " .. prof)
                     assert_eq(#p1, #p2, "exact count parity for " .. prof)
-                    assert_pkg_set_eq(p_def, expected_def, "install.sh default includes greetd + noctalia-greeter for " .. prof)
+                    assert_pkg_set_eq(p_def, expected_def, "install.sh default includes greetd + noctalia-greeter + base-devel + git for " .. prof)
                     assert_contains(r_ins_def.combined, "Display manager: noctalia", "default DM is noctalia for " .. prof)
+                    assert_contains(r_ins_def.combined, "AUR helper: yay-bin", "default AUR helper is yay-bin for " .. prof)
                 end
             end)
 
@@ -1659,7 +1662,7 @@ exit 0
                 assert_true(not sb:calls():find("CHSH", 1, true), "SET_ZSH remains false under --skip-packages")
             end)
 
-            -- Default Arch live run (no --skip-packages): SYSTEM_SETUP=true, SET_ZSH=true, AND DM=noctalia
+            -- Default Arch live run (no --skip-packages): SYSTEM_SETUP=true, SET_ZSH=true, DM=noctalia, AND AUR=yay-bin
             with_sandbox({
                 login_shell = "/usr/bin/bash",
                 units_exist = { "greetd.service", "NetworkManager.service", "bluetooth.service" },
@@ -1670,6 +1673,8 @@ exit 0
                 assert_contains(sb:calls(), "SYSTEMCTL enable NetworkManager.service", "default Arch enables system setup")
                 assert_contains(sb:calls(), "SYSTEMCTL enable greetd.service", "default Arch enables greetd.service for noctalia-greeter")
                 assert_contains(sb:calls(), "CHSH", "default Arch switches login shell to zsh")
+                assert_contains(sb:calls(), "yay-bin.git", "default Arch clones yay-bin AUR helper")
+                assert_contains(sb:calls(), "MAKEPKG -si --needed --noconfirm", "default Arch builds yay-bin via makepkg")
                 assert_contains(read_file(sb.greetd_cfg) or "", "/usr/bin/noctalia-greeter-session --session Hyprland", "writes noctalia-greeter greetd config")
                 local greeter_sync = read_file(sb.greeter_dir .. "/sync.toml") or ""
                 assert_contains(greeter_sync, 'scheme = "Kanagawa"', "seeds Kanagawa greeter theme")

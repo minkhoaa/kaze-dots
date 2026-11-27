@@ -39,7 +39,8 @@ SYSTEM_SETUP="auto"
 SYSTEM_SETUP_EXPLICIT=false
 DM_CHOICE="auto"
 DM_EXPLICIT=false
-AUR_HELPER="none"
+AUR_HELPER="auto"
+AUR_EXPLICIT=false
 AUTO_HYBRID_GPU=true
 REPLACE_CONFLICTS=false
 NO_LOG=false
@@ -62,7 +63,7 @@ Options:
                                   Dynamic: dynamic-island, hardware-notch, glass-studio, floating-rail
                                   Retro:   tui-hacker, retro-90s, cinema-frame
   --dm <none|noctalia|ly|greetd> Official display manager (default: noctalia; none = TTY1)
-  --aur <none|yay-bin|paru-bin> Opt-in AUR helper built after core install (default: none)
+  --aur <none|yay-bin|paru-bin> AUR helper built after core install (default: yay-bin)
   --system-setup                Enable systemd/audio/group/font setup explicitly
   --skip-system-setup           Skip systemd/audio/group/font setup
   --no-hybrid-gpu               Do not seed drm_devices / prefer_mesa_egl in new user.lua
@@ -130,10 +131,12 @@ while (( $# > 0 )); do
                 exit 2
             fi
             AUR_HELPER="$2"
+            AUR_EXPLICIT=true
             shift 2
             ;;
         --aur=*)
             AUR_HELPER="${1#--aur=}"
+            AUR_EXPLICIT=true
             shift
             ;;
         --system-setup)
@@ -224,7 +227,7 @@ case "$DM_CHOICE" in
 esac
 
 case "$AUR_HELPER" in
-    none|yay-bin|paru-bin) ;;
+    auto|none|yay-bin|paru-bin) ;;
     *)
         echo "install.sh: invalid --aur '$AUR_HELPER' (expected: none, yay-bin, or paru-bin)" >&2
         exit 2
@@ -298,6 +301,13 @@ resolve_effective_defaults() {
             DM_CHOICE="none"
         else
             DM_CHOICE="noctalia"
+        fi
+    fi
+    if [[ "$AUR_HELPER" == "auto" ]]; then
+        if [[ "$SKIP_PACKAGES" == true ]]; then
+            AUR_HELPER="none"
+        else
+            AUR_HELPER="yay-bin"
         fi
     fi
     if [[ "$REBOOT" == "auto" ]] && [[ "$SKIP_PACKAGES" == true ]]; then
@@ -1294,7 +1304,7 @@ draw_screen_options() {
                     yay-bin)  aur_label="yay-bin";  aur_col="$C_PURPLE" ;;
                     paru-bin) aur_label="paru-bin"; aur_col="$C_PURPLE" ;;
                 esac
-                draw_opt_cycle_row "$i" "AUR Helper (opt-in):" "$aur_label" "$aur_col"
+                draw_opt_cycle_row "$i" "AUR Helper:" "$aur_label" "$aur_col"
                 ;;
             hybrid_gpu)
                 local hgpu_mark=" "
@@ -1377,7 +1387,7 @@ draw_screen_review() {
     tui_box_kv 14 "Display mgr" "$dm_desc" "$C_FG"
 
     local aur_desc="None (0 AUR)"
-    [[ "$AUR_HELPER" != "none" ]] && aur_desc="${AUR_HELPER} (opt-in after core install)"
+    [[ "$AUR_HELPER" != "none" ]] && aur_desc="${AUR_HELPER} (built after core install)"
     tui_box_kv 14 "AUR helper" "$aur_desc" "$C_FG"
 
     if [[ "$GPU_MODE" == "hybrid-laptop" && "$HAS_USER_LUA" == false ]]; then
@@ -1743,12 +1753,14 @@ run_tui_wizard() {
                             if [[ "$HAS_ARCH" == false || "$HAS_PACMAN" == false ]]; then
                                 TUI_STATUS_MSG="pacman unavailable on this host; AUR helper requires Arch"
                             elif [[ "$key" == "RIGHT" ]]; then
+                                AUR_EXPLICIT=true
                                 case "$AUR_HELPER" in
                                     none)     AUR_HELPER="yay-bin" ;;
                                     yay-bin)  AUR_HELPER="paru-bin" ;;
                                     paru-bin) AUR_HELPER="none" ;;
                                 esac
                             else
+                                AUR_EXPLICIT=true
                                 case "$AUR_HELPER" in
                                     none)     AUR_HELPER="paru-bin" ;;
                                     paru-bin) AUR_HELPER="yay-bin" ;;
@@ -1786,12 +1798,14 @@ run_tui_wizard() {
                                         [[ "$SYSTEM_SETUP_EXPLICIT" == false ]] && SYSTEM_SETUP="true"
                                         [[ "$SET_ZSH_EXPLICIT" == false ]] && SET_ZSH="true"
                                         [[ "$DM_EXPLICIT" == false ]] && DM_CHOICE="noctalia"
+                                        [[ "$AUR_EXPLICIT" == false ]] && AUR_HELPER="yay-bin"
                                     fi
                                 else
                                     SKIP_PACKAGES=true
                                     [[ "$SYSTEM_SETUP_EXPLICIT" == false ]] && SYSTEM_SETUP="false"
                                     [[ "$SET_ZSH_EXPLICIT" == false ]] && SET_ZSH="false"
                                     [[ "$DM_EXPLICIT" == false ]] && DM_CHOICE="none"
+                                    [[ "$AUR_EXPLICIT" == false ]] && AUR_HELPER="none"
                                 fi
                                 ;;
                             noconfirm)
@@ -1838,6 +1852,7 @@ run_tui_wizard() {
                                 if [[ "$HAS_ARCH" == false || "$HAS_PACMAN" == false ]]; then
                                     TUI_STATUS_MSG="pacman unavailable on this host; AUR helper requires Arch"
                                 else
+                                    AUR_EXPLICIT=true
                                     case "$AUR_HELPER" in
                                         none)     AUR_HELPER="yay-bin" ;;
                                         yay-bin)  AUR_HELPER="paru-bin" ;;
