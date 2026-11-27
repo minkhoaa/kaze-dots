@@ -70,7 +70,7 @@ if [ "$DRY_RUN" = true ]; then
     exit 0
 fi
 
-if [ ! -f /etc/arch-release ] || ! command -v pacman >/dev/null 2>&1; then
+if [ ! -f "${KAZE_ARCH_RELEASE_FILE:-/etc/arch-release}" ] || ! command -v pacman >/dev/null 2>&1; then
     echo "install-packages.sh: Arch Linux (pacman) is required." >&2
     exit 1
 fi

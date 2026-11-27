@@ -1625,7 +1625,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
 
       local holder_cmd = "/usr/bin/flock -x " .. sh_quote(lock_path) ..
         " /usr/bin/sh -c 'echo $$ > " .. sh_quote(pid_path) ..
-        "; touch " .. sh_quote(ready_path) .. "; sleep 4' >/dev/null 2>&1 & echo $!"
+        "; touch " .. sh_quote(ready_path) .. "; exec /usr/bin/sleep 4' >/dev/null 2>&1 & echo $!"
       local bg_pid = trim(popen_read(holder_cmd))
       if bg_pid ~= "" then
         sb.bg_pids[#sb.bg_pids + 1] = bg_pid
@@ -1663,12 +1663,15 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
         exec_status("kill " .. tostring(p) .. " 2>/dev/null || true")
       end
       sb.bg_pids = {}
-      for _ = 1, 20 do
+      local released = false
+      for _ = 1, 40 do
         if exec_status("/usr/bin/flock -n " .. sh_quote(lock_path) .. " /usr/bin/true") == 0 then
+          released = true
           break
         end
         exec_status("/usr/bin/sleep 0.05")
       end
+      assert_true(released, "test harness failed to release record.lock")
 
       sb:clear_logs()
       local r_after = sb:run({ "start" })

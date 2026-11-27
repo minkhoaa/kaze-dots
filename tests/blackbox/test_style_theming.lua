@@ -583,6 +583,7 @@ local function create_sandbox(abs_repo)
     "sudo",
     "pacman",
     "systemctl",
+    "busctl",
     "usermod",
     "chsh",
     "fc-cache",
@@ -594,6 +595,12 @@ local function create_sandbox(abs_repo)
     "loginctl",
     "playerctl",
     "foot",
+    "footclient",
+    "hyprland",
+    "wl-copy",
+    "wl-paste",
+    "wpctl",
+    "brightnessctl",
   }
   for _, tool in ipairs(noop_tools) do
     write_executable(

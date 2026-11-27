@@ -2023,7 +2023,10 @@ esac
             write_stub(stub_bin, "zsh", [[exit 0]])
             write_stub(stub_bin, "git", [[
 if [ "${1:-}" = "clone" ]; then
-    dest="${@: -1}"
+    dest=""
+    for a in "$@"; do
+        dest="$a"
+    done
     mkdir -p "$dest"
     printf 'clone %s\n' "$*" >> "$HOME/git-calls"
     exit 0

@@ -2347,7 +2347,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       local lock_path = sb.kaze_runtime .. "/display-menu.lock"
       local pid_out = sb.root .. "/locker.pid"
 
-      exec_code("/usr/bin/sh -c '(/usr/bin/flock -x 9; /usr/bin/sleep 1.5) 9>"
+      exec_code("/usr/bin/sh -c '(/usr/bin/flock -x 9; exec /usr/bin/sleep 1.5) 9>"
         .. sh_quote(lock_path) .. " </dev/null >/dev/null 2>&1 & printf \"%s\\n\" \"$!\" > "
         .. sh_quote(pid_out) .. "'")
       os.execute("/usr/bin/sleep 0.1")
