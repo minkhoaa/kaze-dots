@@ -461,12 +461,14 @@ dependencies = [
  "calloop-wayland-source",
  "kaze-core",
  "kaze-ext-bar",
+ "kaze-ext-launcher",
  "kaze-ext-notify",
  "kaze-ext-osd",
  "kaze-hypr",
  "kaze-ipc",
  "kaze-sys",
  "kaze-ui",
+ "libc",
  "notify",
  "serde_json",
  "smithay-client-toolkit",
@@ -485,6 +487,13 @@ dependencies = [
 
 [[package]]
 name = "kaze-ext-bar"
+version = "0.1.0"
+dependencies = [
+ "kaze-core",
+]
+
+[[package]]
+name = "kaze-ext-launcher"
 version = "0.1.0"
 dependencies = [
  "kaze-core",

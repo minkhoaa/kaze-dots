@@ -259,6 +259,121 @@ kaze-shell msg status | grep -Fq '"unread_notifications": 0'
 test "$(kaze-shell msg dnd-off)" = "off"
 echo "    [PASS] Stage 3B org.freedesktop.Notifications + Vietnamese/Emoji + replaces_id + DND/critical + notify-clear"
 
+# 4d. Stage 3C: kaze-shell dmenu (exit 0/1/2), Nerd Font glyphs, kaze-keys/kaze-display --menu, App Launcher detached survival, kaze-doctor
+set +e
+kaze-shell dmenu --bogus-flag >/dev/null 2>&1
+rc_bad=$?
+set -e
+test "$rc_bad" -eq 2
+
+# dmenu selection (exit 0 + exact stdout with Nerd Font glyphs + Vietnamese + Emoji)
+printf '󰍹  Extend Right\n󰐕  New clean workspace (WS 2)\n󰈈  Tiếng Việt 🚀\n' \
+    | kaze-shell dmenu --prompt "Display > " > /tmp/kaze-dmenu.out &
+dm_pid=$!
+wait_layer_present "kaze-launcher"
+sleep 0.15
+if command -v grim >/dev/null 2>&1; then
+    grim -o Virtual-1 /tmp/kaze-shell-3c-dmenu.png
+fi
+kaze-shell msg launcher-accept "Tiếng Việt" >/dev/null
+wait "$dm_pid"
+test "$(cat /tmp/kaze-dmenu.out)" = "󰈈  Tiếng Việt 🚀"
+wait_layer_absent "kaze-launcher"
+rm -f /tmp/kaze-dmenu.out
+
+# dmenu cancellation (exit 1)
+printf 'Alpha\nBeta\nGamma\n' | kaze-shell dmenu -p "Cancel > " >/dev/null &
+dm_cancel_pid=$!
+wait_layer_present "kaze-launcher"
+kaze-shell msg launcher-close >/dev/null
+set +e
+wait "$dm_cancel_pid"
+rc_cancel=$?
+set -e
+test "$rc_cancel" -eq 1
+wait_layer_absent "kaze-launcher"
+
+# Full kaze-keys & kaze-display --menu flows without Noctalia
+kaze-keys >/dev/null 2>&1 &
+keys_pid=$!
+wait_layer_present "kaze-launcher"
+kaze-shell msg launcher-close >/dev/null
+wait "$keys_pid" || true
+wait_layer_absent "kaze-launcher"
+
+kaze-display --menu >/dev/null 2>&1 &
+disp_pid=$!
+wait_layer_present "kaze-launcher"
+kaze-shell msg launcher-close >/dev/null
+wait "$disp_pid" || true
+wait_layer_absent "kaze-launcher"
+
+# App Launcher (.desktop scan + inotify invalidation + detached systemd scope survives daemon restart)
+# Warm cache once first so adding the probe .desktop verifies live inotify invalidation.
+kaze-shell msg launcher-toggle >/dev/null
+wait_layer_present "kaze-launcher"
+kaze-shell msg launcher-close >/dev/null
+wait_layer_absent "kaze-launcher"
+
+mkdir -p "$HOME/.local/share/applications"
+cat > "$HOME/.local/share/applications/kaze-vm-detach-probe.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Kaze VM Detach Probe
+Comment=Verifies launched apps survive kaze-shell restart
+Exec=sleep 45
+Terminal=false
+EOF
+sleep 0.25
+kaze-shell msg launcher-toggle >/dev/null
+wait_layer_present "kaze-launcher"
+sleep 0.15
+if command -v grim >/dev/null 2>&1; then
+    grim -o Virtual-1 /tmp/kaze-shell-3c-launcher.png
+fi
+kaze-shell msg launcher-accept "Kaze VM Detach Probe" >/dev/null
+wait_layer_absent "kaze-launcher"
+probe_pid=""
+for _ in {1..20}; do
+    probe_pid=$(pgrep -n -x sleep || true)
+    if [[ -n "$probe_pid" ]]; then
+        break
+    fi
+    sleep 0.1
+done
+test -n "$probe_pid"
+grep -Fq '.scope' "/proc/$probe_pid/cgroup"
+
+# Verify kaze-doctor live kaze-shell checks before restart
+doctor_out=$(kaze-doctor 2>&1 || true)
+for needle in \
+    "kaze-shell: kaze-shell.service is active" \
+    "kaze-shell: IPC socket responsive" \
+    "kaze-shell: owns D-Bus org.freedesktop.Notifications"; do
+    if ! echo "$doctor_out" | grep -Fq "$needle"; then
+        echo "FAIL: kaze-doctor missing '$needle'" >&2
+        echo "$doctor_out" >&2
+        kill "$probe_pid" 2>/dev/null || true
+        exit 1
+    fi
+done
+
+# Restart kaze-shell.service and verify launched app survived
+systemctl --user restart kaze-shell.service
+for _ in {1..40}; do
+    if kaze-shell msg ping >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.1
+done
+wait_layer_present "kaze-bar-Virtual-1"
+kill -0 "$probe_pid"
+kill "$probe_pid" 2>/dev/null || true
+rm -f "$HOME/.local/share/applications/kaze-vm-detach-probe.desktop"
+initial_pid=$(systemctl --user show -p MainPID --value kaze-shell.service)
+test "$initial_pid" -gt 1
+echo "    [PASS] Stage 3C dmenu (0/1/2), kaze-keys/kaze-display --menu, detached launcher survival & kaze-doctor"
+
 # 5. Config hot-reload resilience (broken TOML must NOT crash daemon)
 cfg="$HOME/.config/kaze-shell/config.toml"
 cp -- "$cfg" "$cfg.bak"
@@ -272,7 +387,11 @@ test "$(systemctl --user show -p MainPID --value kaze-shell.service)" = "$initia
 echo "    [PASS] Config hot-reload survived broken TOML"
 
 # 6. Stress test: 20x kaze-share create/remove + 10x hyprctl reload
-# Warm up 1 cycle first so allocator high-water mark stabilizes before measuring leak slope.
+# Warm up 1 cycle (hotplug + lazy RichText notification) first so allocator high-water mark stabilizes before measuring leak slope.
+notify-send -a "warmup" -t 2000 "Warmup" "Stabilize font engine 🔔" >/dev/null || true
+wait_layer_present "kaze-notify"
+kaze-shell msg notify-clear >/dev/null
+wait_layer_absent "kaze-notify"
 hyprctl output create headless kaze-share >/dev/null
 wait_layer_present "kaze-bar-kaze-share"
 hyprctl output remove kaze-share >/dev/null
@@ -283,6 +402,9 @@ pss_start=$(read_pss_kib "$initial_pid")
 echo "    stress start: PID=$initial_pid PSS=${pss_start} KiB"
 
 for iter in $(seq 1 20); do
+    if (( iter == 1 || iter == 10 )); then
+        notify-send -a "stress" -t 2500 "Stress #$iter" "Testing hotplug with active popup 🔔" >/dev/null || true
+    fi
     hyprctl output create headless kaze-share >/dev/null
     wait_layer_present "kaze-bar-kaze-share"
     if (( iter % 2 == 0 )); then
@@ -297,6 +419,8 @@ for iter in $(seq 1 20); do
     fi
 done
 
+kaze-shell msg notify-clear >/dev/null
+wait_layer_absent "kaze-notify"
 sleep 0.5
 final_pid=$(systemctl --user show -p MainPID --value kaze-shell.service)
 test "$final_pid" = "$initial_pid"
@@ -327,16 +451,19 @@ GUEST
 
 if [[ -n "$screenshot_out" ]]; then
     mkdir -p -- "$(dirname -- "$screenshot_out")"
+    shot_dir=$(dirname -- "$screenshot_out")
+    scp -i "$VMDIR/bench_id_ed25519" -P 22222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        bench@127.0.0.1:/tmp/kaze-shell-3c-dmenu.png "$screenshot_out" || \
     scp -i "$VMDIR/bench_id_ed25519" -P 22222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         bench@127.0.0.1:/tmp/kaze-shell-3b-notify.png "$screenshot_out" || \
     scp -i "$VMDIR/bench_id_ed25519" -P 22222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        bench@127.0.0.1:/tmp/kaze-shell-3a-osd.png "$screenshot_out" || \
-    scp -i "$VMDIR/bench_id_ed25519" -P 22222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         bench@127.0.0.1:/tmp/kaze-shell-vm.png "$screenshot_out" || true
+    scp -i "$VMDIR/bench_id_ed25519" -P 22222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        bench@127.0.0.1:/tmp/kaze-shell-3c-launcher.png "$shot_dir/shot-3c-launcher.png" 2>/dev/null || true
 fi
 
 stop_vm
 if (( boot_status || bench_status )); then
     exit 1
 fi
-echo "==> ALL kaze-shell Stage 1-3B VM acceptance gates PASSED."
+echo "==> ALL kaze-shell Stage 1-3C VM acceptance gates PASSED."

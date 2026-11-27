@@ -165,7 +165,10 @@ impl KazeExtension for BarExtension {
             | SystemEvent::BacklightChanged { .. }
             | SystemEvent::NotificationReceived(_)
             | SystemEvent::NotificationCloseRequested { .. }
-            | SystemEvent::NotificationsBusStatus { .. } => DirtyFlags::NONE,
+            | SystemEvent::NotificationsBusStatus { .. }
+            | SystemEvent::SurfaceClosed { .. }
+            | SystemEvent::KeyboardFocusLost { .. }
+            | SystemEvent::ApplicationsChanged => DirtyFlags::NONE,
         }
     }
 

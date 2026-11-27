@@ -650,36 +650,65 @@ local function spawn_wl_mirror(args)
     return pid
 end
 
-local function noctalia_dnd_status()
+local function shell_dnd_status()
+    if cmd_exists("kaze-shell") then
+        local out = fs.capture("kaze-shell msg dnd-status 2>/dev/null")
+        if out then
+            local trimmed = out:gsub("^%s+", ""):gsub("%s+$", "")
+            if trimmed == "on" or trimmed == "off" then
+                return trimmed, "kaze-shell"
+            end
+        end
+    end
     if not cmd_exists("noctalia") then
-        return nil
+        return nil, nil
     end
     local out = fs.capture("noctalia msg notification-dnd-status 2>/dev/null")
-    if not out then return nil end
+    if not out then return nil, nil end
     local trimmed = out:gsub("^%s+", ""):gsub("%s+$", "")
     if trimmed == "on" or trimmed == "off" then
-        return trimmed
+        return trimmed, "noctalia"
     end
-    return nil
+    return nil, nil
 end
 
 local function enable_managed_dnd(state)
-    if not cmd_exists("noctalia") then
-        return
+    local cur, backend = shell_dnd_status()
+    if not backend then
+        if cmd_exists("kaze-shell") then
+            backend = "kaze-shell"
+        elseif cmd_exists("noctalia") then
+            backend = "noctalia"
+        else
+            return
+        end
     end
     if not state.dnd_managed then
-        local cur = noctalia_dnd_status()
         state.dnd_managed = true
         state.dnd_was_active = (cur == "on")
         if not state.dnd_was_active then
-            os.execute("noctalia msg notification-dnd-set on >/dev/null 2>&1 || true")
+            if backend == "kaze-shell" then
+                local ok = os.execute("kaze-shell msg dnd-on >/dev/null 2>&1")
+                if not (ok == true or ok == 0) and cmd_exists("noctalia") then
+                    os.execute("noctalia msg notification-dnd-set on >/dev/null 2>&1 || true")
+                end
+            else
+                os.execute("noctalia msg notification-dnd-set on >/dev/null 2>&1 || true")
+            end
         end
     end
 end
 
 local function restore_dnd_if_managed(state)
-    if display.should_restore_dnd(state) and cmd_exists("noctalia") then
-        os.execute("noctalia msg notification-dnd-set off >/dev/null 2>&1 || true")
+    if display.should_restore_dnd(state) then
+        local restored = false
+        if cmd_exists("kaze-shell") then
+            local ok = os.execute("kaze-shell msg dnd-off >/dev/null 2>&1")
+            restored = (ok == true or ok == 0)
+        end
+        if not restored and cmd_exists("noctalia") then
+            os.execute("noctalia msg notification-dnd-set off >/dev/null 2>&1 || true")
+        end
     end
     state.dnd_managed = nil
     state.dnd_was_active = nil
@@ -1428,7 +1457,12 @@ if cmd == "--on-disconnect" then
     local rpath = revert_file_path()
     if rec.recover_internal and rpath and fs.file_exists(rpath) then
         os.remove(rpath)
-        if cmd_exists("noctalia") then
+        local closed = false
+        if cmd_exists("kaze-shell") then
+            local ok = os.execute("kaze-shell msg launcher-close >/dev/null 2>&1")
+            closed = (ok == true or ok == 0)
+        end
+        if not closed and cmd_exists("noctalia") then
             os.execute("noctalia msg panel-open launcher >/dev/null 2>&1 || true; noctalia msg panel-close launcher >/dev/null 2>&1 || true")
         end
     end

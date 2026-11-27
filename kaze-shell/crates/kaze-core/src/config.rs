@@ -145,6 +145,26 @@ impl Default for NotifyConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LauncherConfig {
+    pub enabled: bool,
+    pub width: u32,
+    pub max_rows: usize,
+    pub offset_y: i32,
+}
+
+impl Default for LauncherConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            width: 560,
+            max_rows: 9,
+            offset_y: 120,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DisplayConfig {
@@ -171,6 +191,7 @@ pub struct Config {
     pub bar: BarConfig,
     pub osd: OsdConfig,
     pub notifications: NotifyConfig,
+    pub launcher: LauncherConfig,
     pub display: DisplayConfig,
 }
 
@@ -242,6 +263,9 @@ impl Config {
         self.notifications.gap = self.notifications.gap.clamp(0, 32);
         self.notifications.max_visible = self.notifications.max_visible.clamp(1, 10);
         self.notifications.history_limit = self.notifications.history_limit.clamp(1, 200);
+        self.launcher.width = self.launcher.width.clamp(320, 960);
+        self.launcher.max_rows = self.launcher.max_rows.clamp(4, 16);
+        self.launcher.offset_y = self.launcher.offset_y.clamp(0, 600);
         Ok(())
     }
 }

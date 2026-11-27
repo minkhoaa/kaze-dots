@@ -655,6 +655,8 @@ impl LayerShellHandler for UiState {
         let obj_id = layer.wl_surface().id();
         if let Some(id) = self.surface_key_by_obj.get(&obj_id).cloned() {
             self.remove_surface(&id);
+            self.pending_events
+                .push(SystemEvent::SurfaceClosed { surface_id: id });
         }
     }
 
@@ -789,9 +791,16 @@ impl KeyboardHandler for UiState {
         surface: &wl_surface::WlSurface,
         _serial: u32,
     ) {
-        if self.keyboard_surface.as_ref() == Some(&surface.id()) {
+        let obj_id = surface.id();
+        if self.keyboard_surface.as_ref() == Some(&obj_id) {
             self.keyboard_surface = None;
             self.disable_ime();
+            if self.surface_accepts_keyboard(&obj_id) {
+                if let Some(surface_id) = self.surface_key_by_obj.get(&obj_id).cloned() {
+                    self.pending_events
+                        .push(SystemEvent::KeyboardFocusLost { surface_id });
+                }
+            }
         }
     }
 

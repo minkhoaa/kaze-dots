@@ -42,6 +42,12 @@ history_limit = 50
 default_timeout_ms = 5000
 low_timeout_ms = 3500
 
+[launcher]
+enabled = true
+width = 560
+max_rows = 9
+offset_y = 120
+
 [display]
 left_click_cmd = ["kaze-display", "--menu"]
 right_click_cmd = ["kaze-display", "toggle-window-share"]

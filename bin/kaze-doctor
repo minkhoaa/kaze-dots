@@ -187,9 +187,13 @@ local FULL_EXTRA_BINS = {
     "wl-mirror",
 }
 
+local has_kaze_shell = cmd_exists("kaze-shell")
+
 local missing_minimal = {}
 for _, bin in ipairs(MINIMAL_BINS) do
-    if not cmd_exists(bin) then
+    if bin == "noctalia" and has_kaze_shell then
+        -- kaze-shell natively replaces Noctalia on minimal installs.
+    elseif not cmd_exists(bin) then
         missing_minimal[#missing_minimal + 1] = bin
     end
 end
@@ -340,8 +344,18 @@ done
     end
 end
 
--- 3. Native config syntax checks (Noctalia + Foot)
+-- 3. Native config syntax checks (kaze-shell, Noctalia + Foot)
 do
+    local kshell_cfg = fs.config_dir() .. "/kaze-shell/config.toml"
+    if has_kaze_shell and fs.file_exists(kshell_cfg) then
+        local ok_ks = os.execute("kaze-shell config validate " .. fs.shell_quote(kshell_cfg) .. " >/dev/null 2>&1")
+        if ok_ks == true or ok_ks == 0 then
+            report_ok("kaze-shell: config.toml validated cleanly")
+        else
+            report_fail("kaze-shell: config.toml failed validation")
+        end
+    end
+
     local noc_cfg = fs.config_dir() .. "/noctalia/config.toml"
     if cmd_exists("noctalia") and fs.file_exists(noc_cfg) then
         local ok_val = os.execute("noctalia config validate " .. fs.shell_quote(noc_cfg) .. " >/dev/null 2>&1")
@@ -350,6 +364,8 @@ do
         else
             report_fail("noctalia: config.toml failed validation")
         end
+    elseif has_kaze_shell then
+        -- Noctalia config is optional when kaze-shell is the active native shell.
     elseif offline then
         report_warn("noctalia: skipped config.toml validation (not present or noctalia unavailable)")
     else
@@ -540,9 +556,43 @@ else
         report_fail("audio: inactive user service(s): " .. table.concat(missing_audio, ", "))
     end
 
+    local kaze_shell_active = false
+    if has_kaze_shell then
+        local ok_ks_svc = os.execute("systemctl --user is-active --quiet kaze-shell.service >/dev/null 2>&1")
+        kaze_shell_active = (ok_ks_svc == true or ok_ks_svc == 0)
+        local rdir = os.getenv("XDG_RUNTIME_DIR") or ""
+        local sock_path = rdir ~= "" and (rdir .. "/kaze/shell.sock") or nil
+        if kaze_shell_active then
+            report_ok("kaze-shell: kaze-shell.service is active")
+            local sock_ok = sock_path and os.execute("test -S " .. fs.shell_quote(sock_path))
+            if sock_ok == true or sock_ok == 0 then
+                local pong = fs.capture("kaze-shell msg ping 2>/dev/null")
+                if pong and pong:gsub("^%s+", ""):gsub("%s+$", "") == "pong" then
+                    report_ok("kaze-shell: IPC socket responsive (" .. sock_path .. ")")
+                else
+                    report_fail("kaze-shell: IPC socket present but ping failed (" .. sock_path .. ")")
+                end
+            else
+                report_fail("kaze-shell: missing IPC socket " .. tostring(sock_path))
+            end
+
+            local owner_out = fs.capture("busctl --user status org.freedesktop.Notifications 2>/dev/null") or ""
+            local status_out = fs.capture("kaze-shell msg status 2>/dev/null") or ""
+            local owns_bus = (owner_out:find("kaze%-shell") ~= nil)
+                or (status_out:find('"notifications_bus_owned"%s*:%s*true') ~= nil)
+            if owns_bus then
+                report_ok("kaze-shell: owns D-Bus org.freedesktop.Notifications")
+            else
+                report_fail("kaze-shell: does not own D-Bus org.freedesktop.Notifications")
+            end
+        elseif not cmd_exists("noctalia") then
+            report_fail("kaze-shell: kaze-shell.service is inactive")
+        end
+    end
+
     local expected_daemons = {
-        { name = "noctalia", count = 1 },
-        { name = "foot",     count = 1 },
+        { name = kaze_shell_active and "kaze-shell" or "noctalia", count = 1 },
+        { name = "foot",                                           count = 1 },
     }
     if enable_fcitx5 then
         expected_daemons[#expected_daemons + 1] = { name = "fcitx5", count = 1 }

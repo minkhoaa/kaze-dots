@@ -1116,7 +1116,7 @@ mod tests {
         let mut renderer = Renderer::new("JetBrainsMono Nerd Font");
         let spec = make_spec(vec![PaintCmd::RichText {
             rect: Rect::new(8.0, 8.0, 224.0, 44.0),
-            text: "Thông báo tiếng Việt ệ ơ ư đ 🔔✅".into(),
+            text: "󰐕  Thông báo tiếng Việt ệ ơ ư đ 🔔✅".into(),
             color: Color::rgba(0xdc, 0xd7, 0xba, 0xff),
             size: 14.0,
             bold: false,

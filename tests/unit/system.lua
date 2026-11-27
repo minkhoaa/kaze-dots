@@ -1274,7 +1274,8 @@ fi
         -- Hyprland execs.lua hotplug & disconnect event handler test
         local hooks, execs = {}, {}
         local fake_now = 1000
-        local prev_hl, prev_ctx, prev_time = rawget(_G, "hl"), package.loaded["kaze._ctx"], os.time
+        local prev_hl, prev_ctx, prev_time, prev_boot = rawget(_G, "hl"), package.loaded["kaze._ctx"], os.time, rawget(_G, "_kaze_boot_at")
+        rawset(_G, "_kaze_boot_at", nil)
         local ok_exec, err_exec = pcall(function()
             os.time = function() return fake_now end
             package.loaded["kaze._ctx"] = { cfg = { cursor_theme = "Adwaita", cursor_size = 24, display_hotplug_menu = true } }
@@ -1283,6 +1284,9 @@ fi
                 exec_cmd = function(cmd) execs[#execs + 1] = cmd end,
             })
             dofile(repo_dir .. "/hypr/execs.lua")
+            -- Early monitor.added fired before hyprland.start must be suppressed by startup grace
+            hooks["monitor.added"]({ name = "Virtual-1" })
+            assert_eq(#execs, 0)
             hooks["hyprland.start"]()
             assert_eq(#execs, 1)
 
@@ -1314,6 +1318,7 @@ fi
         end)
         os.time = prev_time
         rawset(_G, "hl", prev_hl)
+        rawset(_G, "_kaze_boot_at", prev_boot)
         package.loaded["kaze._ctx"] = prev_ctx
         if not ok_exec then error(err_exec, 0) end
     end)

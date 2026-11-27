@@ -134,6 +134,13 @@ pub enum SystemEvent {
     },
     NotificationsCountChanged(u32),
     DndChanged(bool),
+    SurfaceClosed {
+        surface_id: String,
+    },
+    KeyboardFocusLost {
+        surface_id: String,
+    },
+    ApplicationsChanged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +162,7 @@ pub enum ShellAction {
     NotifyActionInvoked { id: u32, action_key: String },
     SetDnd(bool),
     ClearNotifications,
+    DmenuReply { selected: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

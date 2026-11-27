@@ -24,23 +24,23 @@ function M.build(cfg)
     end
 
     local entries = {
-        -- Noctalia Native Launchers, Panels & Settings
+        -- Kaze Shell & Noctalia Launchers, Panels & Settings
         {
             group = "Launchers",
             chord = "SUPER + SUPER_L",
             display = "Super (tap) / Super + Space",
-            desc = "Toggle Noctalia app launcher",
+            desc = "Toggle Kaze app launcher",
             kind = "exec",
-            cmd = "noctalia msg panel-toggle launcher",
+            cmd = "kaze-shell msg launcher-toggle",
             release = true,
         },
         {
             group = "Launchers",
             chord = "SUPER + SPACE",
             display = false,
-            desc = "Toggle Noctalia app launcher",
+            desc = "Toggle Kaze app launcher",
             kind = "exec",
-            cmd = "noctalia msg panel-toggle launcher",
+            cmd = "kaze-shell msg launcher-toggle",
         },
         {
             group = "Launchers",
@@ -86,9 +86,9 @@ function M.build(cfg)
             group = "Launchers",
             chord = "SUPER + SHIFT + T",
             display = "Super + Shift + T",
-            desc = "Toggle dark / light mode (Noctalia)",
+            desc = "Toggle dark / light mode",
             kind = "exec",
-            cmd = "noctalia msg theme-mode-toggle",
+            cmd = "kaze-shell msg theme-mode-toggle",
         },
         {
             group = "Launchers",
@@ -138,7 +138,7 @@ function M.build(cfg)
             display = "Ctrl + Alt + C",
             desc = "Dismiss all notifications",
             kind = "exec",
-            cmd = "noctalia msg notification-clear-active",
+            cmd = "kaze-shell msg notify-clear",
             locked = true,
         },
         {
@@ -147,7 +147,7 @@ function M.build(cfg)
             display = "Super + Shift + D",
             desc = "Toggle Do Not Disturb",
             kind = "exec",
-            cmd = "noctalia msg notification-dnd-toggle",
+            cmd = "kaze-shell msg dnd-toggle",
         },
         {
             group = "System",
@@ -208,9 +208,9 @@ function M.build(cfg)
             group = "System",
             chord = "CTRL + SUPER + ALT + R",
             display = "Ctrl + Super + Alt + R",
-            desc = "Reload Noctalia and Hyprland",
+            desc = "Reload Kaze Shell and Hyprland",
             kind = "exec",
-            cmd = "noctalia msg config-reload && hyprctl reload",
+            cmd = "kaze-shell msg reload && hyprctl reload",
             release = true,
         },
 
@@ -717,14 +717,14 @@ function M.build(cfg)
         entries[#entries + 1] = item
     end
 
-    -- Hardware OSD & Media via Noctalia native IPC
+    -- Hardware OSD & Media via Kaze Shell IPC
     local media = {
         {
             chord = "XF86AudioRaiseVolume",
             display = "XF86AudioRaiseVolume",
             desc = "Raise volume",
             kind = "exec",
-            cmd = "noctalia msg volume-up",
+            cmd = "kaze-shell msg volume-up",
             locked = true,
             repeating = true,
         },
@@ -733,7 +733,7 @@ function M.build(cfg)
             display = "XF86AudioLowerVolume",
             desc = "Lower volume",
             kind = "exec",
-            cmd = "noctalia msg volume-down",
+            cmd = "kaze-shell msg volume-down",
             locked = true,
             repeating = true,
         },
@@ -742,7 +742,7 @@ function M.build(cfg)
             display = "XF86AudioMute / Super + Shift + M",
             desc = "Toggle audio mute",
             kind = "exec",
-            cmd = "noctalia msg volume-mute",
+            cmd = "kaze-shell msg volume-mute",
             locked = true,
         },
         {
@@ -750,7 +750,7 @@ function M.build(cfg)
             display = false,
             desc = "Toggle audio mute",
             kind = "exec",
-            cmd = "noctalia msg volume-mute",
+            cmd = "kaze-shell msg volume-mute",
             locked = true,
         },
         {
@@ -758,7 +758,7 @@ function M.build(cfg)
             display = "XF86AudioMicMute",
             desc = "Toggle microphone mute",
             kind = "exec",
-            cmd = "noctalia msg mic-mute",
+            cmd = "kaze-shell msg mic-mute",
             locked = true,
         },
         {
@@ -766,7 +766,7 @@ function M.build(cfg)
             display = "XF86MonBrightnessUp",
             desc = "Raise screen brightness",
             kind = "exec",
-            cmd = "noctalia msg brightness-up",
+            cmd = "kaze-shell msg brightness-up",
             locked = true,
             repeating = true,
         },
@@ -775,7 +775,7 @@ function M.build(cfg)
             display = "XF86MonBrightnessDown",
             desc = "Lower screen brightness",
             kind = "exec",
-            cmd = "noctalia msg brightness-down",
+            cmd = "kaze-shell msg brightness-down",
             locked = true,
             repeating = true,
         },
@@ -784,7 +784,7 @@ function M.build(cfg)
             display = "XF86AudioPlay / Ctrl + Super + Space",
             desc = "Play or pause media",
             kind = "exec",
-            cmd = "noctalia msg media play-pause",
+            cmd = "kaze-shell msg media play-pause",
             locked = true,
         },
         {
@@ -792,7 +792,7 @@ function M.build(cfg)
             display = false,
             desc = "Play or pause media",
             kind = "exec",
-            cmd = "noctalia msg media play-pause",
+            cmd = "kaze-shell msg media play-pause",
             locked = true,
         },
         {
@@ -800,7 +800,7 @@ function M.build(cfg)
             display = false,
             desc = "Play or pause media",
             kind = "exec",
-            cmd = "noctalia msg media play-pause",
+            cmd = "kaze-shell msg media play-pause",
             locked = true,
         },
         {
@@ -808,7 +808,7 @@ function M.build(cfg)
             display = "XF86AudioNext / Ctrl + Super + =",
             desc = "Next media track",
             kind = "exec",
-            cmd = "noctalia msg media next",
+            cmd = "kaze-shell msg media next",
             locked = true,
         },
         {
@@ -816,7 +816,7 @@ function M.build(cfg)
             display = false,
             desc = "Next media track",
             kind = "exec",
-            cmd = "noctalia msg media next",
+            cmd = "kaze-shell msg media next",
             locked = true,
         },
         {
@@ -824,7 +824,7 @@ function M.build(cfg)
             display = "XF86AudioPrev / Ctrl + Super + -",
             desc = "Previous media track",
             kind = "exec",
-            cmd = "noctalia msg media previous",
+            cmd = "kaze-shell msg media previous",
             locked = true,
         },
         {
@@ -832,7 +832,7 @@ function M.build(cfg)
             display = false,
             desc = "Previous media track",
             kind = "exec",
-            cmd = "noctalia msg media previous",
+            cmd = "kaze-shell msg media previous",
             locked = true,
         },
         {
@@ -840,7 +840,7 @@ function M.build(cfg)
             display = "XF86AudioStop / Ctrl + Super + Backspace",
             desc = "Stop media playback",
             kind = "exec",
-            cmd = "noctalia msg media stop",
+            cmd = "kaze-shell msg media stop",
             locked = true,
         },
         {
@@ -848,7 +848,7 @@ function M.build(cfg)
             display = false,
             desc = "Stop media playback",
             kind = "exec",
-            cmd = "noctalia msg media stop",
+            cmd = "kaze-shell msg media stop",
             locked = true,
         },
     }

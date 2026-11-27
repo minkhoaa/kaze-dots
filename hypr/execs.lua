@@ -6,13 +6,15 @@ local bin_dir = fs.home() .. "/.local/bin/"
 local cli = fs.shell_quote(bin_dir .. "kaze-session")
 local display_cli = fs.shell_quote(bin_dir .. "kaze-display")
 local signature = os.getenv("HYPRLAND_INSTANCE_SIGNATURE") or ""
--- Set only on initial `hyprland.start` so `hyprctl reload` never re-arms the 5s startup grace.
-local started_at = nil
+-- Persist initial boot timestamp across `hyprctl reload` so early `monitor.added`
+-- events fired before `hyprland.start` still observe the 5s startup grace, while
+-- `hyprctl reload` never re-arms it.
+_G._kaze_boot_at = _G._kaze_boot_at or os.time()
 local last_added_at = nil
 
 hl.on("hyprland.start", function()
     local cfg = ctx.cfg
-    started_at = os.time()
+    _G._kaze_boot_at = os.time()
     hl.exec_cmd(cli .. " start && hyprctl setcursor " .. fs.shell_quote(cfg.cursor_theme) .. " " .. tostring(cfg.cursor_size))
 end)
 
@@ -22,7 +24,7 @@ hl.on("monitor.added", function(mon)
     local cfg = ctx.cfg or {}
     if display.should_ignore_hotplug(name, {
         now = now,
-        started_at = started_at,
+        started_at = _G._kaze_boot_at,
         last_event_at = last_added_at,
         enabled = cfg.display_hotplug_menu ~= false,
     }) then

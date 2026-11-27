@@ -10,6 +10,7 @@ use kaze_core::{
     ShellAction, ShellContext, SystemEvent, ThemePaths,
 };
 use kaze_ext_bar::BarExtension;
+use kaze_ext_launcher::{desktop as launcher_desktop, LauncherExtension};
 use kaze_ext_notify::NotifyExtension;
 use kaze_ext_osd::OsdExtension;
 use kaze_hypr::{HyprClient, HyprEvent, ReconnectBackoff};
@@ -20,6 +21,7 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use smithay_client_toolkit::reexports::client::Connection;
 use std::collections::HashMap;
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -27,6 +29,7 @@ use std::time::Duration;
 enum WatchNotice {
     Config,
     Backlight,
+    Applications,
 }
 
 struct Daemon {
@@ -45,6 +48,7 @@ struct Daemon {
     hypr_reconnect_armed: bool,
     config_reload_armed: bool,
     timers: HashMap<String, RegistrationToken>,
+    pending_dmenu: Option<IpcResponder>,
     sys: Option<SysHandle>,
     _fs_watcher: Option<RecommendedWatcher>,
     children: Vec<Child>,
@@ -149,7 +153,10 @@ impl Daemon {
             | SystemEvent::NotificationReceived(_)
             | SystemEvent::NotificationCloseRequested { .. }
             | SystemEvent::NotificationClearAll
-            | SystemEvent::NotificationsCountChanged(_) => {}
+            | SystemEvent::NotificationsCountChanged(_)
+            | SystemEvent::SurfaceClosed { .. }
+            | SystemEvent::KeyboardFocusLost { .. }
+            | SystemEvent::ApplicationsChanged => {}
         }
 
         let prev_unread = self.state.unread_notifications;
@@ -269,6 +276,14 @@ impl Daemon {
                 ShellAction::ClearNotifications => {
                     self.dispatch_system_event(SystemEvent::NotificationClearAll);
                 }
+                ShellAction::DmenuReply { selected } => {
+                    if let Some(responder) = self.pending_dmenu.take() {
+                        match selected {
+                            Some(line) => responder.send(&IpcResponse::ok(line)),
+                            None => responder.send(&IpcResponse::err("cancelled")),
+                        }
+                    }
+                }
             }
         }
     }
@@ -328,7 +343,26 @@ impl Daemon {
             .spawn()
         {
             Ok(child) => self.children.push(child),
-            Err(_) => self.spawn_child(program, args),
+            Err(_) => self.spawn_setsid(program, args),
+        }
+    }
+
+    fn spawn_setsid(&mut self, program: &str, args: &[String]) {
+        let mut cmd = Command::new(program);
+        cmd.args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        // SAFETY: `setsid` is async-signal-safe and detaches the launched app into its own session.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        match cmd.spawn() {
+            Ok(child) => self.children.push(child),
+            Err(err) => eprintln!("kaze-shell: failed spawning detached '{program}': {err}"),
         }
     }
 
@@ -396,6 +430,43 @@ impl Daemon {
     }
 
     fn handle_ipc(&mut self, req: IpcRequest, responder: IpcResponder) {
+        if req.cmd == "dmenu-open" {
+            if let Some(prev) = self.pending_dmenu.take() {
+                prev.send(&IpcResponse::err("cancelled"));
+            }
+            self.pending_dmenu = Some(responder);
+
+            let mut handled = false;
+            let mut dirty = DirtyFlags::NONE;
+            let mut actions = Vec::new();
+            {
+                let mut ctx = ShellContext::new(&mut self.state);
+                for ext in &mut self.extensions {
+                    if let IpcResult::Handled {
+                        ok,
+                        dirty: ext_dirty,
+                        ..
+                    } = ext.on_ipc(&req.cmd, &req.args, &mut ctx)
+                    {
+                        handled = ok;
+                        dirty |= ext_dirty | ctx.dirty;
+                        break;
+                    }
+                }
+                actions.extend(ctx.actions);
+            }
+            self.execute_actions(actions);
+            if !dirty.is_empty() {
+                self.sync_ui_surfaces(dirty);
+            }
+            if !handled {
+                if let Some(resp) = self.pending_dmenu.take() {
+                    resp.send(&IpcResponse::err("launcher unavailable"));
+                }
+            }
+            return;
+        }
+
         let resp = match req.cmd.as_str() {
             "ping" => IpcResponse::ok("pong"),
             "theme-mode-toggle" => {
@@ -764,10 +835,12 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     let loop_handle = event_loop.handle();
     let loop_signal = event_loop.get_signal();
 
-    // Shared single-thread `notify` watcher for BOTH `config.toml` and `/sys/class/backlight/*` (1 thread).
+    // Shared single-thread `notify` watcher for `config.toml`, `/sys/class/backlight/*`,
+    // and `.desktop` application directories (1 thread total).
     let backlight_dir = backlight::discover_device();
+    let app_dirs = launcher_desktop::existing_watch_dirs();
     let (fs_tx, fs_rx) = channel::channel::<WatchNotice>();
-    let fs_watcher = start_shared_watcher(&config_path, backlight_dir.as_deref(), fs_tx);
+    let fs_watcher = start_shared_watcher(&config_path, backlight_dir.as_deref(), &app_dirs, fs_tx);
 
     // Single background `tokio` current_thread runtime for D-Bus + native pipewire-pulse (1 thread).
     let (sys_tx, sys_rx) = channel::channel::<SystemEvent>();
@@ -790,6 +863,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         Box::new(BarExtension::new()),
         Box::new(OsdExtension::new()),
         Box::new(NotifyExtension::new()),
+        Box::new(LauncherExtension::new()),
     ];
 
     let mut daemon = Daemon {
@@ -808,6 +882,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         hypr_reconnect_armed: false,
         config_reload_armed: false,
         timers: HashMap::new(),
+        pending_dmenu: None,
         sys: sys_handle,
         _fs_watcher: fs_watcher,
         children: Vec::new(),
@@ -850,13 +925,16 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         })
         .map_err(|e| format!("failed inserting IPC source: {e}"))?;
 
-    // 4. Shared filesystem watcher channel (`notify` -> `calloop`: config.toml + backlight).
+    // 4. Shared filesystem watcher channel (`notify` -> `calloop`: config.toml, backlight, .desktop dirs).
     loop_handle
         .insert_source(fs_rx, |ev, _, daemon| {
             if let channel::Event::Msg(notice) = ev {
                 match notice {
                     WatchNotice::Config => daemon.schedule_config_reload(),
                     WatchNotice::Backlight => daemon.handle_backlight_fs_event(),
+                    WatchNotice::Applications => {
+                        daemon.dispatch_system_event(SystemEvent::ApplicationsChanged);
+                    }
                 }
             }
         })
@@ -902,6 +980,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
 fn start_shared_watcher(
     config_path: &Path,
     backlight_dir: Option<&Path>,
+    app_dirs: &[PathBuf],
     tx: channel::Sender<WatchNotice>,
 ) -> Option<RecommendedWatcher> {
     let config_parent = config_path.parent().map(Path::to_path_buf);
@@ -911,6 +990,7 @@ fn start_shared_watcher(
 
     let config_name = config_path.file_name().map(|n| n.to_os_string());
     let bl_dir_owned = backlight_dir.map(Path::to_path_buf);
+    let app_dirs_owned: Vec<PathBuf> = app_dirs.to_vec();
 
     let mut watcher =
         match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
@@ -919,7 +999,7 @@ fn start_shared_watcher(
             };
             let relevant_kind = matches!(
                 ev.kind,
-                EventKind::Modify(_) | EventKind::Create(_) | EventKind::Any
+                EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) | EventKind::Any
             );
             if !relevant_kind {
                 return;
@@ -938,7 +1018,11 @@ fn start_shared_watcher(
                             .is_some_and(|n| n == "brightness" || n == "actual_brightness")
                     {
                         let _ = tx.send(WatchNotice::Backlight);
+                        continue;
                     }
+                }
+                if app_dirs_owned.iter().any(|dir| path.starts_with(dir)) {
+                    let _ = tx.send(WatchNotice::Applications);
                 }
             }
         }) {
@@ -956,6 +1040,9 @@ fn start_shared_watcher(
     }
     if let Some(bl_dir) = backlight_dir {
         let _ = watcher.watch(bl_dir, RecursiveMode::NonRecursive);
+    }
+    for dir in app_dirs {
+        let _ = watcher.watch(dir, RecursiveMode::NonRecursive);
     }
     Some(watcher)
 }

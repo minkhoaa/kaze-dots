@@ -3,8 +3,9 @@
 mod daemon;
 
 use kaze_core::Config;
-use kaze_ipc::{default_socket_path, send_request, IpcRequest};
+use kaze_ipc::{default_socket_path, send_request, send_request_with_timeout, IpcRequest};
 use std::env;
+use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -13,6 +14,7 @@ fn print_usage() {
         "kaze-shell {}\n\n\
 Usage:\n\
   kaze-shell daemon [--config PATH]\n\
+  kaze-shell dmenu [-p|--prompt TEXT]\n\
   kaze-shell msg <command> [args...]\n\
   kaze-shell config validate [PATH]\n\
   kaze-shell --help | --version\n\n\
@@ -32,6 +34,7 @@ IPC Commands (via `kaze-shell msg`):\n\
   media <play-pause|next|prev|stop> Control active MPRIS player\n\
   dnd-status | dnd-on | dnd-off | dnd-toggle\n\
   notify-clear                      Dismiss active notification popups & unread badge\n\
+  launcher-toggle | launcher-close  Toggle or close the App Launcher / dmenu overlay\n\
   reload                            Reload config.toml without restarting\n\
   status                            Print daemon JSON status",
         env!("CARGO_PKG_VERSION")
@@ -55,12 +58,80 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         "daemon" => run_daemon_cmd(&args[1..]),
+        "dmenu" => run_dmenu_cmd(&args[1..]),
         "msg" => run_msg_cmd(&args[1..]),
         "config" => run_config_cmd(&args[1..]),
         other => {
             eprintln!("kaze-shell: unknown subcommand '{other}'");
             print_usage();
             ExitCode::from(2)
+        }
+    }
+}
+
+fn run_dmenu_cmd(args: &[String]) -> ExitCode {
+    let mut prompt = String::from("Select > ");
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-h" | "--help" => {
+                println!("Usage: kaze-shell dmenu [-p|--prompt TEXT]");
+                return ExitCode::SUCCESS;
+            }
+            "-p" | "--prompt" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    eprintln!("kaze-shell dmenu: {} requires a prompt string", args[i - 1]);
+                    return ExitCode::from(2);
+                };
+                prompt = val.clone();
+            }
+            arg if arg.starts_with("--prompt=") => {
+                prompt = arg.trim_start_matches("--prompt=").to_string();
+            }
+            other => {
+                eprintln!("kaze-shell dmenu: unknown option '{other}'");
+                return ExitCode::from(2);
+            }
+        }
+        i += 1;
+    }
+
+    let mut payload = String::new();
+    // Cap stdin payload slightly under IPC's 2 MiB JSON line cap to preserve framing safety.
+    let mut handle = io::stdin().take(1_900_000);
+    if let Err(err) = handle.read_to_string(&mut payload) {
+        eprintln!("kaze-shell dmenu: failed reading stdin: {err}");
+        return ExitCode::FAILURE;
+    }
+
+    let sock = match default_socket_path() {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("kaze-shell dmenu: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let req = IpcRequest {
+        cmd: "dmenu-open".to_string(),
+        args: vec![prompt, payload],
+    };
+
+    match send_request_with_timeout(&sock, &req, None) {
+        Ok(resp) if resp.ok => {
+            println!("{}", resp.message);
+            ExitCode::SUCCESS
+        }
+        Ok(resp) => {
+            if resp.message != "cancelled" && !resp.message.is_empty() {
+                eprintln!("kaze-shell dmenu: {}", resp.message);
+            }
+            ExitCode::FAILURE
+        }
+        Err(err) => {
+            eprintln!("kaze-shell dmenu: {err}");
+            ExitCode::FAILURE
         }
     }
 }

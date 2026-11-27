@@ -9,6 +9,7 @@ members = [
     "crates/kaze-ext-bar",
     "crates/kaze-ext-osd",
     "crates/kaze-ext-notify",
+    "crates/kaze-ext-launcher",
     "crates/kaze-cli",
 ]
 
@@ -50,6 +51,7 @@ kaze-ui = { path = "crates/kaze-ui" }
 kaze-ext-bar = { path = "crates/kaze-ext-bar" }
 kaze-ext-osd = { path = "crates/kaze-ext-osd" }
 kaze-ext-notify = { path = "crates/kaze-ext-notify" }
+kaze-ext-launcher = { path = "crates/kaze-ext-launcher" }
 
 # Keep variables inspectable in our crates; keep source locations in dependencies.
 [profile.dev.package."*"]

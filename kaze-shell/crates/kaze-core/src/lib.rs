@@ -7,7 +7,8 @@ pub mod surface;
 pub mod theme;
 
 pub use config::{
-    BarConfig, BarPosition, Config, DisplayConfig, NotifyConfig, OsdConfig, ThemeConfig,
+    BarConfig, BarPosition, Config, DisplayConfig, LauncherConfig, NotifyConfig, OsdConfig,
+    ThemeConfig,
 };
 pub use extension::{
     DirtyFlags, ImeEvent, IpcResult, KazeExtension, KeyEvent, KeyModifiers, OsdKind, PointerButton,
