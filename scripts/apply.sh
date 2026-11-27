@@ -252,6 +252,11 @@ if [ ! -e "$FOOT_THEME" ] && [ ! -L "$FOOT_THEME" ]; then
     : > "$FOOT_THEME"
     record_installed "$FOOT_THEME"
 fi
+DEFAULT_FOOT_THEME="$(realpath -ms -- "$HOME/.config/foot/themes/noctalia")"
+if [ "$FOOT_THEME" != "$DEFAULT_FOOT_THEME" ]; then
+    # foot.ini uses include=~/.config/foot/themes/noctalia (Foot expands ~ via $HOME, not XDG_CONFIG_HOME).
+    backup_and_link "$FOOT_THEME" "$DEFAULT_FOOT_THEME"
+fi
 
 if [ -d "$REPO_DIR/config/noctalia/palettes" ]; then
     for pal_file in "$REPO_DIR"/config/noctalia/palettes/*.json; do
@@ -286,12 +291,12 @@ set -euo pipefail
 
 if [ "$(id -u)" -eq 0 ]; then
     if [ -z "${SUDO_USER:-}" ] || [ "$SUDO_USER" = "root" ]; then
-        echo "apply.sh: do not run directly as root; run as your regular desktop user." >&2
+        echo "rollback.sh: do not run directly as root; run as your regular desktop user." >&2
         exit 1
     fi
     target_home="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6 || true)"
     if [ -z "$target_home" ] || [ ! -d "$target_home" ]; then
-        echo "apply.sh: could not determine home directory for user '$SUDO_USER'." >&2
+        echo "rollback.sh: could not determine home directory for user '$SUDO_USER'." >&2
         exit 1
     fi
     target_uid="$(id -u "$SUDO_USER")"

@@ -313,6 +313,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         local first = assert(fs.read_file(last)):gsub("\n$", "")
         assert_contains(assert(fs.read_file(noc_cfg)), "offline_mode = true\n")
         assert_true(fs.file_exists(cfg .. "/foot/themes/noctalia"), "seeds empty Foot Noctalia theme")
+        assert_true(os.execute("test -L " .. q(tmp .. "/.config/foot/themes/noctalia")), "links ~/.config/foot/themes/noctalia when XDG_CONFIG_HOME is custom")
         assert_eq(fs.read_file(user_zsh), "# user-owned zsh overrides\n")
         assert_eq(fs.read_file(zprof_local), "# user-owned zprofile overrides\n")
 
@@ -381,6 +382,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
             data .. "/kaze-dots/lua/kaze",
             data .. "/applications/yazi.desktop",
             cfg .. "/foot/themes/noctalia",
+            tmp .. "/.config/foot/themes/noctalia",
             cfg .. "/yazi/yazi.toml",
             cfg .. "/zathura/zathurarc",
             cfg .. "/imv/config",

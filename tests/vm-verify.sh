@@ -34,7 +34,7 @@ ssh_guest 'pacman -Q hyprland noctalia foot xdg-desktop-portal xdg-desktop-porta
 stage_guest
 ssh_guest 'bash -s' <<'GUEST'
 set -euo pipefail
-export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export XDG_RUNTIME_DIR="/run/user/$(id -u)" LC_ALL=C.UTF-8
 fixture=$(mktemp -d)
 trap 'rm -rf -- "$fixture"' EXIT
 mkdir -p "$fixture/home" "$fixture/config/hypr" "$fixture/config/systemd/user" "$fixture/config/noctalia"

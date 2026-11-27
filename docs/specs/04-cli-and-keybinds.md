@@ -2,7 +2,7 @@
 
 ## 1. Helper CLIs (`bin/kaze-*`)
 
-All 10 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run strictly on demand (`0 MiB` resident background RAM), and follow POSIX exit codes (`0` success, `2` invalid CLI args, non-zero + `stderr` message on runtime errors).
+All 11 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run strictly on demand (`0 MiB` resident background RAM), and follow POSIX exit codes (`0` success, `2` invalid CLI args, non-zero + `stderr` message on runtime errors).
 
 ### `kaze-session <start|stop|lock|wake-displays>`
 - `start`: renders `$XDG_RUNTIME_DIR/kaze/session.env` from `hypr_user.load()`, imports only `WAYLAND_DISPLAY`, `XDG_CURRENT_DESKTOP`, and `HYPRLAND_INSTANCE_SIGNATURE` to `systemd --user` / D-Bus, and starts `kaze-session.target`.
@@ -33,7 +33,7 @@ All 10 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run s
 ### `kaze-style [PRESET | --menu | --current | --list] [--no-reload]`
 - Switches across all **11 visual presets** (`omarchy-rail`, `swiss-grid`, `corner-hud`, `ghost-zero`, `dynamic-island`, `hardware-notch`, `glass-studio`, `floating-rail`, `tui-hacker`, `retro-90s`, `cinema-frame`, plus aliases like `floating-islands` → `corner-hud` and `concave-notch` → `hardware-notch`) via `lua/kaze/styles.lua` with `0` extra resident daemons or polling, while preserving user edits outside style-managed TOML keys and preserving `~/.config/hypr/user.lua`.
 - Synchronizes Noctalia (`~/.config/noctalia/config.toml`), Hyprland geometry (`~/.config/hypr/kaze-style.lua`), and GTK3/Thunar CSS (`~/.config/gtk-3.0/kaze-style.css`), plus saves/restores `[theme]` across palette-locked presets (`~/.config/kaze/saved-theme.json`).
-- `dynamic-island` centers a black `group:island` pill (`#0b0b0e`) with `focus_hint` workspace dots and clock that natively expands on MPRIS media, `kaze-record` (`REC`/`GIF`), and `kaze-display` (`LIVE`/`SHARE`); `ghost-zero` enables `auto_hide = true`, `reserve_space = false`, `0px` gaps, and `Super_L` hold-to-peek; `glass-studio` enables the auto-hiding bottom `[dock]`; `floating-rail` runs dual bars (`default` + `rail`).
+- `dynamic-island` renders a 3-cluster top bar (`group:island_left` launcher + `focus_hint` workspace dots, centered theme-synced `surface_container` Live Activity `group:island` pill with clock, MPRIS media, `kaze-record`, `kaze-display`, notifications, and control-center, and `group:island_right` quick controls); `ghost-zero` enables `auto_hide = true`, `reserve_space = false`, `0px` gaps, and `Super_L` hold-to-peek; `glass-studio` enables the auto-hiding bottom `[dock]`; `floating-rail` runs dual bars (`default` + `rail`).
 - Persists active selection in `~/.config/kaze/style`, validates before atomic swap, reloads live Noctalia (`noctalia msg config-reload`, plus `templates-apply` when `[theme]` changes) and Hyprland (`hyprctl reload`), and is selectable directly in `scripts/install.sh` (`--style` and scrollable TUI wizard step 2).
 
 ### `kaze-tui <sysmon|wifi|bluetooth|audio>`
@@ -56,6 +56,9 @@ All 10 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run s
 - **Stage 3 (`--bench`):** adaptive mixed-size real-package `ParallelDownloads` A/B (`{3, 5, 8, 12}`) via isolated `fakeroot pacman -Sw` against staged winning mirrorlists + Pre/Post comparison.
 - **Security & rollback:** zero-network `root` boundary (`--commit-plan` / `--commit-rollback`), two-layer `flock`, `db.lck` & active-service guard, symlink/allowlist enforcement, same-filesystem atomic `mktemp` + `sync` + `0644` + `rename`, `pacman-conf` post-commit verification with auto-revert, backup rotation (last 5 `.kaze-bak-*`), and transactional manifest preventing double-rollback.
 - **UI integration:** `[widget.mirror]` on Noctalia bar (Left: `--menu` via `noctalia dmenu`, Right: `--tui-window`), `Ctrl + Alt + M` keybind, and Omarchy ANSI TUI with upfront `sudo -v` authentication + automatic atomic commit on scan completion (pass `--tui --dry-run` to preview without committing).
+
+### `kaze-thunar-action <terminal|yazi|editor|copy-path|copy-image|wallpaper|extract|compress|checksum> <path> [paths...]`
+- Stateless pure-Lua Thunar custom-action helper invoked by `config/Thunar/uca.xml`: launches `kaze-footclient` / `yazi` / configured editor, copies paths or image MIME bytes via `wl-copy`, sets live Noctalia wallpapers, compresses to `.tar.zst`, performs tarbomb/traversal-safe `bsdtar` extraction, and computes SHA256 checksums.
 
 ---
 

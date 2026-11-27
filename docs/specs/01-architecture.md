@@ -93,8 +93,11 @@ lua/kaze/
 | `$XDG_CONFIG_HOME/hypr/xdph.conf` | Symlink → `<repo>/config/hypr/xdph.conf` |
 | `$XDG_CONFIG_HOME/hypr/user.lua` | Seeded once from `templates/hypr-user.lua.example` (auto-seeding `drm_devices` + `prefer_mesa_egl` on hybrid laptops when absent); never overwritten or deleted on rollback |
 | `$XDG_CONFIG_HOME/noctalia/config.toml` | Seeded editable file from `config/noctalia/config.toml`; preserved across re-applies |
+| `$XDG_CONFIG_HOME/noctalia/palettes/*.json` | Symlinks → `<repo>/config/noctalia/palettes/*.json` (Version-2 custom palettes) |
 | `$XDG_CONFIG_HOME/foot/foot.ini` | Symlink → `<repo>/config/foot/foot.ini` |
-| `$XDG_CONFIG_HOME/foot/themes/noctalia` | Empty placeholder created on first apply; populated live by Noctalia's `foot` template |
+| `$XDG_CONFIG_HOME/foot/themes/noctalia` | Empty placeholder created on first apply (plus symlink at `~/.config/foot/themes/noctalia` when `XDG_CONFIG_HOME` is customized); populated live by Noctalia's `foot` template |
+| `$XDG_CONFIG_HOME/gtk-3.0/{settings.ini,kaze-thunar.css,gtk.css,noctalia.css,kaze-style.css}` | Symlinks + managed `gtk.css` imports and preset CSS overlay for GTK3/Thunar |
+| `$XDG_CONFIG_HOME/Thunar/{uca.xml,accels.scm}` & `$XDG_CONFIG_HOME/xfce4/xfconf/xfce-perchannel-xml/thunar.xml` | Symlinked custom actions (`uca.xml`) + editable seeded shortcuts & xfconf defaults |
 | `$XDG_CONFIG_HOME/starship.toml` | Symlink → `<repo>/config/starship/starship.toml` |
 | `$XDG_CONFIG_HOME/yazi/{yazi,theme,keymap}.toml` | Symlinks → `<repo>/config/yazi/*.toml` |
 | `$XDG_CONFIG_HOME/zathura/zathurarc` | Symlink → `<repo>/config/zathura/zathurarc` |
@@ -102,7 +105,7 @@ lua/kaze/
 | `$XDG_CONFIG_HOME/mimeapps.list` | Symlink → `<repo>/config/mimeapps.list` |
 | `~/.zshrc`, `~/.zprofile`, `$XDG_CONFIG_HOME/zsh/conf.d` | Symlinks → `<repo>/config/zsh/{zshrc,zprofile,conf.d}` |
 | `$XDG_CONFIG_HOME/systemd/user/` | Symlinks → `<repo>/config/systemd/user/` units and `foot-server` drop-ins |
-| `~/.local/bin/kaze-*` | Symlinks → `<repo>/bin/kaze-*` (9 helper CLIs) |
-| `$XDG_CONFIG_HOME/kaze/profile` | Written by `scripts/install.sh` (`minimal` or `full`) |
-| `$XDG_CONFIG_HOME/kaze/style` | Active Noctalia visual preset (`omarchy-rail`, `floating-islands`, `concave-notch`, `dynamic-island`) |
+| `~/.local/bin/kaze-*` | Symlinks → `<repo>/bin/kaze-*` (11 helper CLIs) |
+| `$XDG_CONFIG_HOME/kaze/{profile,style,saved-theme.json}` | Active profile (`minimal`/`full`), active visual preset (11 presets, default `dynamic-island`), and saved `[theme]` for palette-locked presets |
+| `$XDG_STATE_HOME/kaze/install-*.log` | ANSI-stripped installation logs written by `scripts/install.sh` |
 | `$XDG_RUNTIME_DIR/kaze/` | Private (`0700`) per-session runtime state (`session.env`, `display-state.json`, `monitors.lua`, `record.*`) |

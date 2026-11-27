@@ -32,7 +32,7 @@ config/starship/         Minimal single-line ANSI Starship prompt config
 config/zsh/              Modular Zsh config (~/.zprofile, ~/.zshrc, conf.d/*.zsh)
 config/systemd/user/     Session target and user service units
 lua/kaze/                Small Lua helpers (hypr_user, keybinds_data, projects, popups, session, styles)
-bin/                     10 small helper CLIs for things Noctalia doesn't cover
+bin/                     11 small helper CLIs for things Noctalia doesn't cover
 scripts/                 Install, apply, backup/rollback, and VM test helpers
 templates/               Example ~/.config/hypr/user.lua override file
 ```
@@ -49,6 +49,7 @@ templates/               Example ~/.config/hypr/user.lua override file
 - `kaze-record` — full/region screen, audio & GIF recording (`wf-recorder` + `ffmpeg`, `noctalia dmenu`)
 - `kaze-doctor` — quick health check for packages, symlinks, configs, services, and Noctalia config drift (`--diff`)
 - `kaze-mirror` — Arch/CachyOS HTTPS mirror ranker & `ParallelDownloads` benchmark (`--dry-run`, `--apply`, `--bench`, `--rollback`)
+- `kaze-thunar-action` — Thunar custom-action helper (`terminal`, `yazi`, `editor`, `copy-path`, `copy-image`, `wallpaper`, tarbomb-safe `extract`, `compress`, `checksum`)
 
 ## Setup
 
@@ -69,7 +70,7 @@ Preview first without touching anything:
 Install packages (`pacman -Syu --needed`), configure system services (NetworkManager if no other stack is active, Bluetooth, PipeWire user sockets, `video` group, font cache), set Zsh as default login shell, choose a visual preset (11 presets across Angular, Dynamic, and Retro groups; default `dynamic-island`), and apply configs (backs up existing dotfiles automatically and logs to `~/.local/state/kaze/install-*.log`):
 
 ```sh
-./scripts/install.sh --profile minimal --style dynamic-island   # default 3-island + hover-expanding center pill
+./scripts/install.sh --profile minimal --style dynamic-island   # default 3-island top bar with centered Live Activity pill
 ./scripts/install.sh --profile full --style dynamic-island      # full profile + Dynamic Island pill
 ./scripts/install.sh --profile full --dm ly --aur yay-bin       # optional official DM (ly/greetd) & opt-in AUR helper
 ```
