@@ -316,7 +316,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         local seeded_noc = assert(fs.read_file(noc_cfg))
         assert_contains(seeded_noc, "offline_mode = true\n")
         assert_contains(seeded_noc, 'directory = "' .. tmp .. '/Pictures/Wallpapers"\n', "expands wallpaper directory")
-        assert_contains(seeded_noc, 'default = "' .. tmp .. '/Pictures/Wallpapers/05-kanagawa.jpg"\n', "expands default wallpaper path")
+        assert_contains(seeded_noc, '[wallpaper.default]\npath = "' .. tmp .. '/Pictures/Wallpapers/05-kanagawa.jpg"\n', "expands default wallpaper table path")
         assert_true(not seeded_noc:find("~/Pictures/Wallpapers", 1, true), "leaves no unexpanded ~/Pictures/Wallpapers")
         assert_eq(fs.read_file(user_wall), "user-wallpaper-bytes\n", "preserves pre-existing user wallpaper")
         assert_true(fs.file_exists(cfg .. "/foot/themes/noctalia"), "seeds empty Foot Noctalia theme")

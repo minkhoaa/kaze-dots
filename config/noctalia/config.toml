@@ -280,4 +280,6 @@ show_visualizer = false
 [wallpaper]
 enabled = true
 directory = "~/Pictures/Wallpapers"
-default = "~/Pictures/Wallpapers/05-kanagawa.jpg"
+
+[wallpaper.default]
+path = "~/Pictures/Wallpapers/05-kanagawa.jpg"
