@@ -126,6 +126,37 @@ pub struct MediaState {
     pub status: MediaPlayback,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NotificationUrgency {
+    Low,
+    #[default]
+    Normal,
+    Critical,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotificationAction {
+    pub key: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotificationItem {
+    pub id: u32,
+    pub app_name: String,
+    pub summary: String,
+    pub body: String,
+    pub app_icon: String,
+    pub urgency: NotificationUrgency,
+    pub actions: Vec<NotificationAction>,
+    pub expire_timeout_ms: i32,
+    pub resident: bool,
+    pub transient: bool,
+    pub sync_tag: Option<String>,
+    pub timestamp_epoch_secs: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum DisplayStatus {
     #[default]
@@ -242,6 +273,9 @@ pub struct AppState {
     pub media: MediaState,
     pub dnd: bool,
     pub unread_notifications: u32,
+    pub active_notifications: usize,
+    pub history_notifications: usize,
+    pub notifications_bus_owned: bool,
     pub clock: ClockTime,
     pub hypr_connected: bool,
 }
@@ -271,6 +305,9 @@ impl AppState {
             media: MediaState::default(),
             dnd: false,
             unread_notifications: 0,
+            active_notifications: 0,
+            history_notifications: 0,
+            notifications_bus_owned: false,
             clock,
             hypr_connected: false,
         }

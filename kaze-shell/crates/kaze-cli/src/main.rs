@@ -31,6 +31,7 @@ IPC Commands (via `kaze-shell msg`):\n\
   brightness-down [step]            Lower screen brightness (default 5%)\n\
   media <play-pause|next|prev|stop> Control active MPRIS player\n\
   dnd-status | dnd-on | dnd-off | dnd-toggle\n\
+  notify-clear                      Dismiss active notification popups & unread badge\n\
   reload                            Reload config.toml without restarting\n\
   status                            Print daemon JSON status",
         env!("CARGO_PKG_VERSION")

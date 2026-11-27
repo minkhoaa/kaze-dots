@@ -206,9 +206,15 @@ impl UiState {
                 }
 
                 if geom_changed {
+                    let size_changed =
+                        existing.spec.width != spec.width || existing.spec.height != spec.height;
                     apply_layer_geometry(&existing.layer, &spec);
                     existing.spec = spec;
                     existing.dirty = true;
+                    if size_changed {
+                        // Wait for compositor configure before attaching a resized buffer.
+                        existing.configured = false;
+                    }
                     existing.layer.commit();
                 } else if content_changed || force_redraw {
                     existing.spec = spec;

@@ -16,6 +16,7 @@ calloop.workspace = true
 calloop-wayland-source.workspace = true
 kaze-core.workspace = true
 kaze-ext-bar.workspace = true
+kaze-ext-notify.workspace = true
 kaze-ext-osd.workspace = true
 kaze-hypr.workspace = true
 kaze-ipc.workspace = true

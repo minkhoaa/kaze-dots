@@ -227,6 +227,38 @@ sleep 2.0
 wait_layer_absent "kaze-osd"
 echo "    [PASS] Stage 3A native pipewire-pulse + OSD auto-hide (surface freed)"
 
+# 4c. Stage 3B: org.freedesktop.Notifications D-Bus server, Vietnamese+Emoji, replaces_id, DND, critical, notify-clear
+kaze-shell msg status | grep -Fq '"notifications_bus_owned": true'
+dbus_owner_pid=$(busctl --user status org.freedesktop.Notifications 2>/dev/null | awk '/^PID=/{sub(/^PID=/,""); print $1}' || true)
+test "$dbus_owner_pid" = "$initial_pid"
+notify-send -a "kaze-demo" -u low -t 15000 "Đồng bộ nền" "Hoàn tất cập nhật cấu hình." >/dev/null
+nid=$(notify-send -p -a "Zalo" -u normal -t 15000 "Tin nhắn tiếng Việt 🎉" "Chào bạn! Dấu tiếng Việt ệ ồ ử ặ và Emoji 🚀🔥 hiển thị mượt.")
+test -n "$nid"
+sleep 0.25
+wait_layer_present "kaze-notify"
+kaze-shell msg status | grep -Fq '"active_notifications": 2'
+# replaces_id updates card in-place without increasing stack size
+notify-send -r "$nid" -a "Zalo" -u normal -t 15000 "Tin nhắn đã cập nhật ✅" "Tiếng Việt có dấu ệ ồ ử ặ + Emoji 🚀🔥 (replaces_id=$nid)" >/dev/null
+sleep 0.2
+kaze-shell msg status | grep -Fq '"active_notifications": 2'
+# DND suppresses normal notifications but lets critical through (with no default timeout)
+test "$(kaze-shell msg dnd-on)" = "on"
+notify-send -a "MutedApp" -u normal -t 15000 "Bị chặn bởi DND" "Không được hiện popup." >/dev/null
+sleep 0.2
+kaze-shell msg status | grep -Fq '"active_notifications": 2'
+notify-send -a "Hệ thống" -u critical "Cảnh báo pin yếu ⚠️" "Pin còn 5% — mức critical vượt qua DND 🔴" >/dev/null
+sleep 0.25
+kaze-shell msg status | grep -Fq '"active_notifications": 3'
+if command -v grim >/dev/null 2>&1; then
+    grim -o Virtual-1 /tmp/kaze-shell-3b-notify.png
+fi
+kaze-shell msg notify-clear >/dev/null
+wait_layer_absent "kaze-notify"
+kaze-shell msg status | grep -Fq '"active_notifications": 0'
+kaze-shell msg status | grep -Fq '"unread_notifications": 0'
+test "$(kaze-shell msg dnd-off)" = "off"
+echo "    [PASS] Stage 3B org.freedesktop.Notifications + Vietnamese/Emoji + replaces_id + DND/critical + notify-clear"
+
 # 5. Config hot-reload resilience (broken TOML must NOT crash daemon)
 cfg="$HOME/.config/kaze-shell/config.toml"
 cp -- "$cfg" "$cfg.bak"
@@ -296,6 +328,8 @@ GUEST
 if [[ -n "$screenshot_out" ]]; then
     mkdir -p -- "$(dirname -- "$screenshot_out")"
     scp -i "$VMDIR/bench_id_ed25519" -P 22222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        bench@127.0.0.1:/tmp/kaze-shell-3b-notify.png "$screenshot_out" || \
+    scp -i "$VMDIR/bench_id_ed25519" -P 22222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         bench@127.0.0.1:/tmp/kaze-shell-3a-osd.png "$screenshot_out" || \
     scp -i "$VMDIR/bench_id_ed25519" -P 22222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         bench@127.0.0.1:/tmp/kaze-shell-vm.png "$screenshot_out" || true
@@ -305,4 +339,4 @@ stop_vm
 if (( boot_status || bench_status )); then
     exit 1
 fi
-echo "==> ALL kaze-shell Stage 1-3A VM acceptance gates PASSED."
+echo "==> ALL kaze-shell Stage 1-3B VM acceptance gates PASSED."

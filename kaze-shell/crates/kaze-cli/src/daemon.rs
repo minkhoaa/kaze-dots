@@ -10,6 +10,7 @@ use kaze_core::{
     ShellAction, ShellContext, SystemEvent, ThemePaths,
 };
 use kaze_ext_bar::BarExtension;
+use kaze_ext_notify::NotifyExtension;
 use kaze_ext_osd::OsdExtension;
 use kaze_hypr::{HyprClient, HyprEvent, ReconnectBackoff};
 use kaze_ipc::{default_socket_path, IpcRequest, IpcResponder, IpcResponse, IpcServer};
@@ -133,14 +134,25 @@ impl Daemon {
             SystemEvent::MediaChanged(media) => {
                 self.state.media = media.clone();
             }
+            SystemEvent::NotificationsBusStatus { owned } => {
+                self.state.notifications_bus_owned = *owned;
+            }
+            SystemEvent::DndChanged(dnd) => {
+                self.state.dnd = *dnd;
+            }
             SystemEvent::ConfigReloaded
             | SystemEvent::PointerClick { .. }
             | SystemEvent::PointerScroll { .. }
             | SystemEvent::KeyInput { .. }
             | SystemEvent::ImeInput { .. }
-            | SystemEvent::TimerFired { .. } => {}
+            | SystemEvent::TimerFired { .. }
+            | SystemEvent::NotificationReceived(_)
+            | SystemEvent::NotificationCloseRequested { .. }
+            | SystemEvent::NotificationClearAll
+            | SystemEvent::NotificationsCountChanged(_) => {}
         }
 
+        let prev_unread = self.state.unread_notifications;
         let mut dirty = DirtyFlags::NONE;
         let mut actions = Vec::new();
         {
@@ -155,6 +167,14 @@ impl Daemon {
         self.execute_actions(actions);
         if !dirty.is_empty() {
             self.sync_ui_surfaces(dirty);
+        }
+
+        if !matches!(event, SystemEvent::NotificationsCountChanged(_))
+            && self.state.unread_notifications != prev_unread
+        {
+            self.dispatch_system_event(SystemEvent::NotificationsCountChanged(
+                self.state.unread_notifications,
+            ));
         }
     }
 
@@ -232,6 +252,22 @@ impl Daemon {
                     if let Some(ref sys) = self.sys {
                         sys.send(SysCommand::MediaCommand(cmd));
                     }
+                }
+                ShellAction::NotifyClosed { id, reason } => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::NotifyClosed { id, reason });
+                    }
+                }
+                ShellAction::NotifyActionInvoked { id, action_key } => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::NotifyActionInvoked { id, action_key });
+                    }
+                }
+                ShellAction::SetDnd(dnd) => {
+                    self.dispatch_system_event(SystemEvent::DndChanged(dnd));
+                }
+                ShellAction::ClearNotifications => {
+                    self.dispatch_system_event(SystemEvent::NotificationClearAll);
                 }
             }
         }
@@ -419,6 +455,24 @@ impl Daemon {
                 self.execute_actions(vec![ShellAction::MediaCommand(action.clone())]);
                 IpcResponse::ok(format!("media {action}"))
             }
+            "dnd-status" => IpcResponse::ok(if self.state.dnd { "on" } else { "off" }),
+            "dnd-on" => {
+                self.dispatch_system_event(SystemEvent::DndChanged(true));
+                IpcResponse::ok("on")
+            }
+            "dnd-off" => {
+                self.dispatch_system_event(SystemEvent::DndChanged(false));
+                IpcResponse::ok("off")
+            }
+            "dnd-toggle" => {
+                let next = !self.state.dnd;
+                self.dispatch_system_event(SystemEvent::DndChanged(next));
+                IpcResponse::ok(if next { "on" } else { "off" })
+            }
+            "notify-clear" => {
+                self.dispatch_system_event(SystemEvent::NotificationClearAll);
+                IpcResponse::ok("cleared")
+            }
             "status" => {
                 let outputs: Vec<&String> = self.state.outputs.keys().collect();
                 let hidden: Vec<&String> = self.state.hidden_bars.iter().collect();
@@ -430,6 +484,10 @@ impl Daemon {
                     "active_workspace_id": self.state.active_workspace_id,
                     "display_status": self.state.display_status.kind_name(),
                     "dnd": self.state.dnd,
+                    "unread_notifications": self.state.unread_notifications,
+                    "active_notifications": self.state.active_notifications,
+                    "history_notifications": self.state.history_notifications,
+                    "notifications_bus_owned": self.state.notifications_bus_owned,
                     "audio": self.state.audio,
                     "network": self.state.network,
                     "battery": self.state.battery,
@@ -728,8 +786,11 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         }
     }
     let theme_paths = ThemePaths::default_paths()?;
-    let extensions: Vec<Box<dyn KazeExtension>> =
-        vec![Box::new(BarExtension::new()), Box::new(OsdExtension::new())];
+    let extensions: Vec<Box<dyn KazeExtension>> = vec![
+        Box::new(BarExtension::new()),
+        Box::new(OsdExtension::new()),
+        Box::new(NotifyExtension::new()),
+    ];
 
     let mut daemon = Daemon {
         loop_handle: loop_handle.clone(),

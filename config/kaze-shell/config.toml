@@ -30,6 +30,18 @@ offset_x = 12
 offset_y = 12
 timeout_ms = 1500
 
+[notifications]
+enabled = true
+position = "top_right"
+width = 340
+offset_x = 12
+offset_y = 12
+gap = 8
+max_visible = 4
+history_limit = 50
+default_timeout_ms = 5000
+low_timeout_ms = 3500
+
 [display]
 left_click_cmd = ["kaze-display", "--menu"]
 right_click_cmd = ["kaze-display", "toggle-window-share"]

@@ -3,6 +3,7 @@
 pub mod backlight;
 mod dbus_mpris;
 mod dbus_net;
+mod dbus_notify;
 mod dbus_upower;
 pub mod pulse_native;
 
@@ -18,6 +19,8 @@ pub enum SysCommand {
     AudioToggleMicMute,
     BacklightStep(i32),
     MediaCommand(String),
+    NotifyClosed { id: u32, reason: u32 },
+    NotifyActionInvoked { id: u32, action_key: String },
     Shutdown,
 }
 
@@ -76,11 +79,16 @@ fn run_sys_thread(
     rt.block_on(async move {
         let (audio_cmd_tx, audio_cmd_rx) = mpsc::unbounded_channel();
         let (media_cmd_tx, media_cmd_rx) = mpsc::unbounded_channel();
+        let (notify_sig_tx, notify_sig_rx) = mpsc::unbounded_channel();
 
         let audio_task = tokio::spawn(pulse_native::run_audio_task(event_tx.clone(), audio_cmd_rx));
         let net_task = tokio::spawn(dbus_net::run_network_task(event_tx.clone()));
         let upower_task = tokio::spawn(dbus_upower::run_upower_task(event_tx.clone()));
         let mpris_task = tokio::spawn(dbus_mpris::run_mpris_task(event_tx.clone(), media_cmd_rx));
+        let notify_task = tokio::spawn(dbus_notify::run_notify_task(
+            event_tx.clone(),
+            notify_sig_rx,
+        ));
 
         while let Some(cmd) = cmd_rx.recv().await {
             match cmd {
@@ -104,6 +112,13 @@ fn run_sys_thread(
                 SysCommand::MediaCommand(action) => {
                     let _ = media_cmd_tx.send(action);
                 }
+                SysCommand::NotifyClosed { id, reason } => {
+                    let _ = notify_sig_tx.send(dbus_notify::NotifySignal::Closed { id, reason });
+                }
+                SysCommand::NotifyActionInvoked { id, action_key } => {
+                    let _ = notify_sig_tx
+                        .send(dbus_notify::NotifySignal::ActionInvoked { id, action_key });
+                }
                 SysCommand::Shutdown => break,
             }
         }
@@ -112,5 +127,6 @@ fn run_sys_thread(
         net_task.abort();
         upower_task.abort();
         mpris_task.abort();
+        notify_task.abort();
     });
 }

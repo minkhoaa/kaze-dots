@@ -2,7 +2,7 @@ use bitflags::bitflags;
 
 use crate::state::{
     AppState, AudioState, BacklightState, BatteryState, ClockTime, MediaState, MonitorState,
-    NetworkState, OutputInfo, ThemeMode, WorkspaceState,
+    NetworkState, NotificationItem, OutputInfo, ThemeMode, WorkspaceState,
 };
 use crate::surface::SurfaceSpec;
 
@@ -124,6 +124,16 @@ pub enum SystemEvent {
         trigger_osd: bool,
     },
     MediaChanged(MediaState),
+    NotificationReceived(NotificationItem),
+    NotificationCloseRequested {
+        id: u32,
+    },
+    NotificationClearAll,
+    NotificationsBusStatus {
+        owned: bool,
+    },
+    NotificationsCountChanged(u32),
+    DndChanged(bool),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +151,10 @@ pub enum ShellAction {
     AudioToggleMicMute,
     BacklightStep(i32),
     MediaCommand(String),
+    NotifyClosed { id: u32, reason: u32 },
+    NotifyActionInvoked { id: u32, action_key: String },
+    SetDnd(bool),
+    ClearNotifications,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

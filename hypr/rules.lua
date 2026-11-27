@@ -168,7 +168,7 @@ hl.window_rule({
 hl.layer_rule({
     name = "kaze-shell-no-anim",
     match = {
-        namespace = "^(kaze-bar-.+|kaze-island|kaze-osd)$",
+        namespace = "^(kaze-bar-.+|kaze-island|kaze-osd|kaze-notify|kaze-launcher)$",
     },
     no_anim = true,
 })

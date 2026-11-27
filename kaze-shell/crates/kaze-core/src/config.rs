@@ -113,6 +113,38 @@ impl Default for OsdConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotifyConfig {
+    pub enabled: bool,
+    pub position: String,
+    pub width: u32,
+    pub offset_x: i32,
+    pub offset_y: i32,
+    pub gap: i32,
+    pub max_visible: usize,
+    pub history_limit: usize,
+    pub default_timeout_ms: u64,
+    pub low_timeout_ms: u64,
+}
+
+impl Default for NotifyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            position: "top_right".to_string(),
+            width: 340,
+            offset_x: 12,
+            offset_y: 12,
+            gap: 8,
+            max_visible: 4,
+            history_limit: 50,
+            default_timeout_ms: 5000,
+            low_timeout_ms: 3500,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DisplayConfig {
@@ -138,6 +170,7 @@ pub struct Config {
     pub theme: ThemeConfig,
     pub bar: BarConfig,
     pub osd: OsdConfig,
+    pub notifications: NotifyConfig,
     pub display: DisplayConfig,
 }
 
@@ -205,6 +238,10 @@ impl Config {
             eprintln!("kaze-shell: clamping bar.persistent_workspaces to 1..=20");
             self.bar.persistent_workspaces = self.bar.persistent_workspaces.clamp(1, 20);
         }
+        self.notifications.width = self.notifications.width.clamp(220, 640);
+        self.notifications.gap = self.notifications.gap.clamp(0, 32);
+        self.notifications.max_visible = self.notifications.max_visible.clamp(1, 10);
+        self.notifications.history_limit = self.notifications.history_limit.clamp(1, 200);
         Ok(())
     }
 }

@@ -67,7 +67,10 @@ impl KazeExtension for BarExtension {
             | SystemEvent::NetworkChanged(_)
             | SystemEvent::BatteryChanged(_)
             | SystemEvent::AudioChanged { .. }
-            | SystemEvent::MediaChanged(_) => {
+            | SystemEvent::MediaChanged(_)
+            | SystemEvent::DndChanged(_)
+            | SystemEvent::NotificationsCountChanged(_)
+            | SystemEvent::NotificationClearAll => {
                 self.rebuild(ctx.state);
                 DirtyFlags::BAR
             }
@@ -133,14 +136,10 @@ impl KazeExtension for BarExtension {
                     },
                     "notifications" => match button {
                         PointerButton::Left => {
-                            ctx.state.dnd = !ctx.state.dnd;
-                            self.rebuild(ctx.state);
-                            return DirtyFlags::BAR;
+                            ctx.push_action(ShellAction::SetDnd(!ctx.state.dnd));
                         }
                         PointerButton::Right => {
-                            ctx.state.unread_notifications = 0;
-                            self.rebuild(ctx.state);
-                            return DirtyFlags::BAR | DirtyFlags::NOTIFY;
+                            ctx.push_action(ShellAction::ClearNotifications);
                         }
                         PointerButton::Middle => {}
                     },
@@ -163,7 +162,10 @@ impl KazeExtension for BarExtension {
             SystemEvent::KeyInput { .. }
             | SystemEvent::ImeInput { .. }
             | SystemEvent::TimerFired { .. }
-            | SystemEvent::BacklightChanged { .. } => DirtyFlags::NONE,
+            | SystemEvent::BacklightChanged { .. }
+            | SystemEvent::NotificationReceived(_)
+            | SystemEvent::NotificationCloseRequested { .. }
+            | SystemEvent::NotificationsBusStatus { .. } => DirtyFlags::NONE,
         }
     }
 
@@ -253,38 +255,6 @@ impl KazeExtension for BarExtension {
                 IpcResult::Handled {
                     ok: true,
                     message: format!("display-status={}", ctx.state.display_status.kind_name()),
-                    dirty: DirtyFlags::BAR,
-                }
-            }
-            "dnd-status" => IpcResult::Handled {
-                ok: true,
-                message: if ctx.state.dnd { "on" } else { "off" }.into(),
-                dirty: DirtyFlags::NONE,
-            },
-            "dnd-on" => {
-                ctx.state.dnd = true;
-                self.rebuild(ctx.state);
-                IpcResult::Handled {
-                    ok: true,
-                    message: "on".into(),
-                    dirty: DirtyFlags::BAR,
-                }
-            }
-            "dnd-off" => {
-                ctx.state.dnd = false;
-                self.rebuild(ctx.state);
-                IpcResult::Handled {
-                    ok: true,
-                    message: "off".into(),
-                    dirty: DirtyFlags::BAR,
-                }
-            }
-            "dnd-toggle" => {
-                ctx.state.dnd = !ctx.state.dnd;
-                self.rebuild(ctx.state);
-                IpcResult::Handled {
-                    ok: true,
-                    message: if ctx.state.dnd { "on" } else { "off" }.into(),
                     dirty: DirtyFlags::BAR,
                 }
             }
