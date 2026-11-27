@@ -1,6 +1,7 @@
 local ctx = require("kaze._ctx")
 local hypr_user = require("kaze.hypr_user")
 local keybinds_data = require("kaze.keybinds_data")
+local ok_styles, styles = pcall(require, "kaze.styles")
 
 local cfg = ctx.cfg
 
@@ -8,7 +9,32 @@ local focus_state = {
     active = false,
     dnd_was_on = false,
     bar_hidden = false,
+    hidden_bars = {},
 }
+
+local function active_bar_names()
+    if ok_styles and type(styles) == "table" and type(styles.bar_names) == "function" then
+        local cur = styles.current_style()
+        local names = styles.bar_names(cur)
+        if type(names) == "table" and #names > 0 then
+            return names
+        end
+    end
+    return { "default" }
+end
+
+local function monotonic_now()
+    local f = io.open("/proc/uptime", "r")
+    if f then
+        local line = f:read("*l")
+        f:close()
+        local up = line and tonumber(line:match("^(%S+)"))
+        if up then
+            return up
+        end
+    end
+    return os.time()
+end
 
 local function query_dnd_on()
     local p = io.popen("noctalia msg notification-dnd-status 2>/dev/null", "r")
@@ -53,7 +79,11 @@ local function toggle_focus_mode()
                 hl.exec_cmd("noctalia msg notification-dnd-toggle >/dev/null 2>&1 || true")
             end
             if fm.hide_bar == true then
-                hl.exec_cmd("noctalia msg bar-hide default >/dev/null 2>&1 || true")
+                local bars = active_bar_names()
+                focus_state.hidden_bars = bars
+                for _, bar_name in ipairs(bars) do
+                    hl.exec_cmd("noctalia msg bar-hide " .. bar_name .. " >/dev/null 2>&1 || true")
+                end
                 focus_state.bar_hidden = true
             end
             focus_state.active = true
@@ -73,11 +103,15 @@ local function toggle_focus_mode()
                 end
             end
             if focus_state.bar_hidden then
-                hl.exec_cmd("noctalia msg bar-show default >/dev/null 2>&1 || true")
+                local bars = (#focus_state.hidden_bars > 0) and focus_state.hidden_bars or active_bar_names()
+                for _, bar_name in ipairs(bars) do
+                    hl.exec_cmd("noctalia msg bar-show " .. bar_name .. " >/dev/null 2>&1 || true")
+                end
             end
             focus_state.active = false
             focus_state.dnd_was_on = false
             focus_state.bar_hidden = false
+            focus_state.hidden_bars = {}
         end
     end
 end
@@ -213,6 +247,30 @@ local function make_dispatcher(entry)
     error("unknown keybind kind: " .. tostring(kind))
 end
 
+local ghost_super_down = nil
+
+local function on_ghost_super_press()
+    ghost_super_down = monotonic_now()
+    hl.exec_cmd("noctalia msg bar-auto-hide-set off default >/dev/null 2>&1 || true")
+end
+
+local function on_ghost_super_release()
+    local down = ghost_super_down
+    ghost_super_down = nil
+    hl.exec_cmd("noctalia msg bar-auto-hide-set on default >/dev/null 2>&1 || true")
+    if down and (monotonic_now() - down) < 0.25 then
+        hl.exec_cmd("noctalia msg panel-toggle launcher")
+    end
+end
+
+if cfg.ghost_super_peek == true then
+    hl.bind("SUPER_L", on_ghost_super_press, {
+        transparent = true,
+        non_consuming = true,
+        description = "Peek Ghost bar while holding Super",
+    })
+end
+
 for _, entry in ipairs(keybinds_data.build(cfg)) do
     local opts = {}
     if entry.desc and entry.desc ~= "" then
@@ -230,10 +288,19 @@ for _, entry in ipairs(keybinds_data.build(cfg)) do
     if entry.mouse then
         opts.mouse = true
     end
-    if next(opts) then
-        hl.bind(entry.chord, make_dispatcher(entry), opts)
+    local dispatcher
+    if cfg.ghost_super_peek == true and entry.chord == "SUPER + SUPER_L" then
+        dispatcher = on_ghost_super_release
+        opts.release = true
+        opts.transparent = true
+        opts.ignore_mods = true
     else
-        hl.bind(entry.chord, make_dispatcher(entry))
+        dispatcher = make_dispatcher(entry)
+    end
+    if next(opts) then
+        hl.bind(entry.chord, dispatcher, opts)
+    else
+        hl.bind(entry.chord, dispatcher)
     end
 end
 

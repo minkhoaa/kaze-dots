@@ -271,6 +271,85 @@ printf '%s\n' "$@" > "$HOME/noc-args"
             assert_eq(hl_configs[#hl_configs].decoration.blur.enabled, true)
             assert_eq(hl_configs[#hl_configs].animations.enabled, true)
         end)
+
+        -- Ghost Super-hold peek + precedence (DEFAULTS < kaze-style.lua < user.lua) + multi-bar Focus Mode
+        local tmp_k = make_tmp_dir()
+        local ok_k, err_k = pcall(function()
+            local style_lua = tmp_k .. "/kaze-style.lua"
+            local user_lua = tmp_k .. "/user.lua"
+            fs.write_atomic(style_lua, [[
+return {
+    gaps_in = 0,
+    gaps_out = 0,
+    rounding = 14,
+    ghost_super_peek = true,
+    shadow = { enabled = true, range = 20, render_power = 3, color = "rgba(00000038)" },
+}
+]])
+            fs.write_atomic(user_lua, [[
+return {
+    rounding = 4,
+}
+]])
+            local merged = hypr_user.load({
+                style_path = style_lua,
+                user_path = user_lua,
+                profile_path = tmp_k .. "/missing-profile",
+            })
+            assert_eq(merged.gaps_out, 0, "style overlay overrides DEFAULTS")
+            assert_eq(merged.ghost_super_peek, true, "style overlay enables ghost_super_peek")
+            assert_eq(merged.rounding, 4, "user.lua overrides style overlay")
+            local vis_m = hypr_user.visual_config(merged)
+            assert_eq(vis_m.decoration.shadow.enabled, true)
+            assert_eq(vis_m.decoration.shadow.range, 20)
+
+            -- Ghost Super tap (<0.25s) vs hold (>=0.25s)
+            local g_by_chord, g_execs = {}, {}
+            with_mock_hl({ cfg = merged }, function()
+                rawset(_G, "hl", {
+                    config = function() end,
+                    bind = function(keys, dispatcher, opts)
+                        g_by_chord[keys] = { keys = keys, dispatcher = dispatcher, opts = opts }
+                    end,
+                    define_submap = function() end,
+                    exec_cmd = function(cmd) g_execs[#g_execs + 1] = cmd end,
+                    dispatch = function() end,
+                    dsp = {
+                        exec_cmd = function(cmd) return { dsp = "exec_cmd", cmd = cmd } end,
+                        focus = function(args) return { dsp = "focus", args = args } end,
+                        submap = function(name) return { dsp = "submap", name = name } end,
+                        group = { toggle = function() end, lock = function() end, next = function() end, prev = function() end },
+                        window = {
+                            close = function() end, fullscreen = function() end, float = function() end,
+                            pin = function() end, center = function() end, set_prop = function() end,
+                            cycle_next = function() end, move = function() end, drag = function() end, resize = function() end,
+                        },
+                        workspace = { toggle_special = function() end },
+                    },
+                })
+                dofile(repo_dir .. "/hypr/keybinds.lua")
+                assert_true(g_by_chord["SUPER_L"] ~= nil, "registers SUPER_L press bind in Ghost mode")
+                assert_true(g_by_chord["SUPER_L"].opts.transparent and g_by_chord["SUPER_L"].opts.non_consuming)
+                assert_true(g_by_chord["SUPER + SUPER_L"].opts.release and g_by_chord["SUPER + SUPER_L"].opts.ignore_mods)
+
+                -- Quick tap opens launcher and re-enables auto_hide
+                g_by_chord["SUPER_L"].dispatcher()
+                assert_eq(g_execs[#g_execs], "noctalia msg bar-auto-hide-set off default >/dev/null 2>&1 || true")
+                g_by_chord["SUPER + SUPER_L"].dispatcher()
+                assert_eq(g_execs[#g_execs - 1], "noctalia msg bar-auto-hide-set on default >/dev/null 2>&1 || true")
+                assert_eq(g_execs[#g_execs], "noctalia msg panel-toggle launcher")
+
+                -- Hold >= 0.30s only re-enables auto_hide without toggling launcher
+                local before_hold = #g_execs
+                g_by_chord["SUPER_L"].dispatcher()
+                os.execute("sleep 0.30")
+                g_by_chord["SUPER + SUPER_L"].dispatcher()
+                assert_eq(#g_execs, before_hold + 2, "hold must not toggle launcher")
+                assert_eq(g_execs[#g_execs], "noctalia msg bar-auto-hide-set on default >/dev/null 2>&1 || true")
+            end)
+        end)
+        rm_rf(tmp_k)
+        if not ok_k then error(err_k, 0) end
     end)
 end
 

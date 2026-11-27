@@ -4,6 +4,8 @@ state/
 *.pid
 *.tmp
 .DS_Store
+__pycache__/
+*.pyc
 
 # VM artifacts / temporary captures
 artifacts/

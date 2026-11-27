@@ -192,7 +192,7 @@ function M.build(cfg)
             group = "System",
             chord = "CTRL + SUPER + P",
             display = "Ctrl + Super + P",
-            desc = "Toggle control presented workspace on laptop",
+            desc = "Toggle control presented / virtual-share workspace",
             kind = "exec",
             cmd = "kaze-display toggle-control",
         },

@@ -230,6 +230,7 @@ for p in %s/hypr/*.lua \
          %s/mimeapps.list \
          %s/gtk-3.0/settings.ini \
          %s/gtk-3.0/kaze-thunar.css \
+         %s/noctalia/palettes/*.json \
          %s/Thunar/uca.xml \
          %s/.zshrc \
          %s/.zprofile \
@@ -258,8 +259,12 @@ done
         q(config_home),
         q(config_home),
         q(config_home),
+        q(config_home),
+        q(config_home),
+        q(config_home),
         q(fs.home()),
         q(fs.home()),
+        q(config_home),
         q(config_home),
         q(config_home),
         q(config_home),
@@ -297,6 +302,10 @@ done
         config_home .. "/mimeapps.list",
         config_home .. "/gtk-3.0/settings.ini",
         config_home .. "/gtk-3.0/kaze-thunar.css",
+        config_home .. "/noctalia/palettes/Kaze-Swiss.json",
+        config_home .. "/noctalia/palettes/Kaze-Phosphor.json",
+        config_home .. "/noctalia/palettes/Kaze-Amber.json",
+        config_home .. "/noctalia/palettes/Kaze-Retro90s.json",
         config_home .. "/Thunar/uca.xml",
         fs.home() .. "/.zshrc",
         fs.home() .. "/.zprofile",
@@ -353,7 +362,9 @@ do
         if style_state == false and fs.file_exists(noc_cfg) then
             active_style = styles.detect_style(fs.read_file(noc_cfg)) or active_style
         end
-        if styles.get(active_style) then
+        local resolved_preset = styles.get(active_style)
+        if resolved_preset then
+            active_style = resolved_preset.id
             report_ok("style: active preset '" .. active_style .. "'")
         end
     end

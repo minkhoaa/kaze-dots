@@ -44,7 +44,7 @@ templates/               Example ~/.config/hypr/user.lua override file
 - `kaze-display` — Hyprland multi-monitor layout picker (`noctalia dmenu`)
 - `kaze-keys` — searchable Hyprland shortcut list (`noctalia dmenu`)
 - `kaze-project` — `zoxide`/`fd` project switcher (`noctalia dmenu`, Foot shell / Neovim split)
-- `kaze-style` — switch Noctalia v5 visual presets (`omarchy-rail`, `floating-islands`, `concave-notch`, `dynamic-island`)
+- `kaze-style` — switch across 11 Noctalia + Hyprland + GTK3 visual presets (`omarchy-rail`, `swiss-grid`, `corner-hud`, `ghost-zero`, `dynamic-island`, `hardware-notch`, `glass-studio`, `floating-rail`, `tui-hacker`, `retro-90s`, `cinema-frame`)
 - `kaze-tui` — toggle floating `btop` window
 - `kaze-record` — full/region screen, audio & GIF recording (`wf-recorder` + `ffmpeg`, `noctalia dmenu`)
 - `kaze-doctor` — quick health check for packages, symlinks, configs, services, and Noctalia config drift (`--diff`)
@@ -58,7 +58,7 @@ Preview first without touching anything:
 ./scripts/install.sh --profile minimal --dry-run
 ```
 
-Install packages, set Zsh as default login shell, choose a visual preset (`omarchy-rail`, `floating-islands`, `concave-notch`, or `dynamic-island`), and apply configs (backs up existing dotfiles automatically):
+Install packages, set Zsh as default login shell, choose a visual preset (11 presets across Angular, Dynamic, and Retro groups; default `dynamic-island`), and apply configs (backs up existing dotfiles automatically):
 
 ```sh
 ./scripts/install.sh --profile minimal --style dynamic-island   # default 3-island + hover-expanding center pill

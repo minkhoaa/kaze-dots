@@ -604,6 +604,65 @@ function M.plan(mode, monitors, opts)
     return nil, "unknown display mode: " .. tostring(mode)
 end
 
+-- Builds a safe revert plan from the pre-switch monitor snapshot before entering External Only.
+-- Always re-enables the internal panel and preserves kaze-share when present.
+function M.plan_external_revert(prev_monitors, prev_state, opts)
+    if type(prev_monitors) ~= "table" or #prev_monitors == 0 then
+        return nil, "no previous monitors snapshot"
+    end
+    opts = opts or {}
+    prev_state = type(prev_state) == "table" and prev_state or {}
+    local internal, externals = M.pick_roles(prev_monitors)
+    if not internal then
+        return nil, "no internal monitor to revert to"
+    end
+
+    local target_ext = externals[1]
+    if type(opts.target) == "string" and opts.target ~= "" then
+        for _, ext in ipairs(externals) do
+            if ext.name == opts.target then
+                target_ext = ext
+                break
+            end
+        end
+    end
+
+    local revert_mode = "extend-right"
+    if not target_ext or target_ext.disabled == true or prev_state.mode == "internal" then
+        revert_mode = "internal"
+    elseif prev_state.mode == "extend-left" or prev_state.mode == "extend-up" or prev_state.mode == "extend-right" or prev_state.mode == "auto" then
+        revert_mode = prev_state.mode
+    end
+
+    -- Clear mirror_of from snapshot copies because External Only already exited any mirror state.
+    local clean_mons = {}
+    for _, m in ipairs(prev_monitors) do
+        local copy = {}
+        for k, v in pairs(m) do
+            copy[k] = v
+        end
+        copy.mirror_of = "none"
+        clean_mons[#clean_mons + 1] = copy
+    end
+
+    local plan, err = M.plan(revert_mode, clean_mons, {
+        target = target_ext and target_ext.name or nil,
+        was_mirror = false,
+    })
+    if not plan then
+        return nil, err
+    end
+
+    return {
+        mode = revert_mode,
+        eval_cmds = plan.eval_cmds,
+        needs_reload = false,
+        internal_name = internal.name,
+        target_ext = plan.target_ext,
+        summary = "Reverted to " .. revert_mode .. " (" .. internal.name .. ")",
+    }
+end
+
 -- Safety rules
 
 function M.should_ignore_hotplug(mon_name, ctx)

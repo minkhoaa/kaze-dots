@@ -43,6 +43,9 @@ local DEFAULTS = {
     border_size = 2,
     rounding = 0,
     shadow = false,
+    tui_drawer_x = 58,
+    ghost_super_peek = false,
+    border_override = nil,
     blur = {
         enabled = true,
         size = 3,
@@ -94,11 +97,27 @@ function M.visual_config(cfg)
     cfg = cfg or DEFAULTS
     local blur = type(cfg.blur) == "table" and cfg.blur or {}
     local op = type(cfg.opacity) == "table" and cfg.opacity or {}
+    local shadow_tbl
+    if type(cfg.shadow) == "table" then
+        shadow_tbl = {
+            enabled = cfg.shadow.enabled == true,
+        }
+        if cfg.shadow.range ~= nil then shadow_tbl.range = tonumber(cfg.shadow.range) end
+        if cfg.shadow.render_power ~= nil then shadow_tbl.render_power = tonumber(cfg.shadow.render_power) end
+        if type(cfg.shadow.color) == "string" and cfg.shadow.color ~= "" then
+            shadow_tbl.color = cfg.shadow.color
+        end
+    else
+        shadow_tbl = {
+            enabled = cfg.shadow == true,
+        }
+    end
     return {
         general = {
             allow_tearing = false,
             gaps_in = tonumber(cfg.gaps_in) or 4,
             gaps_out = tonumber(cfg.gaps_out) or 8,
+            border_size = tonumber(cfg.border_size) or 2,
         },
         decoration = {
             rounding = tonumber(cfg.rounding) or 0,
@@ -110,14 +129,16 @@ function M.visual_config(cfg)
                 passes = blur.passes or 1,
                 xray = blur.xray ~= false,
             },
-            shadow = {
-                enabled = cfg.shadow == true,
-            },
+            shadow = shadow_tbl,
         },
         animations = {
             enabled = true,
         },
     }
+end
+
+function M.style_path(home)
+    return fs.config_dir(home) .. "/hypr/kaze-style.lua"
 end
 
 function M.user_path(home)
@@ -128,9 +149,29 @@ function M.profile_path(home)
     return fs.config_dir(home) .. "/kaze/profile"
 end
 
+local function load_overlay(cfg, path)
+    if not fs.file_exists(path) then
+        return
+    end
+    local chunk, err = loadfile(path, "t", {})
+    if not chunk then
+        io.stderr:write("kaze warning: failed to load " .. path .. ": " .. tostring(err) .. "\n")
+        return
+    end
+    local ok, res = pcall(chunk)
+    if ok and type(res) == "table" then
+        deepmerge(cfg, res)
+    elseif not ok then
+        io.stderr:write("kaze warning: error running " .. path .. ": " .. tostring(res) .. "\n")
+    end
+end
+
 function M.load(opts)
     opts = opts or {}
     local cfg = deepcopy(DEFAULTS)
+
+    local spath = opts.style_path or M.style_path(opts.home)
+    load_overlay(cfg, spath)
 
     local prof_path = opts.profile_path or M.profile_path(opts.home)
     local raw_prof = fs.read_file(prof_path)
@@ -142,19 +183,7 @@ function M.load(opts)
     end
 
     local upath = opts.user_path or M.user_path(opts.home)
-    if fs.file_exists(upath) then
-        local chunk, err = loadfile(upath, "t", {})
-        if not chunk then
-            io.stderr:write("kaze warning: failed to load " .. upath .. ": " .. tostring(err) .. "\n")
-        else
-            local ok, res = pcall(chunk)
-            if ok and type(res) == "table" then
-                deepmerge(cfg, res)
-            elseif not ok then
-                io.stderr:write("kaze warning: error running " .. upath .. ": " .. tostring(res) .. "\n")
-            end
-        end
-    end
+    load_overlay(cfg, upath)
 
     return cfg
 end

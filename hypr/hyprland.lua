@@ -97,3 +97,14 @@ end
 if noctalia_theme and type(noctalia_theme.apply_theme) == "function" then
     noctalia_theme.apply_theme()
 end
+
+if type(cfg.border_override) == "table" and (cfg.border_override.active or cfg.border_override.inactive) then
+    local col = {}
+    if cfg.border_override.active then
+        col.active_border = cfg.border_override.active
+    end
+    if cfg.border_override.inactive then
+        col.inactive_border = cfg.border_override.inactive
+    end
+    hl.config({ general = { col = col } })
+end

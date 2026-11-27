@@ -114,6 +114,15 @@ local function toml_quote(s)
     return '"' .. tostring(s):gsub("\\", "\\\\"):gsub('"', '\\"') .. '"'
 end
 
+local function is_live_pill_style()
+    local raw = fs.read_file(fs.config_dir() .. "/kaze/style")
+    if not raw then
+        return false
+    end
+    local st = raw:match("^%s*(%S+)%s*$")
+    return st == "dynamic-island" or st == "hardware-notch" or st == "cinema-frame"
+end
+
 local function sync_bar_indicator(recording, audio_mode, gif_mode)
     if not fs.command_exists("noctalia") then
         return
@@ -126,19 +135,28 @@ local function sync_bar_indicator(recording, audio_mode, gif_mode)
     if wtype ~= "custom_button" then
         return
     end
-    local glyph, color, tooltip
+    local live_pill = is_live_pill_style()
+    local glyph, color, label, tooltip
     if recording then
         glyph = "circle-dot"
         color = "error"
+        label = live_pill and (gif_mode and "GIF" or "REC") or ""
         local mode_tag = gif_mode and "GIF" or (audio_mode and audio_mode ~= "" and "Video + Audio" or "Video")
         tooltip = "Recording active (" .. mode_tag .. ") — click to stop"
     else
         glyph = "video"
         color = "on_surface_variant"
+        label = ""
         tooltip = "Screen Recorder (Left: Menu, Right: Toggle)"
+    end
+    if recording then
+        os.execute("noctalia msg config-set widget.record.enabled true >/dev/null 2>&1 || true")
+    elseif live_pill then
+        os.execute("noctalia msg config-set widget.record.enabled false >/dev/null 2>&1 || true")
     end
     os.execute("noctalia msg config-set widget.record.glyph " .. q(toml_quote(glyph)) .. " >/dev/null 2>&1 || true")
     os.execute("noctalia msg config-set widget.record.icon_color " .. q(toml_quote(color)) .. " >/dev/null 2>&1 || true")
+    os.execute("noctalia msg config-set widget.record.label " .. q(toml_quote(label)) .. " >/dev/null 2>&1 || true")
     os.execute("noctalia msg config-set widget.record.tooltip " .. q(toml_quote(tooltip)) .. " >/dev/null 2>&1 || true")
 end
 

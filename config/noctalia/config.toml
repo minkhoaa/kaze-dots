@@ -46,13 +46,18 @@ floating_offset = 8
 control_center_placement = "attached"
 control_center_position = "auto"
 launcher_placement = "floating"
-launcher_position = "center"
+launcher_position = "auto"
 clipboard_placement = "floating"
 clipboard_position = "center"
 session_placement = "floating"
-session_position = "center"
+session_position = "auto"
 wallpaper_placement = "attached"
 wallpaper_position = "auto"
+open_near_click_control_center = true
+open_near_click_launcher = true
+open_near_click_clipboard = true
+open_near_click_session = true
+open_near_click_wallpaper = true
 
 [shell.session]
 grid = true

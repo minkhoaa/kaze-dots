@@ -12,7 +12,7 @@ hl.config({
         allow_tearing = vis.general.allow_tearing,
         gaps_in = vis.general.gaps_in,
         gaps_out = vis.general.gaps_out,
-        border_size = tonumber(cfg.border_size) or 2,
+        border_size = vis.general.border_size,
         ["col.active_border"] = "rgba(7aa2f7ee)",
         ["col.inactive_border"] = "rgba(414868aa)",
     },

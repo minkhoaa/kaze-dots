@@ -81,12 +81,13 @@ hl.window_rule({
 })
 
 -- Floating TUI drawer (sysmon / btop), centered Mirror Optimizer TUI, and top dropdown
+local drawer_x = tonumber(cfg.tui_drawer_x) or 58
 hl.window_rule({
     name = "kaze-tui-drawer",
     match = { class = "^kaze-tui$" },
     float = true,
     size = "(monitor_w*0.42) (monitor_h-24)",
-    move = "58 12",
+    move = string.format("%d 12", drawer_x),
     animation = "slide left",
 })
 
@@ -141,6 +142,17 @@ hl.window_rule({
     keep_aspect_ratio = true,
     size = "(monitor_w*0.28) (monitor_h*0.28)",
     move = "(monitor_w*0.98-window_w) (monitor_h*0.97-window_h)",
+})
+
+hl.window_rule({
+    name = "kaze-share-control",
+    match = {
+        class = "^at\\.yrlf\\.wl_mirror$",
+        title = "^kaze-share-control$",
+    },
+    opaque = true,
+    no_blur = true,
+    no_focus = true,
 })
 
 -- Disable Hyprland layer animations on Noctalia surfaces so Noctalia's internal

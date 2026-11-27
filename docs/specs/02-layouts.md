@@ -50,9 +50,25 @@ Layout geometry is unified across Noctalia (`config/noctalia/config.toml`) and H
 - **Noctalia Mirror Widget (`[widget.mirror]`):** `glyph = "server"` (switches to `"refresh"` + `"primary"` while a scan runs, zero polling), Left-click `kaze-mirror --menu`, Right-click `kaze-mirror --tui-window`.
 - **Virtual Share Preview (`^at\.yrlf\.wl_mirror$`):** pinned bottom-right PiP (`28% × 28%`, `keep_aspect_ratio = true`, `opaque = true`, `no_blur = true`).
 
-## 3. Customization Without Re-Generating Configs
+## 3. 11-Preset Visual Theme Suite (`kaze-style` + `lua/kaze/styles.lua`)
 
-Users who prefer a top/bottom bar, rounded corners, different widget ordering, or different transparency edit directly in **Noctalia Settings (`Super + I`)** or `~/.config/noctalia/config.toml`:
-- `scripts/apply.sh` preserves `~/.config/noctalia/config.toml` across re-applies.
+`kaze-style` switches across **11 canonical presets** in 3 groups (plus backwards-compatible aliases `floating-islands` → `corner-hud`, `concave-notch` → `hardware-notch`, etc.) by updating Noctalia (`~/.config/noctalia/config.toml`), Hyprland geometry overlay (`~/.config/hypr/kaze-style.lua`, always overridden by `~/.config/hypr/user.lua`), and GTK3/Thunar CSS (`~/.config/gtk-3.0/kaze-style.css`) with **0 extra daemons and 0 polling**:
+
+| Group | Preset ID | Bar / Dock / Hyprland Behavior |
+|---|---|---|
+| **Angular & Minimal** | `omarchy-rail` | Flush left `42px` rail, `0px` corners, `2px` borders, `0` shadow, `tui_drawer_x = 50` |
+| | `swiss-grid` | `Kaze-Swiss` light palette, `1px` rules, text-only top bar (`ws` `minimal` with `" / "`, `show_glyph = false`), `gaps_out = 16` |
+| | `corner-hud` | Transparent top bar with 2 corner islands (`group:corner_left`, `group:corner_right`) and open center (`center = []`) |
+| | `ghost-zero` | Auto-hide top bar (`auto_hide = true`, `reserve_space = false`), `0px` window gaps, `Super_L` hold-to-peek (`<0.25s` tap toggles launcher) |
+| **Dynamic & Modern** | `dynamic-island` *(Default)* | 3-cluster top bar (`group:island_left` launcher + `focus_hint` workspace dots, centered theme-synced Live Activity `group:island` (`surface_container`) with `island_clock` + event-driven `media`/`record`/`present` + `notifications` + `control-center`, and `group:island_right` quick controls `tray`/`display`/`mirror`/`net`/`bt`/`vol`/`bat`/`session`); notif/OSD anchored `top_right` |
+| | `hardware-notch` | Flush top center notch (`margin_edge = 0`, `concave_edge_corners = true`) with `focus_hint` dots, clock, and conditional media/live indicators |
+| | `glass-studio` | `28px` frosted top menu bar (`active_window` + clock) + auto-hiding bottom `[dock]`, `transparency_mode = "glass"`, `rounding = 14`, soft shadows |
+| | `floating-rail` | Two-tier bars (`[bar] order = [ "default", "rail" ]`): top `active_window` + status pill + left workspace/app launcher pill |
+| **Retro & Editorial** | `tui-hacker` | `Kaze-Phosphor` CRT palette, `JetBrainsMono Nerd Font`, bracketed text-only `[ WS ... ] [ ... ]` clusters, `0px` / `1px` |
+| | `retro-90s` | `Kaze-Retro90s` warm gray palette, bottom `36px` taskbar with `Start` button + `taskbar`, 2-layer GTK bevels & 45° Hyprland bevel borders |
+| | `cinema-frame` | Wide gallery margins (`gaps_out = 28`), ultra-slim `22px` bottom subtitle strip, bottom-right notif/OSD |
+
+Users who prefer manual adjustments edit directly in **Noctalia Settings (`Super + I`)** or `~/.config/noctalia/config.toml` and `~/.config/hypr/user.lua`:
+- `scripts/apply.sh` preserves `~/.config/noctalia/config.toml` and `~/.config/hypr/user.lua` across re-applies.
 - `kaze-doctor --diff` reports newly added upstream sections, keys, or bar widgets from `config/noctalia/config.toml` without overwriting user choices.
-- Per-machine Hyprland geometry overrides (`gaps_in`, `gaps_out`, `border_size`, `rounding`, `smart_gaps`, `persistent_workspaces`, `blur`, `opacity`) live in `~/.config/hypr/user.lua`.
+- Per-machine Hyprland geometry overrides (`gaps_in`, `gaps_out`, `border_size`, `rounding`, `smart_gaps`, `persistent_workspaces`, `blur`, `opacity`) live in `~/.config/hypr/user.lua` and take precedence over `kaze-style.lua`.

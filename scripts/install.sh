@@ -47,8 +47,10 @@ and records the active profile and visual style under ~/.config/kaze without ove
 
 Options:
   --profile <minimal|full>  Select installation profile (default: minimal)
-  --style <preset>          Select Noctalia visual preset (dynamic-island, omarchy-rail,
-                            floating-islands, concave-notch; default: dynamic-island)
+  --style <preset>          Select visual preset (default: dynamic-island)
+                              Angular: omarchy-rail, swiss-grid, corner-hud, ghost-zero
+                              Dynamic: dynamic-island, hardware-notch, glass-studio, floating-rail
+                              Retro:   tui-hacker, retro-90s, cinema-frame
   --dry-run, --check        Print installation plan without writing any files
   --skip-packages           Skip pacman package installation and apply dotfiles only
   --no-zsh                  Do not change the default login shell to Zsh
@@ -79,7 +81,7 @@ while (( $# > 0 )); do
             ;;
         --style)
             if (( $# < 2 )) || [[ -z "${2:-}" ]]; then
-                echo "install.sh: --style requires an argument (omarchy-rail, floating-islands, concave-notch, dynamic-island)" >&2
+                echo "install.sh: --style requires a preset name (e.g. dynamic-island, omarchy-rail, swiss-grid)" >&2
                 exit 2
             fi
             STYLE="$2"
@@ -144,9 +146,18 @@ case "$PROFILE" in
 esac
 
 case "$STYLE" in
-    omarchy-rail|floating-islands|concave-notch|dynamic-island) ;;
+    omarchy-rail|swiss-grid|corner-hud|ghost-zero|dynamic-island|hardware-notch|glass-studio|floating-rail|tui-hacker|retro-90s|cinema-frame) ;;
+    brutalist|omarchy) STYLE="omarchy-rail" ;;
+    swiss|notion)      STYLE="swiss-grid" ;;
+    floating-islands)  STYLE="corner-hud" ;;
+    ghost|zero-bar)    STYLE="ghost-zero" ;;
+    concave-notch)     STYLE="hardware-notch" ;;
+    glass|macos)       STYLE="glass-studio" ;;
+    tui|hacker)        STYLE="tui-hacker" ;;
+    retro|win95|pixel) STYLE="retro-90s" ;;
+    cinema)            STYLE="cinema-frame" ;;
     *)
-        echo "install.sh: invalid style '$STYLE' (expected: omarchy-rail, floating-islands, concave-notch, dynamic-island)" >&2
+        echo "install.sh: invalid style '$STYLE' (expected: omarchy-rail, swiss-grid, corner-hud, ghost-zero, dynamic-island, hardware-notch, glass-studio, floating-rail, tui-hacker, retro-90s, cinema-frame)" >&2
         exit 2
         ;;
 esac
@@ -758,20 +769,130 @@ draw_style_card() {
     fi
 }
 
+STYLE_IDS=(
+    "omarchy-rail"
+    "swiss-grid"
+    "corner-hud"
+    "ghost-zero"
+    "dynamic-island"
+    "hardware-notch"
+    "glass-studio"
+    "floating-rail"
+    "tui-hacker"
+    "retro-90s"
+    "cinema-frame"
+)
+STYLE_TITLES=(
+    "Omarchy / Brutalist"
+    "Swiss Grid"
+    "Corner HUD"
+    "Ghost / Zero-Bar"
+    "Dynamic Island"
+    "Hardware Notch"
+    "Glass Studio"
+    "Floating Rail"
+    "TUI / Hacker Frame"
+    "Retro 90s / Pixel OS"
+    "Cinema Frame"
+)
+STYLE_GROUPS=(
+    "Angular"
+    "Angular"
+    "Angular"
+    "Angular"
+    "Dynamic"
+    "Dynamic"
+    "Dynamic"
+    "Dynamic"
+    "Retro"
+    "Retro"
+    "Retro"
+)
+STYLE_TAGS=(
+    ""
+    ""
+    ""
+    ""
+    "[Default]"
+    ""
+    ""
+    ""
+    ""
+    ""
+    ""
+)
+STYLE_DESCS=(
+    "Flush left 42px industrial rail, 0px corners, 2px borders"
+    "Warm paper light grid, 1px lines, text-only top bar"
+    "Two corner clusters with empty center horizon"
+    "0px edge-to-edge windows; hold Super or edge to peek bar"
+    "Centered black pill expanding on media, record & share"
+    "Flush top center hardware notch with concave corners"
+    "28px frosted top bar + auto-hiding bottom dock"
+    "Top window/clock pill + left workspace/app rail"
+    "Monospace [ bracketed ] clusters & phosphor CRT palette"
+    "Win95/BeOS bottom taskbar, Start button & 2-tone bevels"
+    "Wide 28px gallery margins + slim 22px bottom subtitle"
+)
+STYLE_SCROLL=0
+
+style_index_of() {
+    local target="$1" i
+    for (( i=0; i<${#STYLE_IDS[@]}; i++ )); do
+        if [[ "${STYLE_IDS[$i]}" == "$target" ]]; then
+            echo "$i"
+            return 0
+        fi
+    done
+    echo "4"
+}
+
 draw_screen_style() {
     frame_reset
     tui_render_header 2
     tui_box_top
-    tui_box_text "Select Noctalia v5 visual style preset (0 extra RAM)" "${C_BOLD}${C_FG}"
-    tui_box_empty
+    tui_box_text "Select visual preset (0 extra daemons, 0 polling)" "${C_BOLD}${C_FG}"
+    tui_box_mid
 
-    draw_style_card "dynamic-island" "1 Dynamic Island" "[Default]" "3 top islands + hover-expanding center Dynamic Island"
-    draw_style_card "omarchy-rail" "2 Omarchy Rail" "" "Left vertical 42px bar, 0px sharp corners, 2px borders"
-    draw_style_card "floating-islands" "3 Floating Islands" "" "Transparent top bar, 3 independent capsule_group islands"
-    draw_style_card "concave-notch" "4 Concave Notch" "" "Flush top bar (margin_edge=0), Caelestia concave corners"
+    local total="${#STYLE_IDS[@]}"
+    local sel_idx
+    sel_idx="$(style_index_of "$STYLE")"
+    local max_cards=$(( (TERM_ROWS - 14) / 2 ))
+    if (( TERM_ROWS < 23 )); then
+        max_cards=$(( (TERM_ROWS - 8) / 2 ))
+    fi
+    (( max_cards < 3 )) && max_cards=3
+    (( max_cards > total )) && max_cards=$total
+
+    if (( sel_idx < STYLE_SCROLL )); then
+        STYLE_SCROLL=$sel_idx
+    elif (( sel_idx >= STYLE_SCROLL + max_cards )); then
+        STYLE_SCROLL=$(( sel_idx - max_cards + 1 ))
+    fi
+    local max_scroll=$(( total - max_cards ))
+    (( max_scroll < 0 )) && max_scroll=0
+    (( STYLE_SCROLL > max_scroll )) && STYLE_SCROLL=$max_scroll
+    (( STYLE_SCROLL < 0 )) && STYLE_SCROLL=0
+
+    local end=$(( STYLE_SCROLL + max_cards ))
+    (( end > total )) && end=$total
+    local i num tag_txt
+    for (( i=STYLE_SCROLL; i<end; i++ )); do
+        num=$(( i + 1 ))
+        tag_txt="[${STYLE_GROUPS[$i]}]"
+        if [[ -n "${STYLE_TAGS[$i]}" ]]; then
+            tag_txt+=" ${STYLE_TAGS[$i]}"
+        fi
+        draw_style_card "${STYLE_IDS[$i]}" "${num}. ${STYLE_TITLES[$i]}" "$tag_txt" "${STYLE_DESCS[$i]}"
+    done
+
+    if (( max_scroll > 0 )); then
+        tui_box_mid
+        tui_box_text "Showing $(( STYLE_SCROLL + 1 ))-${end} of ${total} presets (Up/Down or PgUp/PgDn to scroll)" "$C_MUTED"
+    fi
 
     tui_box_bottom
-    tui_render_footer "Up/Down or 1-4 Select   Enter Next   Esc Back   p Packages"
+    tui_render_footer "Up/Down/PgUp/PgDn Move   1-9 Jump   Enter Next   Esc Back   p Packages"
     frame_flush "$FRAME_LINES"
 }
 
@@ -1174,29 +1295,39 @@ run_tui_wizard() {
                 esac
                 ;;
             style)
+                local s_idx s_total="${#STYLE_IDS[@]}"
+                s_idx="$(style_index_of "$STYLE")"
                 case "$key" in
                     UP)
-                        case "$STYLE" in
-                            dynamic-island)   STYLE="concave-notch" ;;
-                            omarchy-rail)     STYLE="dynamic-island" ;;
-                            floating-islands) STYLE="omarchy-rail" ;;
-                            concave-notch)    STYLE="floating-islands" ;;
-                        esac
+                        s_idx=$(( (s_idx - 1 + s_total) % s_total ))
+                        STYLE="${STYLE_IDS[$s_idx]}"
                         STYLE_EXPLICIT=true
                         ;;
                     DOWN)
-                        case "$STYLE" in
-                            dynamic-island)   STYLE="omarchy-rail" ;;
-                            omarchy-rail)     STYLE="floating-islands" ;;
-                            floating-islands) STYLE="concave-notch" ;;
-                            concave-notch)    STYLE="dynamic-island" ;;
-                        esac
+                        s_idx=$(( (s_idx + 1) % s_total ))
+                        STYLE="${STYLE_IDS[$s_idx]}"
                         STYLE_EXPLICIT=true
                         ;;
-                    1) STYLE="dynamic-island"; STYLE_EXPLICIT=true ;;
-                    2) STYLE="omarchy-rail"; STYLE_EXPLICIT=true ;;
-                    3) STYLE="floating-islands"; STYLE_EXPLICIT=true ;;
-                    4) STYLE="concave-notch"; STYLE_EXPLICIT=true ;;
+                    PGUP)
+                        s_idx=$(( s_idx - 4 ))
+                        (( s_idx < 0 )) && s_idx=0
+                        STYLE="${STYLE_IDS[$s_idx]}"
+                        STYLE_EXPLICIT=true
+                        ;;
+                    PGDN)
+                        s_idx=$(( s_idx + 4 ))
+                        (( s_idx >= s_total )) && s_idx=$(( s_total - 1 ))
+                        STYLE="${STYLE_IDS[$s_idx]}"
+                        STYLE_EXPLICIT=true
+                        ;;
+                    1|2|3|4|5|6|7|8|9)
+                        STYLE="${STYLE_IDS[$(( key - 1 ))]}"
+                        STYLE_EXPLICIT=true
+                        ;;
+                    0)
+                        STYLE="${STYLE_IDS[9]}"
+                        STYLE_EXPLICIT=true
+                        ;;
                     ENTER|RIGHT|TAB)
                         TUI_SCREEN="options"
                         ;;
@@ -1581,6 +1712,30 @@ if [[ ! -f "$LAST_BACKUP" ]] && { [[ -f "$STYLE_FILE" ]] || [[ -L "$STYLE_FILE" 
     PREINSTALL_STYLE_CONTENT="$(cat -- "$STYLE_FILE")"
 fi
 
+HYPR_STYLE_FILE="$CONFIG_HOME/hypr/kaze-style.lua"
+HAD_PREINSTALL_HYPR_STYLE=false
+PREINSTALL_HYPR_STYLE_CONTENT=""
+if [[ ! -f "$LAST_BACKUP" ]] && { [[ -f "$HYPR_STYLE_FILE" ]] || [[ -L "$HYPR_STYLE_FILE" ]]; }; then
+    HAD_PREINSTALL_HYPR_STYLE=true
+    PREINSTALL_HYPR_STYLE_CONTENT="$(cat -- "$HYPR_STYLE_FILE")"
+fi
+
+GTK_STYLE_FILE="$CONFIG_HOME/gtk-3.0/kaze-style.css"
+HAD_PREINSTALL_GTK_STYLE=false
+PREINSTALL_GTK_STYLE_CONTENT=""
+if [[ ! -f "$LAST_BACKUP" ]] && { [[ -f "$GTK_STYLE_FILE" ]] || [[ -L "$GTK_STYLE_FILE" ]]; }; then
+    HAD_PREINSTALL_GTK_STYLE=true
+    PREINSTALL_GTK_STYLE_CONTENT="$(cat -- "$GTK_STYLE_FILE")"
+fi
+
+THEME_BACKUP_FILE="$CONFIG_HOME/kaze/saved-theme.json"
+HAD_PREINSTALL_THEME_BACKUP=false
+PREINSTALL_THEME_BACKUP_CONTENT=""
+if [[ ! -f "$LAST_BACKUP" ]] && { [[ -f "$THEME_BACKUP_FILE" ]] || [[ -L "$THEME_BACKUP_FILE" ]]; }; then
+    HAD_PREINSTALL_THEME_BACKUP=true
+    PREINSTALL_THEME_BACKUP_CONTENT="$(cat -- "$THEME_BACKUP_FILE")"
+fi
+
 "$REPO_DIR/scripts/apply.sh" ${APPLY_FLAGS[@]+"${APPLY_FLAGS[@]}"}
 
 mkdir -p -- "$(dirname -- "$PROFILE_FILE")"
@@ -1590,12 +1745,7 @@ if [[ "$PROFILE" == "full" ]] && [[ -f "$CONFIG_HOME/noctalia/config.toml" ]]; t
     sed -i 's/^polkit_agent = false$/polkit_agent = true/' "$CONFIG_HOME/noctalia/config.toml"
 fi
 
-if [[ "$STYLE" != "omarchy-rail" ]] || [[ "$STYLE_EXPLICIT" == true ]]; then
-    KAZE_DOTS_DIR="$REPO_DIR" KAZE_STYLE_QUIET=1 "$BIN_HOME/kaze-style" --no-reload "$STYLE" >/dev/null
-else
-    mkdir -p -- "$(dirname -- "$STYLE_FILE")"
-    printf '%s\n' "$STYLE" > "$STYLE_FILE"
-fi
+KAZE_DOTS_DIR="$REPO_DIR" KAZE_STYLE_QUIET=1 "$BIN_HOME/kaze-style" --no-reload "$STYLE" >/dev/null
 
 record_state_file() {
     local dst="$1" had_pre="$2" pre_content="$3"
@@ -1625,6 +1775,11 @@ record_state_file() {
 
 record_state_file "$PROFILE_FILE" "$HAD_PREINSTALL_PROFILE" "$PREINSTALL_PROFILE_CONTENT"
 record_state_file "$STYLE_FILE" "$HAD_PREINSTALL_STYLE" "$PREINSTALL_STYLE_CONTENT"
+record_state_file "$HYPR_STYLE_FILE" "$HAD_PREINSTALL_HYPR_STYLE" "$PREINSTALL_HYPR_STYLE_CONTENT"
+record_state_file "$GTK_STYLE_FILE" "$HAD_PREINSTALL_GTK_STYLE" "$PREINSTALL_GTK_STYLE_CONTENT"
+if [[ -f "$THEME_BACKUP_FILE" ]] || [[ "$HAD_PREINSTALL_THEME_BACKUP" == true ]]; then
+    record_state_file "$THEME_BACKUP_FILE" "$HAD_PREINSTALL_THEME_BACKUP" "$PREINSTALL_THEME_BACKUP_CONTENT"
+fi
 log_ok "Profile '${PROFILE}' and style '${STYLE}' recorded under $CONFIG_HOME/kaze"
 
 # Step 4: Default login shell

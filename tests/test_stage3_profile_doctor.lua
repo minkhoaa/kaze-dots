@@ -84,12 +84,12 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             local _, bad_ok = read_all(env .. " " .. installer .. " --profile bogus --dry-run 2>&1")
             assert_true(not bad_ok)
 
-            -- Invoking via POSIX `sh scripts/install.sh` re-execs cleanly under bash
+            -- Invoking via POSIX `sh scripts/install.sh` re-execs cleanly under bash and resolves style alias
             local sh_out, sh_ok = read_all(env .. " sh " .. installer .. " --profile minimal --style floating-islands --dry-run 2>&1")
             assert_true(sh_ok, "sh scripts/install.sh --dry-run should succeed: " .. sh_out)
             assert_contains(sh_out, "Kaze profile: minimal")
-            assert_contains(sh_out, "Kaze style: floating-islands")
-            assert_contains(sh_out, "style=floating-islands")
+            assert_contains(sh_out, "Kaze style: corner-hud")
+            assert_contains(sh_out, "style=corner-hud")
             local _, bad_style_ok = read_all(env .. " " .. installer .. " --style bogus --dry-run 2>&1")
             assert_true(not bad_style_ok)
         end)
@@ -138,6 +138,10 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
                 cfg .. "/zathura/zathurarc",
                 cfg .. "/imv/config",
                 cfg .. "/mimeapps.list",
+                cfg .. "/noctalia/palettes/Kaze-Swiss.json",
+                cfg .. "/noctalia/palettes/Kaze-Phosphor.json",
+                cfg .. "/noctalia/palettes/Kaze-Amber.json",
+                cfg .. "/noctalia/palettes/Kaze-Retro90s.json",
                 data .. "/applications/yazi.desktop",
                 home .. "/.zshrc",
                 home .. "/.zprofile",
@@ -151,6 +155,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             end
             assert_eq(fs.read_file(prof_file), "full\n")
             assert_eq(fs.read_file(cfg .. "/kaze/style"), "dynamic-island\n")
+            assert_true(fs.file_exists(cfg .. "/hypr/kaze-style.lua"), "install creates hypr/kaze-style.lua")
+            assert_true(fs.file_exists(cfg .. "/gtk-3.0/kaze-style.css"), "install creates gtk-3.0/kaze-style.css")
             assert_contains(assert(fs.read_file(cfg .. "/noctalia/config.toml")), "polkit_agent = true\n")
             assert_contains(assert(fs.read_file(cfg .. "/noctalia/config.toml")), 'id = "island"\n')
 
@@ -171,6 +177,10 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
                 cfg .. "/zathura/zathurarc",
                 cfg .. "/imv/config",
                 cfg .. "/mimeapps.list",
+                cfg .. "/noctalia/palettes/Kaze-Swiss.json",
+                cfg .. "/noctalia/palettes/Kaze-Phosphor.json",
+                cfg .. "/noctalia/palettes/Kaze-Amber.json",
+                cfg .. "/noctalia/palettes/Kaze-Retro90s.json",
                 data .. "/applications/yazi.desktop",
                 home .. "/.zshrc",
                 home .. "/.zprofile",
@@ -193,13 +203,23 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             local st_cfg = assert(fs.read_file(cfg .. "/noctalia/config.toml"))
             assert_contains(st_cfg, "polkit_agent = true\n")
             assert_contains(st_cfg, 'id = "island"\n')
-            assert_contains(st_cfg, 'position = "top_center"\n')
-            assert_contains(st_cfg, "offset_y = 6\n")
+            assert_contains(st_cfg, 'position = "top_right"\n')
+            assert_contains(st_cfg, "offset_y = 12\n")
 
             local doc = q(repo_dir .. "/bin/kaze-doctor")
             local diff_dyn, diff_dyn_ok = read_all(env .. " " .. doc .. " --diff --template " .. q(repo_dir .. "/config/noctalia/config.toml") .. " 2>&1")
             assert_true(diff_dyn_ok, "kaze-doctor --diff failed on dynamic-island: " .. diff_dyn)
             assert_contains(diff_dyn, "Status: up to date")
+
+            -- kaze-doctor --diff stays clean across all 11 presets
+            local styles = require("kaze.styles")
+            for _, preset in ipairs(styles.list()) do
+                local st_res = read_all(env .. " KAZE_DOTS_DIR=" .. q(repo_dir) .. " " .. q(home .. "/.local/bin/kaze-style") .. " --no-reload " .. preset.id .. " 2>&1")
+                assert_contains(st_res, "Applied style '" .. preset.id .. "'")
+                local d_out, d_ok = read_all(env .. " " .. doc .. " --diff --template " .. q(repo_dir .. "/config/noctalia/config.toml") .. " 2>&1")
+                assert_true(d_ok, "kaze-doctor --diff failed on " .. preset.id .. ": " .. d_out)
+                assert_contains(d_out, "Status: up to date", "0 drift for preset " .. preset.id)
+            end
 
             local rb2_dir = assert(fs.read_file(cfg .. "/kaze/last-backup")):gsub("\n$", "")
             assert(read_all(env .. " " .. q(rb2_dir .. "/rollback.sh") .. " --yes 2>&1"))
@@ -514,13 +534,38 @@ if [ "${DUP_NOC:-0}" = 1 ]; then printf '  199 noctalia /usr/bin/noctalia\n'; fi
         assert_eq(rec_ctrl.restore_bar, true)
         assert_eq(rec_ctrl.restore_dnd, true)
 
+        -- plan_external_revert restores exact prior layout, clears mirror_of, and preserves kaze-share
+        local rev_left = assert(display.plan_external_revert(mons, { mode = "extend-left" }, { target = "HDMI-A-1" }))
+        assert_eq(rev_left.mode, "extend-left")
+        assert_eq(rev_left.needs_reload, false)
+        assert_eq(rev_left.internal_name, "eDP-1")
+        assert_contains(table.concat(rev_left.eval_cmds, "\n"), 'output = "eDP-1"')
+        assert_contains(table.concat(rev_left.eval_cmds, "\n"), 'position = "auto-left"')
+        assert_contains(table.concat(rev_left.eval_cmds, "\n"), 'output = "kaze-share"')
+
+        local rev_mir = assert(display.plan_external_revert(mirrored_mons, { mode = "mirror" }, { target = "HDMI-A-1" }))
+        assert_eq(rev_mir.mode, "extend-right")
+        assert_eq(rev_mir.needs_reload, false, "external revert must not trigger unnecessary mirror reload")
+        assert_contains(table.concat(rev_mir.eval_cmds, "\n"), 'output = "eDP-1"')
+        assert_contains(table.concat(rev_mir.eval_cmds, "\n"), 'output = "kaze-share"')
+
+        local ext_disabled_mons = display.parse_monitors([[
+[
+  {"name":"eDP-1","width":1920,"height":1080,"scale":1.0,"disabled":false},
+  {"name":"HDMI-A-1","width":2560,"height":1440,"scale":1.0,"disabled":true}
+]
+]])
+        local rev_int = assert(display.plan_external_revert(ext_disabled_mons, { mode = "internal" }, { target = "HDMI-A-1" }))
+        assert_eq(rev_int.mode, "internal")
+        assert_contains(table.concat(rev_int.eval_cmds, "\n"), 'output = "HDMI-A-1", disabled = true')
+
         -- CLI integration tests with stubs
         local tmp = make_tmp_dir()
         local ok_cli, err_cli = pcall(function()
             local stub_bin = tmp .. "/bin"
             local home, cfg, data, cache, runtime = tmp .. "/home", tmp .. "/cfg", tmp .. "/data", tmp .. "/cache", tmp .. "/runtime"
             for _, d in ipairs({ stub_bin, home, cfg, data, cache, runtime }) do fs.mkdir_p(d) end
-            for _, b in ipairs({ "lua", "readlink", "nohup", "rm", "mkdir", "kill", "cat", "id", "install", "sleep", "grep" }) do
+            for _, b in ipairs({ "lua", "readlink", "nohup", "rm", "mkdir", "kill", "cat", "id", "install", "sleep", "grep", "flock", "timeout", "env" }) do
                 link_host_bin(stub_bin, b)
             end
             write_stub(stub_bin, "wl-mirror", [[
@@ -540,13 +585,27 @@ fi
 if [ "$1" = "msg" ] && [ "$2" = "notification-dnd-status" ]; then
     printf '%s\n' "${TEST_DND:-off}"
     exit 0
+elif [ "$1" = "msg" ] && [ "$2" = "config-get" ] && [ "${3:-}" = "widget.present.type" ]; then
+    if [ "${TEST_PRESENT_WIDGET:-0}" = "1" ]; then
+        printf "'custom_button'\n"
+    fi
+    exit 0
 fi
 printf '%s\n' "$*" >> "$HOME/noc-calls"
 if [ "$1" = "dmenu" ]; then
     cat > "$HOME/dmenu-items"
     printf '=== DMENU ===\n' >> "$HOME/dmenu-all"
     cat "$HOME/dmenu-items" >> "$HOME/dmenu-all"
-    if [ -f "$HOME/dmenu-seq" ] && [ -n "${TEST_DMENU_SELECT_2:-}" ]; then
+    if [ -n "${TEST_DMENU_SLEEP:-}" ]; then
+        sleep "$TEST_DMENU_SLEEP" &
+        sp=$!
+        trap 'kill "$sp" 2>/dev/null || true; exit 143' TERM INT
+        wait "$sp"
+    fi
+    if [ -f "$HOME/dmenu-seq-2" ] && [ -n "${TEST_DMENU_SELECT_3:-}" ]; then
+        grep -F -m1 "$TEST_DMENU_SELECT_3" "$HOME/dmenu-items" || true
+    elif [ -f "$HOME/dmenu-seq" ] && [ -n "${TEST_DMENU_SELECT_2:-}" ]; then
+        : > "$HOME/dmenu-seq-2"
         grep -F -m1 "$TEST_DMENU_SELECT_2" "$HOME/dmenu-items" || true
     elif [ -n "${TEST_DMENU_SELECT:-}" ]; then
         : > "$HOME/dmenu-seq"
@@ -758,13 +817,20 @@ fi
             assert_contains(ext_sub, "Auto Reset All Monitors")
             assert_contains(assert(fs.read_file(home .. "/hypr-calls")), 'position = "auto-right"')
 
-            -- External Only and Laptop Only work from Layout submenu
+            -- External Only (confirmed via 3rd dmenu) and Laptop Only work from Layout submenu
             fs.write_atomic(home .. "/hypr-calls", "")
             os.remove(home .. "/dmenu-seq")
-            assert_true(os.execute(cli_env .. " TEST_DMENU_SELECT='Extend / Layout…' TEST_DMENU_SELECT_2='External Only' " .. kdisplay .. " --menu >/dev/null 2>&1"))
+            os.remove(home .. "/dmenu-seq-2")
+            assert_true(os.execute(cli_env .. " TEST_DMENU_SELECT='Extend / Layout…' TEST_DMENU_SELECT_2='External Only' TEST_DMENU_SELECT_3='Keep External Only' " .. kdisplay .. " --menu >/dev/null 2>&1"))
             assert_contains(assert(fs.read_file(home .. "/hypr-calls")), 'output = "eDP-1", disabled = true')
+            local ext_conf_items = assert(fs.read_file(home .. "/dmenu-items"))
+            local p_rev = assert(ext_conf_items:find("Revert to Laptop (eDP-1)", 1, true))
+            local p_keep = assert(ext_conf_items:find("Keep External Only (HDMI-A-1)", 1, true))
+            assert_true(p_rev < p_keep, "Revert must be first option in External Only confirmation dialog")
+            assert_true(not fs.file_exists(runtime .. "/kaze/external-revert.json"), "confirmed External Only cleans up external-revert.json")
             fs.write_atomic(home .. "/hypr-calls", "")
             os.remove(home .. "/dmenu-seq")
+            os.remove(home .. "/dmenu-seq-2")
             assert_true(os.execute(cli_env .. " TEST_DMENU_SELECT='Extend / Layout…' TEST_DMENU_SELECT_2='Laptop Only' " .. kdisplay .. " --menu >/dev/null 2>&1"))
             assert_contains(assert(fs.read_file(home .. "/hypr-calls")), 'output = "HDMI-A-1", disabled = true')
 
@@ -894,6 +960,24 @@ fi
             assert_true(os.execute(cli_env .. " " .. kdisplay .. " extend-right >/dev/null 2>&1"))
             assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg notification-dnd-set off\n", "present -> mirror -> extend-right must restore DND")
 
+            -- 12. Dynamic Island widget.present live indicator + floating-rail dual-bar hide/show
+            fs.write_atomic(cfg .. "/kaze/style", "floating-rail\n")
+            fs.write_atomic(home .. "/noc-calls", "")
+            assert_true(os.execute(cli_env .. " TEST_PRESENT_WIDGET=1 TEST_DND=off " .. kdisplay .. " present 3 >/dev/null 2>&1"))
+            local multi_noc = assert(fs.read_file(home .. "/noc-calls"))
+            assert_contains(multi_noc, "msg bar-hide default HDMI-A-1\n")
+            assert_contains(multi_noc, "msg bar-hide rail HDMI-A-1\n")
+            assert_contains(multi_noc, "msg config-set widget.present.enabled true\n")
+            assert_contains(multi_noc, 'msg config-set widget.present.label "LIVE"\n')
+            fs.write_atomic(home .. "/noc-calls", "")
+            assert_true(os.execute(cli_env .. " TEST_PRESENT_WIDGET=1 " .. kdisplay .. " stop-present >/dev/null 2>&1"))
+            local multi_stop = assert(fs.read_file(home .. "/noc-calls"))
+            assert_contains(multi_stop, "msg bar-show default HDMI-A-1\n")
+            assert_contains(multi_stop, "msg bar-show rail HDMI-A-1\n")
+            assert_contains(multi_stop, "msg config-set widget.present.enabled false\n")
+            assert_contains(multi_stop, 'msg config-set widget.present.label ""\n')
+            os.remove(cfg .. "/kaze/style")
+
             -- switch-share evacuates previous virtual workspace back to primary monitor
             fs.write_atomic(home .. "/mock-monitors.json", [[
 [
@@ -971,6 +1055,183 @@ fi
             assert_contains(assert(fs.read_file(home .. "/hypr-calls")), 'hl.window_rule({ name = "kaze-present-edge", enabled = false })')
             local zero_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
             assert_eq(zero_st.present_workspace, nil)
+
+            -- 13. External Only 15s auto-revert confirmation (Esc/cancel, real timeout expiry, --no-confirm, and stale-generation guard)
+            fs.write_atomic(home .. "/mock-monitors.json", [[
+[
+  {"id":0,"name":"eDP-1","width":1920,"height":1080,"x":0,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":true,"mirrorOf":"none","activeWorkspace":{"id":1,"name":"1"}},
+  {"id":1,"name":"HDMI-A-1","width":2560,"height":1440,"x":1920,"y":0,"refreshRate":144.0,"scale":1.0,"disabled":false,"focused":false,"mirrorOf":"none","activeWorkspace":{"id":2,"name":"2"}}
+]
+]])
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " extend-left >/dev/null 2>&1"))
+            -- 13a. Esc/empty confirm reverts automatically to prior extend-left layout and focuses eDP-1
+            fs.write_atomic(home .. "/hypr-calls", "")
+            os.remove(home .. "/dmenu-seq")
+            os.remove(home .. "/dmenu-seq-2")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " external >/dev/null 2>&1"))
+            local rev_hypr = assert(fs.read_file(home .. "/hypr-calls"))
+            local p_dis = assert(rev_hypr:find('output = "eDP-1", disabled = true', 1, true))
+            local p_res = assert(rev_hypr:find('output = "eDP-1", mode = "1920x1080@60.00", position = "0x0"', p_dis, true))
+            local p_foc = assert(rev_hypr:find('focus({ monitor = "eDP-1" })', p_res, true))
+            assert_true(p_dis < p_res and p_res < p_foc, "unconfirmed External Only must re-enable and focus eDP-1")
+            local after_rev_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
+            assert_eq(after_rev_st.mode, "extend-left", "External Only revert must restore prior extend-left mode")
+
+            -- 13b. Real GNU timeout expiry (0.25s) triggers automatic revert AND closes Noctalia launcher panel
+            fs.write_atomic(home .. "/hypr-calls", "")
+            fs.write_atomic(home .. "/noc-calls", "")
+            assert_true(os.execute(cli_env .. " KAZE_DISPLAY_CONFIRM_SEC=0.25 TEST_DMENU_SLEEP=5 " .. kdisplay .. " external >/dev/null 2>&1"))
+            local to_hypr = assert(fs.read_file(home .. "/hypr-calls"))
+            assert_contains(to_hypr, 'output = "eDP-1", disabled = true')
+            assert_contains(to_hypr, 'focus({ monitor = "eDP-1" })')
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg panel-close launcher\n", "timed-out dmenu must dismiss Noctalia launcher overlay")
+            local after_to_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
+            assert_eq(after_to_st.mode, "extend-left", "timed-out External Only must auto-revert")
+
+            -- 13c. --no-confirm skips dmenu confirmation completely, and a no-op --on-disconnect eDP-1 does NOT bump generation
+            fs.write_atomic(home .. "/noc-calls", "")
+            fs.write_atomic(home .. "/hypr-calls", "")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " external --no-confirm >/dev/null 2>&1"))
+            assert_true(not (fs.read_file(home .. "/noc-calls") or ""):find("dmenu", 1, true), "external --no-confirm must not open dmenu")
+            local noconf_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
+            assert_eq(noconf_st.mode, "external")
+            local stale_gen = noconf_st.generation
+            -- Simulate Hyprland firing monitor.removed for disabled eDP-1 while HDMI-A-1 is active
+            fs.write_atomic(home .. "/mock-monitors.json", [[
+[
+  {"id":0,"name":"eDP-1","width":1920,"height":1080,"x":0,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":true,"focused":false,"mirrorOf":"none"},
+  {"id":1,"name":"HDMI-A-1","width":2560,"height":1440,"x":0,"y":0,"refreshRate":144.0,"scale":1.0,"disabled":false,"focused":true,"mirrorOf":"none","activeWorkspace":{"id":2,"name":"2"}}
+]
+]])
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " --on-disconnect eDP-1 >/dev/null 2>&1"))
+            local after_noop_disc = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
+            assert_eq(after_noop_disc.generation, stale_gen, "no-op --on-disconnect for disabled internal panel must not bump state.generation")
+            fs.write_atomic(home .. "/mock-monitors.json", [[
+[
+  {"id":0,"name":"eDP-1","width":1920,"height":1080,"x":0,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":true,"mirrorOf":"none","activeWorkspace":{"id":1,"name":"1"}},
+  {"id":1,"name":"HDMI-A-1","width":2560,"height":1440,"x":1920,"y":0,"refreshRate":144.0,"scale":1.0,"disabled":false,"focused":false,"mirrorOf":"none","activeWorkspace":{"id":2,"name":"2"}}
+]
+]])
+
+            -- 13d. Stale generation guard: if state already changed (e.g. --on-disconnect), late --revert-external does nothing
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " internal >/dev/null 2>&1"))
+            fs.write_atomic(home .. "/hypr-calls", "")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " --revert-external " .. tostring(stale_gen) .. " timeout >/dev/null 2>&1"))
+            assert_eq(fs.read_file(home .. "/hypr-calls") or "", "", "stale --revert-external must be ignored after newer state transition")
+
+            -- 14. Split flock concurrency protection (display.lock & display-menu.lock)
+            -- 14a. Held display.lock drops overlapping non-critical mutation cleanly without touching hyprctl
+            fs.write_atomic(home .. "/hypr-calls", "")
+            local lock_drop_ok = os.execute(string.format(
+                "flock -x %s sh -c %s >/dev/null 2>&1",
+                q(runtime .. "/kaze/display.lock"),
+                q(cli_env .. " " .. kdisplay .. " extend-right")
+            ))
+            assert_true(lock_drop_ok, "overlapping mutation under held display.lock exits 0 cleanly")
+            assert_eq(fs.read_file(home .. "/hypr-calls") or "", "", "dropped mutation must not execute hyprctl")
+
+            -- 14b. Held display-menu.lock drops overlapping --hotplug / --menu cleanly without spawning second dmenu
+            fs.write_atomic(home .. "/noc-calls", "")
+            local menu_drop_ok = os.execute(string.format(
+                "flock -x %s sh -c %s >/dev/null 2>&1",
+                q(runtime .. "/kaze/display-menu.lock"),
+                q(cli_env .. " " .. kdisplay .. " --hotplug HDMI-A-1")
+            ))
+            assert_true(menu_drop_ok, "overlapping hotplug under held display-menu.lock exits 0 cleanly")
+            assert_eq(fs.read_file(home .. "/noc-calls") or "", "", "dropped hotplug must not spawn second dmenu")
+
+            -- 14c. Critical --on-disconnect runs IMMEDIATELY even while display-menu.lock is held (menu open)
+            fs.write_atomic(home .. "/mock-monitors.json", '[{"id":0,"name":"eDP-1","width":1920,"height":1080,"scale":1.0,"disabled":true}]')
+            fs.write_atomic(home .. "/hypr-calls", "")
+            local disc_menu_ok = os.execute(string.format(
+                "flock -x %s sh -c %s >/dev/null 2>&1",
+                q(runtime .. "/kaze/display-menu.lock"),
+                q(cli_env .. " " .. kdisplay .. " --on-disconnect HDMI-A-1")
+            ))
+            assert_true(disc_menu_ok, "--on-disconnect must succeed while display-menu.lock is held")
+            assert_contains(assert(fs.read_file(home .. "/hypr-calls")), 'output = "eDP-1", mode = "preferred", position = "0x0"')
+
+            -- 14d. Critical --on-disconnect waits for brief display.lock release and still recovers
+            fs.write_atomic(home .. "/hypr-calls", "")
+            local disc_wait_ok = os.execute(string.format(
+                "(flock -x %s sleep 0.25) & lp=$!; sleep 0.05; %s %s --on-disconnect HDMI-A-1 >/dev/null 2>&1; rc=$?; wait $lp; exit $rc",
+                q(runtime .. "/kaze/display.lock"),
+                cli_env,
+                kdisplay
+            ))
+            assert_true(disc_wait_ok, "--on-disconnect must wait for brief display.lock instead of dropping")
+            assert_contains(assert(fs.read_file(home .. "/hypr-calls")), 'output = "eDP-1", mode = "preferred", position = "0x0"')
+
+            -- 15. Direct kaze-share control via Ctrl+Super+P (toggle-control): fullscreen wl-mirror + focus jump, 0 reload, suspends/restores PiP preview
+            fs.write_atomic(home .. "/mock-monitors.json", [[
+[
+  {"id":0,"name":"eDP-1","width":1920,"height":1080,"x":0,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":true,"activeWorkspace":{"id":1,"name":"1"}},
+  {"id":2,"name":"kaze-share","width":1920,"height":1080,"x":9999,"y":0,"refreshRate":60.0,"scale":1.0,"disabled":false,"focused":false,"activeWorkspace":{"id":9,"name":"9"},"hardwareDetails":{"backend":"headless"}}
+]
+]])
+            fs.write_atomic(home .. "/mock-workspaces.json", '[{"id":1,"name":"1","monitor":"eDP-1","windows":1},{"id":9,"name":"9","monitor":"kaze-share","windows":1}]')
+            fs.write_atomic(home .. "/mock-activewindow.json", '{"address":"0xshare1","monitor":2,"workspace":{"id":9}}')
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " virtual-share 9 >/dev/null 2>&1"))
+            -- Open PiP preview first so we verify toggle-control suspends and later restores it
+            fs.write_atomic(home .. "/wlmirror-calls", "")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " toggle-preview >/dev/null 2>&1"))
+            os.execute("sleep 0.05")
+
+            -- Menu shows Control kaze-share Directly when share_active and not yet controlling
+            fs.write_atomic(home .. "/dmenu-items", "")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " --menu >/dev/null 2>&1"))
+            assert_contains(assert(fs.read_file(home .. "/dmenu-items")), "Control kaze-share Directly (WS 9)")
+
+            -- Enter direct kaze-share control via toggle-control
+            fs.write_atomic(home .. "/hypr-calls", "")
+            fs.write_atomic(home .. "/noc-calls", "")
+            fs.write_atomic(home .. "/wlmirror-calls", "")
+            assert_true(os.execute(cli_env .. " TEST_PRESENT_WIDGET=1 " .. kdisplay .. " toggle-control >/dev/null 2>&1"))
+            os.execute("sleep 0.05")
+            local vc_wlm = assert(fs.read_file(home .. "/wlmirror-calls"))
+            assert_contains(vc_wlm, "--title kaze-share-control --fullscreen-output eDP-1 --show-cursor kaze-share\n")
+            local vc_hypr = assert(fs.read_file(home .. "/hypr-calls"))
+            assert_contains(vc_hypr, 'focus({ monitor = "kaze-share" })')
+            assert_true(not vc_hypr:find("reload", 1, true), "kaze-share direct control must NEVER reload Hyprland")
+            assert_true(not vc_hypr:find("window.move", 1, true), "kaze-share direct control must NEVER move windows off kaze-share")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), 'msg config-set widget.present.label "CTRL"\n')
+            local vc_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
+            assert_eq(vc_st.control_virtual, true)
+            assert_true(type(vc_st.control_pid) == "number" and vc_st.control_pid > 0)
+            assert_eq(vc_st.preview_pid, nil, "entering direct control suspends redundant PiP preview")
+            assert_eq(vc_st.virtual_preview_suspended, true)
+
+            -- Menu shows Exit kaze-share Control while active
+            fs.write_atomic(home .. "/dmenu-items", "")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " --menu >/dev/null 2>&1"))
+            assert_contains(assert(fs.read_file(home .. "/dmenu-items")), "Exit kaze-share Control (return to eDP-1)")
+
+            -- Pulling a window off kaze-share while in control_virtual keeps focus on kaze-share
+            fs.write_atomic(home .. "/hypr-calls", "")
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " toggle-window-share >/dev/null 2>&1"))
+            local vc_pull = assert(fs.read_file(home .. "/hypr-calls"))
+            assert_contains(vc_pull, 'window.move({ workspace = "1", silent = true })')
+            assert_contains(vc_pull, 'focus({ monitor = "kaze-share" })')
+
+            -- Exit direct kaze-share control via second toggle-control: returns focus to eDP-1, restores PiP preview, resets badge to SHARE
+            fs.write_atomic(home .. "/hypr-calls", "")
+            fs.write_atomic(home .. "/noc-calls", "")
+            fs.write_atomic(home .. "/wlmirror-calls", "")
+            assert_true(os.execute(cli_env .. " TEST_PRESENT_WIDGET=1 " .. kdisplay .. " toggle-control >/dev/null 2>&1"))
+            os.execute("sleep 0.05")
+            local vc_exit_hypr = assert(fs.read_file(home .. "/hypr-calls"))
+            assert_contains(vc_exit_hypr, 'focus({ monitor = "eDP-1" })')
+            assert_contains(vc_exit_hypr, 'focus({ workspace = "1" })')
+            assert_true(not vc_exit_hypr:find("reload", 1, true), "exiting kaze-share direct control must NEVER reload Hyprland")
+            assert_contains(assert(fs.read_file(home .. "/wlmirror-calls")), "--title kaze-share-preview kaze-share\n")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), 'msg config-set widget.present.label "SHARE"\n')
+            local vc_exit_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
+            assert_eq(vc_exit_st.control_virtual, nil)
+            assert_eq(vc_exit_st.control_pid, nil)
+            assert_true(type(vc_exit_st.preview_pid) == "number" and vc_exit_st.preview_pid > 0, "exiting direct control restores suspended PiP preview")
+
+            -- Clean up virtual-share (stops restored preview too)
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " stop-virtual >/dev/null 2>&1"))
         end)
         rm_rf(tmp)
         if not ok_cli then error(err_cli, 0) end

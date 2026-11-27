@@ -14,12 +14,12 @@ All 10 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run s
 - Connects to the packaged `foot-server.socket` (`footclient -E --server-socket=...`), reads live color overrides from `~/.config/foot/themes/noctalia`, passes them via `-o`, and propagates the exact child exit status.
 
 ### `kaze-display [COMMAND]`
-- Zero-daemon Hyprland 0.57 multi-monitor, presentation, and virtual-share orchestrator powered by `lua/kaze/display.lua` and `noctalia dmenu` (`kaze.popups`).
+- Zero-daemon Hyprland 0.57 multi-monitor, presentation, and virtual-share orchestrator powered by `lua/kaze/display.lua` and `noctalia dmenu` (`kaze.popups`), guarded by split `flock` locks (`display-menu.lock` for popups, `display.lock` for state/Hyprland mutations with bounded wait for `--on-disconnect`/`cleanup`).
 - Interactive menu (`--menu`, bound to `Super + Shift + P` / `XF86Display` and bar `[widget.display]`):
   1. **Mirror Full Screen** (`mirror`, `mirror-scaled` via `wl-mirror`, `stop-mirror`)
   2. **Present Workspace** (`present [ws_id]`, `toggle-control` on `Ctrl + Super + P`, `stop-present`) — hides Noctalia bar on the external monitor and manages DND safely
-  3. **Virtual Share (Meet/Discord 1080p)** (`virtual-share [ws_id]`, `switch-share [ws_id]`, `toggle-window-share` on `Super + Alt + P`, `toggle-preview`, `stop-virtual`) — creates a `1920x1080@60` headless `kaze-share` output at `9999x0` and safely rescues windows on stop/logout
-  4. **Extend / Layout** (`extend-right`, `extend-left`, `extend-up`, `external`, `internal`, `auto`)
+  3. **Virtual Share (Meet/Discord 1080p)** (`virtual-share [ws_id]`, `switch-share [ws_id]`, `toggle-window-share` on `Super + Alt + P`, `toggle-control` / `toggle-virtual-control` for fullscreen `wl-mirror` + direct focus/cursor control without moving windows or reloading Hyprland, `toggle-preview`, `stop-virtual`) — creates a `1920x1080@60` headless `kaze-share` output at `9999x0` and safely rescues windows on stop/logout
+  4. **Extend / Layout** (`extend-right`, `extend-left`, `extend-up`, `external [--no-confirm]` with 15-second auto-revert confirmation against EDID-present/no-signal displays, `internal`, `auto`)
 - Lifecycle hooks: `--hotplug <monitor>`, `--on-disconnect <monitor>`, `--list`, `cleanup`. Persists active monitor rules in `$XDG_RUNTIME_DIR/kaze/monitors.lua` so `hyprctl reload` preserves runtime layouts.
 
 ### `kaze-keys [--list]`
@@ -31,9 +31,10 @@ All 10 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run s
 - Updates `zoxide` frecency and opens the selected directory in `kaze-footclient` (`shell`, `nvim`, or `split` for Neovim + companion terminal split).
 
 ### `kaze-style [PRESET | --menu | --current | --list] [--no-reload]`
-- Switches Noctalia v5 visual presets (`omarchy-rail`, `floating-islands`, `concave-notch`, `dynamic-island`) via `lua/kaze/styles.lua` with `0` extra resident daemons or polling, while preserving user edits outside style-managed TOML keys.
-- `floating-islands` uses 3 independent `[[bar.default.capsule_group]]` islands over a transparent top bar (`background_opacity = 0.0`); `concave-notch` uses `margin_edge = 0` + `concave_edge_corners = true`; `dynamic-island` centers a `group:island` top pill and anchors `[notification]` and `[osd]` at `position = "top_center"`, `offset_y = 6` right below the pill (with optional opt-in Noctalia `media-island` plugin documented for spring expansion without enabling network updates by default).
-- Persists active selection in `~/.config/kaze/style`, validates before atomic swap, reloads live Noctalia via `noctalia msg config-reload`, and is also selectable directly in `scripts/install.sh` (`--style` and TUI wizard step 2).
+- Switches across all **11 visual presets** (`omarchy-rail`, `swiss-grid`, `corner-hud`, `ghost-zero`, `dynamic-island`, `hardware-notch`, `glass-studio`, `floating-rail`, `tui-hacker`, `retro-90s`, `cinema-frame`, plus aliases like `floating-islands` → `corner-hud` and `concave-notch` → `hardware-notch`) via `lua/kaze/styles.lua` with `0` extra resident daemons or polling, while preserving user edits outside style-managed TOML keys and preserving `~/.config/hypr/user.lua`.
+- Synchronizes Noctalia (`~/.config/noctalia/config.toml`), Hyprland geometry (`~/.config/hypr/kaze-style.lua`), and GTK3/Thunar CSS (`~/.config/gtk-3.0/kaze-style.css`), plus saves/restores `[theme]` across palette-locked presets (`~/.config/kaze/saved-theme.json`).
+- `dynamic-island` centers a black `group:island` pill (`#0b0b0e`) with `focus_hint` workspace dots and clock that natively expands on MPRIS media, `kaze-record` (`REC`/`GIF`), and `kaze-display` (`LIVE`/`SHARE`); `ghost-zero` enables `auto_hide = true`, `reserve_space = false`, `0px` gaps, and `Super_L` hold-to-peek; `glass-studio` enables the auto-hiding bottom `[dock]`; `floating-rail` runs dual bars (`default` + `rail`).
+- Persists active selection in `~/.config/kaze/style`, validates before atomic swap, reloads live Noctalia (`noctalia msg config-reload`, plus `templates-apply` when `[theme]` changes) and Hyprland (`hyprctl reload`), and is selectable directly in `scripts/install.sh` (`--style` and scrollable TUI wizard step 2).
 
 ### `kaze-tui <sysmon|wifi|bluetooth|audio>`
 - Toggles a floating left-edge drawer (`-a kaze-tui`, matched by `hypr/rules.lua`) inside `kaze-footclient`. Primary hotkey is `Ctrl + Shift + Esc` → `kaze-tui sysmon` (`btop`, fallback `htop`/`top`). Focuses or closes an existing drawer cleanly on repeat press.
@@ -78,7 +79,7 @@ All 10 executables in `bin/` use `#!/usr/bin/env lua`, share `lua/kaze/*`, run s
 | **System** | `Super + Esc` | Enter/exit VM keybind `passthrough` submap |
 | **System** | `Super + Shift + P` / `XF86Display` | Display / Present / Virtual Share menu (`kaze-display --menu`) |
 | **System** | `Super + Alt + P` | Push/pull window to shared workspace (`kaze-display toggle-window-share`) |
-| **System** | `Ctrl + Super + P` | Toggle control presented workspace on laptop (`kaze-display toggle-control`) |
+| **System** | `Ctrl + Super + P` | Toggle control presented / virtual-share workspace (`kaze-display toggle-control`) |
 | **System** | `Ctrl + Super + Alt + R` | Reload Noctalia & Hyprland (`noctalia msg config-reload && hyprctl reload`) |
 | **Apps** | `Super + Return` / `Super + T` | Terminal (`kaze-footclient -N`) |
 | **Apps** | `Super + W` / `Super + C` / `Super + E` | Browser / Editor (`codium`/`code`/`nvim`) / File manager (`thunar`, fallback `yazi`) |

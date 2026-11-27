@@ -1,5 +1,5 @@
 #!/usr/bin/env lua
--- Pure-Lua Noctalia v5 visual preset switcher (`omarchy-rail`, `floating-islands`, `concave-notch`, `dynamic-island`).
+-- Pure-Lua Noctalia v5 + Hyprland + GTK3 visual preset switcher (11 presets across 3 groups).
 
 local function resolve_script_dir()
     local src = arg[0] or "kaze-style"
@@ -29,10 +29,14 @@ local styles = require("kaze.styles")
 
 local function print_usage(out)
     out:write("Usage: kaze-style [PRESET | --menu | --current | --list] [--no-reload] [-h|--help]\n")
-    out:write("Switch Noctalia v5 bar/HUD visual presets without extra daemons or polling.\n\n")
+    out:write("Switch Noctalia v5 + Hyprland + GTK3 visual presets without extra daemons or polling.\n\n")
     out:write("Presets:\n")
-    for _, preset in ipairs(styles.list()) do
-        out:write(string.format("  %-18s %s\n", preset.id, preset.summary))
+    for _, grp in ipairs(styles.groups()) do
+        out:write(string.format("  [%s]\n", grp.title))
+        for _, preset in ipairs(grp.items) do
+            local tag = preset.badge and (" [" .. preset.badge .. "]") or ""
+            out:write(string.format("    %-16s %s%s\n", preset.id, preset.summary, tag))
+        end
     end
 end
 
@@ -100,17 +104,23 @@ if mode == "current" then
     os.exit(0)
 elseif mode == "list" then
     local cur = styles.current_style() or styles.DEFAULT
-    for _, preset in ipairs(styles.list()) do
-        local mark = (preset.id == cur) and "*" or " "
-        io.stdout:write(string.format("%s %-18s %s\n", mark, preset.id, preset.summary))
+    for _, grp in ipairs(styles.groups()) do
+        io.stdout:write(grp.title .. ":\n")
+        for _, preset in ipairs(grp.items) do
+            local mark = (preset.id == cur) and "*" or " "
+            local tag = preset.badge and (" [" .. preset.badge .. "]") or ""
+            io.stdout:write(string.format("%s %-16s %s%s\n", mark, preset.id, preset.summary, tag))
+        end
     end
     os.exit(0)
 elseif mode == "menu" then
     local cur = styles.current_style() or styles.DEFAULT
     local entries = {}
-    for _, preset in ipairs(styles.list()) do
-        local prefix = (preset.id == cur) and "* " or "  "
-        entries[#entries + 1] = string.format("%s%-18s | %s", prefix, preset.id, preset.summary)
+    for _, grp in ipairs(styles.groups()) do
+        for _, preset in ipairs(grp.items) do
+            local prefix = (preset.id == cur) and "* " or "  "
+            entries[#entries + 1] = string.format("%s%-16s | %-17s | %s", prefix, preset.id, "[" .. grp.title .. "]", preset.summary)
+        end
     end
     local picked, pick_err = popups.run_dmenu(entries, { prompt = "Style > " })
     if not picked then

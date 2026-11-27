@@ -340,7 +340,12 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         assert_contains(manifest, cfg .. "/mimeapps.list\n")
         assert_contains(manifest, cfg .. "/gtk-3.0/settings.ini\n")
         assert_contains(manifest, cfg .. "/gtk-3.0/kaze-thunar.css\n")
+        assert_contains(manifest, cfg .. "/gtk-3.0/kaze-style.css\n")
         assert_contains(manifest, cfg .. "/gtk-3.0/gtk.css\n")
+        assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-Swiss.json\n")
+        assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-Phosphor.json\n")
+        assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-Amber.json\n")
+        assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-Retro90s.json\n")
         assert_contains(manifest, cfg .. "/Thunar/uca.xml\n")
         assert_contains(manifest, cfg .. "/Thunar/accels.scm\n")
         assert_contains(manifest, cfg .. "/xfce4/xfconf/xfce-perchannel-xml/thunar.xml\n")
@@ -348,6 +353,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         local gtk_css = assert(fs.read_file(cfg .. "/gtk-3.0/gtk.css"))
         assert_contains(gtk_css, '@import url("noctalia.css");\n', "gtk.css imports noctalia.css")
         assert_contains(gtk_css, '@import url("kaze-thunar.css");\n', "gtk.css imports kaze-thunar.css")
+        assert_contains(gtk_css, '@import url("kaze-style.css");\n', "gtk.css imports kaze-style.css")
         assert_contains(manifest, cfg .. "/noctalia/config.toml\n")
         assert_contains(manifest, tmp .. "/.zshrc\n")
         assert_contains(manifest, tmp .. "/.zprofile\n")
@@ -381,7 +387,12 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
             cfg .. "/mimeapps.list",
             cfg .. "/gtk-3.0/settings.ini",
             cfg .. "/gtk-3.0/kaze-thunar.css",
+            cfg .. "/gtk-3.0/kaze-style.css",
             cfg .. "/gtk-3.0/gtk.css",
+            cfg .. "/noctalia/palettes/Kaze-Swiss.json",
+            cfg .. "/noctalia/palettes/Kaze-Phosphor.json",
+            cfg .. "/noctalia/palettes/Kaze-Amber.json",
+            cfg .. "/noctalia/palettes/Kaze-Retro90s.json",
             cfg .. "/Thunar/uca.xml",
             cfg .. "/Thunar/accels.scm",
             cfg .. "/xfce4/xfconf/xfce-perchannel-xml/thunar.xml",
@@ -463,6 +474,9 @@ test("rules: Noctalia layer no_anim, Settings float, smart_gaps, and TUI drawer 
     assert_true(by_name["kaze-share-preview"] ~= nil and by_name["kaze-share-preview"].float == true and by_name["kaze-share-preview"].pin == true)
     assert_eq(by_name["kaze-share-preview"].keep_aspect_ratio, true)
     assert_eq(by_name["kaze-share-preview"].match.class, "^at\\.yrlf\\.wl_mirror$")
+    assert_true(by_name["kaze-share-control"] ~= nil and by_name["kaze-share-control"].no_focus == true and by_name["kaze-share-control"].opaque == true and by_name["kaze-share-control"].no_blur == true)
+    assert_eq(by_name["kaze-share-control"].match.class, "^at\\.yrlf\\.wl_mirror$")
+    assert_eq(by_name["kaze-share-control"].match.title, "^kaze-share-control$")
     assert_eq(by_name["state-border-pinned"].border_color, "rgb(f7768e)")
     assert_eq(by_name["state-border-fullscreen"].border_color, "rgb(9ece6a)")
     assert_true(#ws_rules >= 3, "smart_gaps + special workspace rules")
@@ -703,63 +717,179 @@ esac
     end)
 end)
 
-test("kaze.styles & kaze-style: renders all 4 presets safely, preserves user edits, and switches via CLI/menu", function()
+test("kaze.styles & kaze-style: renders all 11 presets safely, manages palettes/Hyprland/GTK3, and switches via CLI/menu", function()
     local styles = require("kaze.styles")
     local toml_diff = require("kaze.toml_diff")
     local base_tpl = assert(fs.read_file(repo_dir .. "/config/noctalia/config.toml"))
     local user_toml = base_tpl:gsub("polkit_agent = false", "polkit_agent = true")
         :gsub('directory = "~/Pictures/Wallpapers"', 'directory = "/home/user/Wallpapers"')
 
-    local fi = assert(styles.render_config(user_toml, "floating-islands"))
-    assert_contains(fi, "corner_radius_scale = 1.0\n", "floating-islands sets rounded corners")
-    assert_contains(fi, 'position = "top"\n', "floating-islands moves bar to top")
-    assert_contains(fi, "background_opacity = 0.0\n", "floating-islands hides bar background")
-    assert_contains(fi, 'start = [ "group:left" ]\n', "floating-islands references left capsule_group")
-    assert_contains(fi, 'center = [ "group:center" ]\n', "floating-islands references center capsule_group")
-    assert_contains(fi, 'end = [ "group:right" ]\n', "floating-islands references right capsule_group")
-    assert_contains(fi, "[[bar.default.capsule_group]]\n", "floating-islands defines capsule_group tables")
-    assert_true(not fi:find("\ncapsule_group = ", 1, true), "must not duplicate capsule_group scalar and table array")
-    assert_contains(fi, "polkit_agent = true\n", "preserves polkit_agent user edit")
-    assert_contains(fi, 'directory = "/home/user/Wallpapers"\n', "preserves custom wallpaper dir")
-    assert_contains(fi, "offline_mode = true\n", "keeps offline_mode enabled")
-    assert_contains(fi, "[weather]\nenabled = false\n", "keeps disabled sections")
-    assert_contains(fi, "[widget.record]\n", "keeps widget.record")
+    -- Verify all 4 custom Version-2 palettes decode cleanly and contain strict 6-digit hex colors
+    local required_roles = {
+        "primary", "on_primary", "secondary", "on_secondary", "tertiary", "on_tertiary",
+        "error", "on_error", "surface", "on_surface", "surface_container", "on_surface_container",
+        "surface_variant", "on_surface_variant", "outline", "outline_variant",
+    }
+    local required_term = {
+        "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+        "bright_black", "bright_red", "bright_green", "bright_yellow",
+        "bright_blue", "bright_magenta", "bright_cyan", "bright_white",
+        "foreground", "background", "selection_fg", "selection_bg", "cursor", "cursor_text",
+    }
+    for _, pal_name in ipairs({ "Kaze-Swiss", "Kaze-Phosphor", "Kaze-Amber", "Kaze-Retro90s" }) do
+        local raw = assert(fs.read_file(repo_dir .. "/config/noctalia/palettes/" .. pal_name .. ".json"))
+        local pal = json.decode(raw)
+        assert_eq(pal.version, 2, pal_name .. " must be format version 2")
+        assert_eq(pal.base, pal_name, pal_name .. " base matches filename")
+        for _, mode_name in ipairs({ "dark", "light" }) do
+            local v = assert(pal[mode_name], pal_name .. " missing " .. mode_name)
+            for _, role in ipairs(required_roles) do
+                assert_true(type(v[role]) == "string" and v[role]:match("^#%x%x%x%x%x%x$") ~= nil,
+                    pal_name .. "." .. mode_name .. "." .. role .. " must be #rrggbb")
+            end
+            assert_true(type(v.terminal) == "table", pal_name .. "." .. mode_name .. " missing terminal")
+            for _, tk in ipairs(required_term) do
+                assert_true(type(v.terminal[tk]) == "string" and v.terminal[tk]:match("^#%x%x%x%x%x%x$") ~= nil,
+                    pal_name .. "." .. mode_name .. ".terminal." .. tk .. " must be #rrggbb")
+            end
+        end
+    end
 
-    local cn = assert(styles.render_config(fi, "concave-notch"))
-    assert_contains(cn, "margin_edge = 0\n", "concave-notch flushes bar to screen edge")
-    assert_contains(cn, "concave_edge_corners = true\n", "concave-notch enables inverse corners")
-    assert_true(not cn:find("[[bar.default.capsule_group]]", 1, true), "concave-notch clears prior capsule_group tables")
+    -- Verify 11 presets, groups, bar_names, and backwards-compatible aliases
+    assert_eq(#styles.list(), 11, "11 canonical visual presets")
+    assert_eq(#styles.groups(), 3, "3 style groups")
+    assert_eq(styles.resolve("floating-islands"), "corner-hud")
+    assert_eq(styles.resolve("concave-notch"), "hardware-notch")
+    assert_eq(styles.resolve("brutalist"), "omarchy-rail")
+    assert_eq(styles.resolve("win95"), "retro-90s")
+    assert_eq(table.concat(styles.bar_names("floating-rail"), ","), "default,rail")
+    assert_eq(table.concat(styles.bar_names("dynamic-island"), ","), "default")
 
-    local di = assert(styles.render_config(cn, "dynamic-island"))
-    assert_contains(di, 'start = [ "group:left" ]\n', "dynamic-island keeps left launcher/ws island")
-    assert_contains(di, 'center = [ "group:island" ]\n', "dynamic-island centers hover-expanding island group")
-    assert_contains(di, 'end = [ "group:right" ]\n', "dynamic-island keeps right status/session island")
+    -- Render every preset and verify Hyprland Lua + zero-hex GTK3 CSS invariants
+    for _, preset in ipairs(styles.list()) do
+        local rendered = assert(styles.render_config(user_toml, preset.id), "render_config " .. preset.id)
+        assert_contains(rendered, "polkit_agent = true\n", preset.id .. " preserves polkit_agent")
+        assert_contains(rendered, 'directory = "/home/user/Wallpapers"\n', preset.id .. " preserves wallpaper dir")
+        assert_contains(rendered, "offline_mode = true\n", preset.id .. " keeps offline_mode")
+        assert_contains(rendered, "telemetry_enabled = false\n", preset.id .. " keeps telemetry disabled")
+        assert_contains(rendered, "[weather]\nenabled = false\n", preset.id .. " keeps weather disabled")
+        assert_contains(rendered, "[widget.record]\n", preset.id .. " keeps widget.record")
+
+        local h_lua = assert(styles.render_hypr_lua(preset.id), "render_hypr_lua " .. preset.id)
+        local chunk = assert(load(h_lua, "kaze-style:" .. preset.id, "t", {}), "valid Lua chunk for " .. preset.id)
+        local h_tbl = chunk()
+        assert_true(type(h_tbl) == "table" and type(h_tbl.gaps_out) == "number", preset.id .. " returns Hyprland table")
+
+        local g_css = assert(styles.render_gtk_css(preset.id), "render_gtk_css " .. preset.id)
+        assert_true(not g_css:find("#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]"), preset.id .. " GTK CSS has 0 hardcoded hex")
+    end
+
+    local ch = assert(styles.render_config(user_toml, "floating-islands"))
+    assert_contains(ch, 'start = [ "group:corner_left" ]\n', "corner-hud left group")
+    assert_contains(ch, "center = []\n", "corner-hud leaves center open")
+    assert_contains(ch, 'end = [ "group:corner_right" ]\n', "corner-hud right group")
+    assert_contains(ch, 'id = "corner_left"\n')
+
+    local gz = assert(styles.render_config(ch, "ghost-zero"))
+    assert_contains(gz, "auto_hide = true\n", "ghost-zero enables auto_hide")
+    assert_contains(gz, "reserve_space = false\n", "ghost-zero disables reserve_space")
+    assert_contains(assert(styles.render_hypr_lua("ghost-zero")), "ghost_super_peek = true")
+    assert_contains(assert(styles.render_hypr_lua("ghost-zero")), "gaps_out = 0")
+
+    local di = assert(styles.render_config(gz, "dynamic-island"))
+    assert_contains(di, 'start = [ "group:island_left" ]\n', "dynamic-island places launcher/workspaces top-left")
+    assert_contains(di, 'center = [ "group:island" ]\n', "dynamic-island centers island group")
+    assert_contains(di, 'end = [ "group:island_right" ]\n', "dynamic-island places full status top-right")
+    assert_contains(di, 'id = "island_left"\n', "dynamic-island defines island_left group")
     assert_contains(di, 'id = "island"\n', "dynamic-island defines island group")
-    assert_contains(di, "accordion = true\n", "dynamic-island enables native hover-expand accordion")
-    assert_contains(di, 'accordion_direction = "end"\n', "dynamic-island expands toward end")
-    assert_contains(di, "accordion_duration = 240\n", "dynamic-island configures smooth 240ms accordion")
-    assert_contains(di, "accordion_delay_ms = 60\n", "dynamic-island configures 60ms hover delay")
-    assert_contains(di, '"clipboard", "screenshot", "record", "display", "mirror", "wallpaper"', "dynamic-island packs hover utilities")
-    assert_contains(di, "[notification]\nenable_daemon = true\nposition = \"top_center\"", "dynamic-island anchors notifications under pill")
-    assert_contains(di, "offset_x = 0\noffset_y = 6\n", "dynamic-island places notification/OSD at offset_y=6")
+    assert_contains(di, 'members = [ "island_clock", "media", "record", "present", "notifications", "control-center" ]\n', "dynamic-island places notifications & full menu in center island")
+    assert_contains(di, 'id = "island_right"\n', "dynamic-island defines island_right group")
+    assert_contains(di, 'members = [ "tray", "display", "mirror", "net", "bt", "vol", "bat", "session" ]\n', "dynamic-island places quick Wi-Fi/BT/Audio/Tray/Session controls top-right")
+    assert_contains(di, "[widget.bt]\ntype = \"bluetooth\"\nshow_label = false\n", "dynamic-island defines bluetooth widget")
+    assert_contains(di, 'fill = "surface_container"\n', "dynamic-island unifies pill fill with theme surface_container")
+    assert_true(not di:find("#0b0b0e", 1, true), "dynamic-island removes hardcoded black pill fill")
+    assert_contains(di, 'control_center_placement = "floating"\n', "dynamic-island floats control center away from center island")
+    assert_contains(di, 'control_center_position = "auto"\n', "dynamic-island keeps control_center_position auto so open_near_click triggers dynamically")
+    assert_contains(di, 'launcher_position = "auto"\n', "dynamic-island keeps launcher_position auto for open_near_click")
+    assert_contains(di, 'session_position = "auto"\n', "dynamic-island keeps session_position auto for open_near_click")
+    assert_contains(di, "open_near_click_control_center = true\n", "dynamic-island opens panels near clicked bar widget")
+    assert_contains(di, "open_near_click_launcher = true\n", "dynamic-island opens launcher near clicked launcher icon")
+    assert_contains(di, "open_near_click_session = true\n", "dynamic-island opens session panel near clicked session icon")
+    assert_contains(di, "hide_when_no_media = true\n", "dynamic-island hides media when idle")
+    assert_contains(di, "[widget.present]\n", "dynamic-island defines widget.present")
+    assert_contains(di, 'position = "top_right"\n', "dynamic-island anchors notif/OSD top_right")
 
-    local back = assert(styles.render_config(di, "omarchy-rail"))
+    local hn = assert(styles.render_config(di, "concave-notch"))
+    assert_contains(hn, "margin_edge = 0\n", "hardware-notch flushes bar to screen edge")
+    assert_contains(hn, "concave_edge_corners = true\n", "hardware-notch enables concave corners")
+    assert_true(not hn:find("[[bar.default.capsule_group]]", 1, true), "hardware-notch clears capsule_group tables")
+
+    local with_pinned = hn:gsub("%[dock%]\nenabled = false\n", '[dock]\nenabled = false\npinned = [ "firefox" ]\n')
+    local gs = assert(styles.render_config(with_pinned, "glass-studio"))
+    assert_contains(gs, 'transparency_mode = "glass"\n', "glass-studio enables glass panels")
+    assert_contains(gs, "[dock]\nenabled = true\n", "glass-studio enables dock")
+    assert_contains(gs, 'pinned = [ "firefox" ]\n', "glass-studio preserves user pinned dock apps")
+    assert_contains(gs, "[widget.active_window]\n", "glass-studio defines active_window")
+
+    local fr = assert(styles.render_config(gs, "floating-rail"))
+    assert_contains(fr, 'order = [ "default", "rail" ]\n', "floating-rail declares dual bars")
+    assert_contains(fr, "[bar.rail]\n", "floating-rail defines secondary bar.rail")
+    assert_contains(fr, "[[bar.rail.capsule_group]]\n", "floating-rail defines rail capsule_group")
+    assert_contains(fr, "[dock]\nenabled = false\n", "floating-rail disables dock")
+
+    local sg = assert(styles.render_config(fr, "swiss-grid"))
+    assert_true(not sg:find("[bar.rail]", 1, true), "switching away from floating-rail drops bar.rail")
+    assert_true(not sg:find("[[bar.rail.capsule_group]]", 1, true), "switching away drops rail capsule_group")
+    assert_contains(sg, 'order = [ "default" ]\n', "single-bar order restored")
+    assert_contains(sg, 'mode = "light"\n', "swiss-grid activates light mode")
+    assert_contains(sg, 'custom_palette = "Kaze-Swiss"\n', "swiss-grid sets Kaze-Swiss palette")
+    assert_contains(sg, 'separator = " / "\n', "swiss-grid uses slash workspace separator")
+    assert_contains(sg, 'custom_label = "—  BAT "\n', "swiss-grid prefixes battery separator conditionally")
+    assert_contains(sg, 'empty_color = "secondary"\n', "swiss-grid sets legible light-mode empty workspace color")
+
+    local th = assert(styles.render_config(sg, "tui-hacker"))
+    assert_contains(th, 'custom_palette = "Kaze-Phosphor"\n', "tui-hacker sets Kaze-Phosphor palette")
+    assert_contains(th, 'font_family = "JetBrainsMono Nerd Font"\n', "tui-hacker sets monospace font")
+    assert_contains(th, 'center = [ "tui_lbr", "tui_clock", "tui_rbr" ]\n', "tui-hacker wraps clock in brackets")
+    assert_contains(th, 'format = "{:%H:%M}"\n', "tui-hacker keeps raw time format inside bracket widgets")
+    assert_contains(th, "[widget.tui_vol]\n", "tui-hacker includes volume block")
+    assert_contains(th, 'empty_color = "on_surface_variant"\n', "tui-hacker sets visible empty workspace CRT color")
+
+    local r9 = assert(styles.render_config(th, "retro-90s"))
+    assert_contains(r9, 'position = "bottom"\n', "retro-90s places taskbar at bottom")
+    assert_contains(r9, 'custom_palette = "Kaze-Retro90s"\n', "retro-90s sets Kaze-Retro90s palette")
+    assert_contains(r9, "[widget.taskbar]\n", "retro-90s includes taskbar widget")
+    assert_contains(r9, 'control_center_position = "auto"\n', "retro-90s enables dynamic open_near_click anchoring")
+    assert_contains(r9, 'launcher_position = "bottom_left"\n', "retro-90s anchors Start menu launcher bottom_left")
+    local r9_lua = assert(styles.render_hypr_lua("retro-90s"))
+    assert_contains(r9_lua, "angle = 45")
+    local r9_tbl = assert(load(r9_lua, "kaze-style:retro-90s", "t", {}))()
+    assert_eq(r9_tbl.border_override.active.angle, 45, "retro-90s parses border gradient angle")
+    assert_contains(assert(styles.render_gtk_css("retro-90s")), "rgba(255, 255, 255, 0.72)")
+
+    local cf = assert(styles.render_config(r9, "cinema-frame"))
+    assert_contains(cf, 'position = "bottom"\nthickness = 22\n', "cinema-frame uses 22px bottom strip")
+    assert_contains(assert(styles.render_hypr_lua("cinema-frame")), "gaps_out = 28")
+
+    local back = assert(styles.render_config(cf, "omarchy-rail", {
+        restore_theme = { mode = "dark", source = "builtin", builtin = "Tokyo-Night", pure_black_dark = false },
+    }))
     assert_contains(back, 'position = "left"\n', "round-trip back to vertical rail")
     assert_contains(back, "corner_radius_scale = 0.0\n", "round-trip restores 0px corners")
+    assert_contains(back, 'builtin = "Tokyo-Night"\n', "round-trip restores builtin theme")
+    assert_true(not back:find("custom_palette", 1, true), "round-trip clears custom_palette")
     assert_contains(back, "polkit_agent = true\n", "round-trip preserves polkit_agent")
     local diff_back = toml_diff.diff(base_tpl, back)
     assert_true(not diff_back.has_drift, "round-trip to omarchy-rail leaves zero drift vs repo template")
-
-    -- Test legacy user config missing [widget.hclock] and [widget.media]
-    local stripped = user_toml:gsub("%[widget%.hclock%].-$", "")
-    local upgraded = assert(styles.render_config(stripped, "dynamic-island"))
-    assert_contains(upgraded, "[widget.hclock]\n", "adds missing [widget.hclock]")
-    assert_contains(upgraded, "[widget.media]\n", "adds missing [widget.media]")
+    local diff_tpl_to_back = toml_diff.diff(styles.render_template_for_style(base_tpl, "omarchy-rail"), base_tpl)
+    assert_true(not diff_tpl_to_back.has_drift, "omarchy-rail template causes zero false drift against base config.toml")
 
     with_stubs(function(tmp, stub, run)
         local q = fs.shell_quote
         fs.mkdir_p(tmp .. "/cfg/noctalia")
         fs.mkdir_p(tmp .. "/cfg/kaze")
+        fs.mkdir_p(tmp .. "/cfg/hypr")
+        fs.mkdir_p(tmp .. "/cfg/gtk-3.0")
         fs.write_atomic(tmp .. "/cfg/noctalia/config.toml", user_toml)
 
         stub("noctalia", [[
@@ -772,7 +902,7 @@ case "${1:-}" in
     ;;
   dmenu)
     cat > "$HOME/style-menu"
-    printf '%s\n' "${TEST_STYLE_CHOICE:-  dynamic-island     | Centered top pill}"
+    printf '%s\n' "${TEST_STYLE_CHOICE:-  dynamic-island   | [Dynamic & Modern] | Centered pill}"
     ;;
   msg)
     exit 0
@@ -782,7 +912,8 @@ esac
 
         local help_out = assert(fs.capture(run("kaze-style", "--help")))
         assert_contains(help_out, "Usage: kaze-style")
-        assert_contains(help_out, "floating-islands")
+        assert_contains(help_out, "swiss-grid")
+        assert_contains(help_out, "retro-90s")
         local ok_bad, _, code_bad = os.execute(run("kaze-style", "--bogus") .. " 2>/dev/null")
         assert_true(not ok_bad and code_bad == 2)
         local ok_bad_p, _, code_bad_p = os.execute(run("kaze-style", "not-a-style") .. " 2>/dev/null")
@@ -790,21 +921,52 @@ esac
 
         assert_eq(assert(fs.capture(run("kaze-style", "--current"))), "dynamic-island\n")
         local list_out = assert(fs.capture(run("kaze-style", "--list")))
+        assert_contains(list_out, "Angular & Minimal:")
         assert_contains(list_out, "* dynamic-island")
-        assert_contains(list_out, "  omarchy-rail")
+        assert_contains(list_out, "  cinema-frame")
 
-        local env_base = "XDG_CONFIG_HOME=" .. q(tmp .. "/cfg")
+        local env_base = "XDG_CONFIG_HOME=" .. q(tmp .. "/cfg") .. " XDG_STATE_HOME=" .. q(tmp .. "/state")
+        fs.mkdir_p(tmp .. "/state/noctalia")
+        fs.write_atomic(tmp .. "/state/noctalia/settings.toml", [[
+[bar.default]
+thickness = 40
+
+[widget.present]
+enabled = false
+label = ""
+
+[widget.record]
+enabled = false
+]])
         local ap_out = assert(fs.capture(run("kaze-style", "floating-islands", env_base)))
-        assert_contains(ap_out, "Applied style 'floating-islands'")
-        assert_eq(assert(fs.read_file(tmp .. "/cfg/kaze/style")), "floating-islands\n")
-        assert_eq(assert(fs.capture(run("kaze-style", "--current", env_base))), "floating-islands\n")
+        assert_contains(ap_out, "Applied style 'corner-hud'")
+        assert_eq(assert(fs.read_file(tmp .. "/cfg/kaze/style")), "corner-hud\n")
+        assert_true(fs.file_exists(tmp .. "/cfg/hypr/kaze-style.lua"), "writes hypr/kaze-style.lua")
+        assert_true(fs.file_exists(tmp .. "/cfg/gtk-3.0/kaze-style.css"), "writes gtk-3.0/kaze-style.css")
+        local cleaned_state = assert(fs.read_file(tmp .. "/state/noctalia/settings.toml"))
+        assert_contains(cleaned_state, "[bar.default]\nthickness = 40\n", "preserves unrelated user state overrides")
+        assert_true(not cleaned_state:find("[widget.present]", 1, true), "clears stale widget.present from Noctalia state")
+        assert_true(not cleaned_state:find("[widget.record]", 1, true), "clears stale widget.record from Noctalia state")
+
+        assert(os.execute(run("kaze-style", "swiss-grid", env_base)))
+        assert_true(fs.file_exists(tmp .. "/cfg/kaze/saved-theme.json"), "saves pre-palette theme")
+        assert(os.execute(run("kaze-style", "tui-hacker", env_base)))
+        local saved_json = json.decode(assert(fs.read_file(tmp .. "/cfg/kaze/saved-theme.json")))
+        assert_eq(saved_json.builtin, "Tokyo-Night", "switching between palette-locked presets keeps original saved theme")
+        assert(os.execute(run("kaze-style", "omarchy-rail", env_base)))
+        assert_true(not fs.file_exists(tmp .. "/cfg/kaze/saved-theme.json"), "restoring theme removes saved-theme.json")
+        local restored_cfg = assert(fs.read_file(tmp .. "/cfg/noctalia/config.toml"))
+        assert_contains(restored_cfg, 'mode = "dark"\n')
+        assert_contains(restored_cfg, 'builtin = "Tokyo-Night"\n')
+
         local noc_calls = assert(fs.read_file(tmp .. "/noc-calls"))
         assert_contains(noc_calls, "config\nvalidate\n")
         assert_contains(noc_calls, "msg\nconfig-reload\n")
+        assert_contains(noc_calls, "msg\ntemplates-apply\n")
 
         -- --menu switches via dmenu
         assert(os.execute(run("kaze-style", "--menu", env_base)))
-        assert_contains(assert(fs.read_file(tmp .. "/style-menu")), "* floating-islands")
+        assert_contains(assert(fs.read_file(tmp .. "/style-menu")), "* omarchy-rail")
         assert_eq(assert(fs.read_file(tmp .. "/cfg/kaze/style")), "dynamic-island\n")
         assert_contains(assert(fs.read_file(tmp .. "/cfg/noctalia/config.toml")), 'id = "island"\n')
 

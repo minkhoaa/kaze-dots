@@ -44,6 +44,7 @@
 
 ## 4. Hạng mục mở & Kế hoạch tiếp theo
 
+- `[x]` Hệ thống 11 visual preset đồng bộ Noctalia + Hyprland (`kaze-style.lua`) + GTK3 (`kaze-style.css`) qua `kaze-style` ([lua/kaze/styles.lua](lua/kaze/styles.lua), [config/noctalia/palettes/](config/noctalia/palettes/)), hỗ trợ custom palette Version 2 (`Kaze-Swiss`, `Kaze-Phosphor`, `Kaze-Amber`, `Kaze-Retro90s`), Live Activity trên Dynamic Island (`kaze-record`, `kaze-display`), dual-bar `floating-rail`, auto-hide dock `glass-studio`, và `Super_L` hold-to-peek trên `ghost-zero`.
 - `[~]` **Kiểm chứng phần cứng vật lý thật:** cảm biến gập nắp laptop (`Lid Switch`), tấm nền backlight `/sys/class/backlight`, và cấu hình hybrid GPU (`drm_devices` / `prefer_mesa_egl`) trên máy thật (VM không giả lập cảm biến nắp gập và đèn nền phần cứng).
 - `[ ]` **Config mặc định cho bộ app `full`:** tinh chỉnh thẩm mỹ phẳng Omarchy cho `yazi` (Sixel preview trên Foot), `zathura`, `imv`, và `mimeapps.list`.
 - `[ ]` **Nâng cấp [bin/kaze-record](bin/kaze-record):** thêm `--menu` chọn nhanh Fullscreen/Region, tùy chọn thu âm (`--audio`), và chỉ báo đang quay trên Noctalia bar.

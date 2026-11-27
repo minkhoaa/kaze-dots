@@ -70,17 +70,65 @@ function M.run_dmenu(entries, opts)
         argv[#argv + 1] = fs.shell_quote(opts.prompt)
     end
 
+    local dmenu_cmd = table.concat(argv, " ")
+    local timeout_sec = tonumber(opts.timeout)
+    local flag_path = nil
     local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
-    local cmd = utf8_guard .. table.concat(argv, " ") .. " < " .. fs.shell_quote(tmp_path)
+    local cmd
+    if timeout_sec and timeout_sec > 0 then
+        local dur = (timeout_sec == math.floor(timeout_sec))
+            and tostring(math.floor(timeout_sec))
+            or string.format("%.2f", timeout_sec)
+        flag_path = tmp_path .. ".timeout"
+        os.remove(flag_path)
+        -- Soft-cancel via `noctalia msg panel-close launcher` first so Noctalia's daemon
+        -- cleanly closes the overlay and resets its internal dmenu state; fall back to
+        -- TERM/KILL only if the dmenu client does not exit on its own.
+        cmd = utf8_guard
+            .. string.format(
+                "%s < %s & dm_pid=$!; "
+                    .. "( sleep %s & spid=$!; trap 'kill \"$spid\" 2>/dev/null || true; exit 0' TERM INT; "
+                    .. "wait \"$spid\" 2>/dev/null || exit 0; "
+                    .. "if kill -0 \"$dm_pid\" 2>/dev/null; then "
+                    .. ": > %s; noctalia msg panel-close launcher >/dev/null 2>&1 || true; "
+                    .. "sleep 0.3; "
+                    .. "if kill -0 \"$dm_pid\" 2>/dev/null; then "
+                    .. "noctalia msg panel-open launcher >/dev/null 2>&1 || true; "
+                    .. "noctalia msg panel-close launcher >/dev/null 2>&1 || true; "
+                    .. "sleep 0.2; kill -TERM \"$dm_pid\" 2>/dev/null || true; "
+                    .. "sleep 0.3; kill -KILL \"$dm_pid\" 2>/dev/null || true; "
+                    .. "fi; "
+                    .. "fi ) </dev/null >/dev/null 2>&1 & wd_pid=$!; "
+                    .. "wait \"$dm_pid\"; rc=$?; "
+                    .. "kill \"$wd_pid\" 2>/dev/null || true; wait \"$wd_pid\" 2>/dev/null || true; "
+                    .. "exit \"$rc\"",
+                dmenu_cmd,
+                fs.shell_quote(tmp_path),
+                dur,
+                fs.shell_quote(flag_path)
+            )
+    else
+        cmd = utf8_guard .. dmenu_cmd .. " < " .. fs.shell_quote(tmp_path)
+    end
+
     local proc = io.popen(cmd, "r")
     if not proc then
         os.remove(tmp_path)
+        if flag_path then os.remove(flag_path) end
         return nil, "failed to launch noctalia dmenu"
     end
     local out = proc:read("*a") or ""
     proc:close()
     os.remove(tmp_path)
-    return (out:gsub("[\r\n]+$", ""))
+    local timed_out = false
+    if flag_path then
+        timed_out = fs.file_exists(flag_path)
+        os.remove(flag_path)
+    end
+    if timed_out then
+        return "", nil, true
+    end
+    return (out:gsub("[\r\n]+$", "")), nil, false
 end
 
 return M

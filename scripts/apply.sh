@@ -198,6 +198,9 @@ ensure_gtk3_css_imports() {
     if ! grep -Fq 'kaze-thunar.css' "$dst" 2>/dev/null; then
         printf '@import url("kaze-thunar.css");\n' >> "$dst"
     fi
+    if ! grep -Fq 'kaze-style.css' "$dst" 2>/dev/null; then
+        printf '@import url("kaze-style.css");\n' >> "$dst"
+    fi
 }
 
 backup_and_link "$REPO_DIR/lua/kaze" "$DATA_HOME/kaze-dots/lua/kaze"
@@ -235,12 +238,26 @@ if [ ! -e "$GTK3_NOCTALIA" ] && [ ! -L "$GTK3_NOCTALIA" ]; then
     record_installed "$GTK3_NOCTALIA"
 fi
 
+GTK3_STYLE="$CONFIG_HOME/gtk-3.0/kaze-style.css"
+if [ ! -e "$GTK3_STYLE" ] && [ ! -L "$GTK3_STYLE" ]; then
+    mkdir -p -- "$(dirname -- "$GTK3_STYLE")"
+    : > "$GTK3_STYLE"
+    record_installed "$GTK3_STYLE"
+fi
+
 # Ensure Foot's included Noctalia theme file exists before Noctalia runs its first template pass.
 FOOT_THEME="$CONFIG_HOME/foot/themes/noctalia"
 if [ ! -e "$FOOT_THEME" ] && [ ! -L "$FOOT_THEME" ]; then
     mkdir -p -- "$(dirname -- "$FOOT_THEME")"
     : > "$FOOT_THEME"
     record_installed "$FOOT_THEME"
+fi
+
+if [ -d "$REPO_DIR/config/noctalia/palettes" ]; then
+    for pal_file in "$REPO_DIR"/config/noctalia/palettes/*.json; do
+        [ -e "$pal_file" ] || continue
+        backup_and_link "$pal_file" "$CONFIG_HOME/noctalia/palettes/$(basename "$pal_file")"
+    done
 fi
 
 # Includes on-demand units; linking them does not enable or start them.
