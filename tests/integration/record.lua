@@ -358,20 +358,19 @@ case "$cmd" in
 esac
 ]=], mock_q, rt_kaze_q))
 
-  -- noctalia stub
-  add_stub("noctalia", string.format([=[#!/bin/sh
+  -- kaze-shell stub (records msg display-status / island-activity / island-clear & handles dmenu)
+  add_stub("kaze-shell", string.format([=[#!/bin/sh
 MOCK=%s
 printf '%%s\n' "$*" >> "$MOCK/noctalia_raw.log"
 
-if [ "$1" = "msg" ] && [ "$2" = "config-get" ]; then
-  printf 'GET\t%%s\n' "$3" >> "$MOCK/noctalia.log"
-  if [ "$3" = "widget.record.type" ]; then
-    cat "$MOCK/noctalia_widget_type"
-    exit 0
+if [ "$1" = "msg" ]; then
+  if [ "$2" = "display-status" ]; then
+    printf 'SET\tdisplay.status\t%%s\n' "$3" >> "$MOCK/noctalia.log"
+  elif [ "$2" = "island-activity" ]; then
+    printf 'SET\tisland.activity.%%s\t%%s\n' "$3" "$4" >> "$MOCK/noctalia.log"
+  elif [ "$2" = "island-clear" ]; then
+    printf 'SET\tisland.clear\t%%s\n' "$3" >> "$MOCK/noctalia.log"
   fi
-  exit 1
-elif [ "$1" = "msg" ] && [ "$2" = "config-set" ]; then
-  printf 'SET\t%%s\t%%s\n' "$3" "$4" >> "$MOCK/noctalia.log"
   exit 0
 elif [ "$1" = "dmenu" ]; then
   printf 'DMENU\t%%s\n' "$*" >> "$MOCK/noctalia.log"
@@ -894,10 +893,9 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       assert_eq(env.KAZE_RECORD_AUDIO, "", "KAZE_RECORD_AUDIO should be empty by default")
 
       local sets_start = sb:noctalia_sets()
-      assert_eq(sets_start["widget.record.glyph"], "circle-dot", "start must set glyph=circle-dot")
-      assert_eq(sets_start["widget.record.icon_color"], "error", "start must set icon_color=error")
-      assert_true(sets_start["widget.record.tooltip"] ~= nil and sets_start["widget.record.tooltip"] ~= "",
-        "start must update widget.record.tooltip")
+      assert_eq(sets_start["display.status"], "recording", "start must set display-status recording")
+      assert_contains(sets_start["island.activity.record"] or "", '"active":true',
+        "start must push island-activity record")
 
       local orig_env_raw = read_file(env_path)
       local rec_file = env.KAZE_RECORD_FILE
@@ -925,9 +923,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       assert_true(trim(sb:read_log("notify.log")) ~= "", "stop must send notify-send notification")
 
       local sets_stop = sb:noctalia_sets()
-      assert_eq(sets_stop["widget.record.glyph"], "video", "stop must reset glyph=video")
-      assert_eq(sets_stop["widget.record.icon_color"], "on_surface_variant",
-        "stop must reset icon_color=on_surface_variant")
+      assert_eq(sets_stop["display.status"], "idle", "stop must reset display-status idle")
+      assert_eq(sets_stop["island.clear"], "record", "stop must clear island-activity record")
 
       -- Toggle & default no-arg: idle -> start, active -> stop
       for _, toggle_args in ipairs({ { "toggle" }, {} }) do
@@ -957,9 +954,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       assert_eq(r.code, 0, "stop when inactive must exit 0 (err=" .. r.stderr .. ")")
       assert_true(not sb:systemctl_called_with("start "), "stop when inactive must not start recording")
       local sets = sb:noctalia_sets()
-      assert_eq(sets["widget.record.glyph"], "video", "stop when inactive must reset glyph=video")
-      assert_eq(sets["widget.record.icon_color"], "on_surface_variant",
-        "stop when inactive must reset icon_color=on_surface_variant")
+      assert_eq(sets["display.status"], "idle", "stop when inactive must reset display-status idle")
+      assert_eq(sets["island.clear"], "record", "stop when inactive must clear island-activity record")
     end)
 
     -- 4b. stop when ActiveState=failed (both with and without record.env): exits non-zero with incomplete warning
@@ -1271,9 +1267,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
         "stop --gif must send 'GIF saved' notification")
 
       local sets = sb:noctalia_sets()
-      assert_eq(sets["widget.record.glyph"], "video", "stop --gif must reset glyph=video")
-      assert_eq(sets["widget.record.icon_color"], "on_surface_variant",
-        "stop --gif must reset icon_color=on_surface_variant")
+      assert_eq(sets["display.status"], "idle", "stop --gif must reset display-status idle")
+      assert_eq(sets["island.clear"], "record", "stop --gif must clear island-activity record")
     end)
   end)
 
@@ -1294,8 +1289,10 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
           "source MP4 MUST be preserved when ffmpeg=" .. mode .. ": " .. tmp_mp4)
 
         local sets = sb:noctalia_sets()
-        assert_eq(sets["widget.record.glyph"], "video",
+        assert_eq(sets["display.status"], "idle",
           "indicator must still reset on ffmpeg=" .. mode .. " failure")
+        assert_eq(sets["island.clear"], "record",
+          "island record activity must clear on ffmpeg=" .. mode .. " failure")
       end)
     end
   end)
@@ -1309,15 +1306,15 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
         local r1 = sb:run({ "start" })
         assert_eq(r1.code, 0, style .. " mp4 start failed: " .. r1.stderr)
         local s1 = sb:noctalia_sets()
-        assert_eq(s1["widget.record.enabled"], "true", style .. " mp4 start must enable widget.record")
-        assert_eq(s1["widget.record.label"], "REC", style .. " mp4 start must set label='REC'")
+        assert_eq(s1["display.status"], "recording", style .. " mp4 start must set display-status recording")
+        assert_contains(s1["island.activity.record"] or "", '"gif":false', style .. " mp4 start must report gif=false")
 
         sb:clear_logs()
         local r2 = sb:run({ "stop" })
         assert_eq(r2.code, 0, style .. " mp4 stop failed: " .. r2.stderr)
         local s2 = sb:noctalia_sets()
-        assert_eq(s2["widget.record.enabled"], "false", style .. " mp4 stop must disable widget.record")
-        assert_eq(s2["widget.record.label"], "", style .. " mp4 stop must clear label")
+        assert_eq(s2["display.status"], "idle", style .. " mp4 stop must set display-status idle")
+        assert_eq(s2["island.clear"], "record", style .. " mp4 stop must clear island record activity")
       end)
 
       -- GIF flow
@@ -1325,45 +1322,38 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
         local r1 = sb:run({ "start", "--gif" })
         assert_eq(r1.code, 0, style .. " gif start failed: " .. r1.stderr)
         local s1 = sb:noctalia_sets()
-        assert_eq(s1["widget.record.enabled"], "true", style .. " gif start must enable widget.record")
-        assert_eq(s1["widget.record.label"], "GIF", style .. " gif start must set label='GIF'")
+        assert_eq(s1["display.status"], "recording", style .. " gif start must set display-status recording")
+        assert_contains(s1["island.activity.record"] or "", '"gif":true', style .. " gif start must report gif=true")
 
         sb:clear_logs()
         local r2 = sb:run({ "stop" })
         assert_eq(r2.code, 0, style .. " gif stop failed: " .. r2.stderr)
         local s2 = sb:noctalia_sets()
-        assert_eq(s2["widget.record.enabled"], "false", style .. " gif stop must disable widget.record")
-        assert_eq(s2["widget.record.label"], "", style .. " gif stop must clear label")
+        assert_eq(s2["display.status"], "idle", style .. " gif stop must set display-status idle")
+        assert_eq(s2["island.clear"], "record", style .. " gif stop must clear island record activity")
       end)
     end
 
-    -- omarchy-rail: recording sets label "", stop does NOT disable widget.record.enabled
+    -- omarchy-rail: recording pushes kaze-shell status + island activity, stop resets both
     for _, start_args in ipairs({ { "start" }, { "start", "--gif" } }) do
       local tag = table.concat(start_args, " ")
       with_sandbox(kaze_record_bin, { style = "omarchy-rail" }, function(sb)
         local r1 = sb:run(start_args)
         assert_eq(r1.code, 0, "omarchy-rail " .. tag .. " failed: " .. r1.stderr)
         local s1 = sb:noctalia_sets()
-        assert_eq(s1["widget.record.label"], "",
-          "omarchy-rail " .. tag .. " must set label=''")
+        assert_eq(s1["display.status"], "recording",
+          "omarchy-rail " .. tag .. " must set display-status recording")
+        assert_contains(s1["island.activity.record"] or "", '"active":true',
+          "omarchy-rail " .. tag .. " must push island-activity record")
 
         sb:clear_logs()
         local r2 = sb:run({ "stop" })
         assert_eq(r2.code, 0, "omarchy-rail stop (" .. tag .. ") failed: " .. r2.stderr)
         local s2 = sb:noctalia_sets()
-        assert_true(s2["widget.record.enabled"] ~= "false",
-          "omarchy-rail stop must NOT disable widget.record.enabled")
-        assert_eq(s2["widget.record.glyph"], "video", "omarchy-rail stop must reset glyph")
+        assert_eq(s2["display.status"], "idle", "omarchy-rail stop must reset display-status idle")
+        assert_eq(s2["island.clear"], "record", "omarchy-rail stop must clear island record activity")
       end)
     end
-
-    -- Non-custom_button widget.record.type skips Noctalia widget mutations gracefully
-    with_sandbox(kaze_record_bin, { widget_type = "'other'\n", style = "dynamic-island" }, function(sb)
-      local r1 = sb:run({ "start" })
-      assert_eq(r1.code, 0, "start with non-custom_button widget must still succeed")
-      local _, ordered = sb:noctalia_sets()
-      assert_eq(#ordered, 0, "must not call config-set when widget.record.type != 'custom_button'")
-    end)
   end)
 
   -- 11. --menu Idle Workflows & Convert Last MP4 -> GIF
@@ -1608,12 +1598,10 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       assert_eq(#list_dir_files(sb.videos), 0,
         "start failure must clean up empty reserved file in Videos dir")
       local sets = sb:noctalia_sets()
-      assert_eq(sets["widget.record.glyph"], "video",
-        "start failure must reset bar indicator glyph=video")
-      assert_eq(sets["widget.record.icon_color"], "on_surface_variant",
-        "start failure must reset bar indicator icon_color=on_surface_variant")
-      assert_eq(sets["widget.record.enabled"], "false",
-        "start failure on live-pill style must disable widget.record")
+      assert_eq(sets["display.status"], "idle",
+        "start failure must reset display-status idle")
+      assert_eq(sets["island.clear"], "record",
+        "start failure must clear island record activity")
     end)
 
     -- 14b. Overlapping call while record.lock is held via flock exits 0 silently without starting duplicate

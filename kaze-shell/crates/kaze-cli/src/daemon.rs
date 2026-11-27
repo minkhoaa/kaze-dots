@@ -892,11 +892,12 @@ impl Daemon {
                 }
                 _ => IpcResponse::err("usage: caffeine-set <on|off>"),
             },
-            "status" => {
+            "status" | "inspect" => {
                 let outputs: Vec<&String> = self.state.outputs.keys().collect();
                 let hidden: Vec<&String> = self.state.hidden_bars.iter().collect();
                 let data = serde_json::json!({
                     "pid": std::process::id(),
+                    "version": env!("CARGO_PKG_VERSION"),
                     "layout_preset": self.state.layout_preset.as_str(),
                     "theme_mode": self.state.theme_mode.as_str(),
                     "palette": self.state.palette.name,

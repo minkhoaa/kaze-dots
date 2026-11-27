@@ -215,8 +215,8 @@ local function create_sandbox(bin_path)
     "",
   }, "\n"))
 
-  -- noctalia stub (only reads stdin on dmenu subcommand; msg/other calls exit 0 immediately)
-  make_executable(sb.stub_bin .. "/noctalia", table.concat({
+  -- kaze-shell stub (only reads stdin on dmenu subcommand; msg/other calls exit 0 immediately)
+  make_executable(sb.stub_bin .. "/kaze-shell", table.concat({
     "#!/bin/sh",
     "{",
     "  printf 'CALL\\n'",

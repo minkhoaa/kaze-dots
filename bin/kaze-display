@@ -494,78 +494,49 @@ local function toml_quote(s)
     return '"' .. tostring(s):gsub("\\", "\\\\"):gsub('"', '\\"') .. '"'
 end
 
-local function sync_present_indicator(mode, detail)
-    if cmd_exists("kaze-shell") then
-        local status_mode = mode or "idle"
-        local cmd = "kaze-shell msg display-status " .. fs.shell_quote(status_mode)
-        if detail and detail ~= "" then
-            cmd = cmd .. " " .. fs.shell_quote(detail)
-        end
-        if os.execute(cmd .. " >/dev/null 2>&1") then
-            return
-        end
-    end
-    if not cmd_exists("noctalia") then
-        return
-    end
-    local wtype = fs.capture("noctalia msg config-get widget.present.type 2>/dev/null")
-    if not wtype then
-        return
-    end
-    wtype = wtype:gsub("^%s+", ""):gsub("%s+$", ""):gsub("^['\"]", ""):gsub("['\"]$", "")
-    if wtype ~= "custom_button" then
+local function sync_present_indicator(mode, detail, state)
+    if not cmd_exists("kaze-shell") then
         return
     end
     local q = fs.shell_quote
-    local enabled, glyph, color, label, tooltip
-    if mode == "present" then
-        enabled = "true"
-        glyph = "presentation"
-        color = "primary"
-        label = "LIVE"
-        tooltip = "Presenting" .. (detail and detail ~= "" and (" (" .. detail .. ")") or "") .. " — click for Display Menu"
-    elseif mode == "virtual-control" then
-        enabled = "true"
-        glyph = "cast"
-        color = "primary"
-        label = "CTRL"
-        tooltip = "Controlling kaze-share directly" .. (detail and detail ~= "" and (" (" .. detail .. ")") or "") .. " — Ctrl+Super+P to return"
-    elseif mode == "virtual-share" then
-        enabled = "true"
-        glyph = "cast"
-        color = "secondary"
-        label = "SHARE"
-        tooltip = "Virtual Share active" .. (detail and detail ~= "" and (" (" .. detail .. ")") or "") .. " — click for Display Menu"
-    else
-        enabled = "false"
-        glyph = "presentation"
-        color = "on_surface_variant"
-        label = ""
-        tooltip = "Display Share Inactive"
+    local status_mode = mode or "idle"
+    local cmd = "kaze-shell msg display-status " .. q(status_mode)
+    if detail and detail ~= "" then
+        cmd = cmd .. " " .. q(detail)
     end
-    os.execute("noctalia msg config-set widget.present.enabled " .. enabled .. " >/dev/null 2>&1 || true")
-    os.execute("noctalia msg config-set widget.present.glyph " .. q(toml_quote(glyph)) .. " >/dev/null 2>&1 || true")
-    os.execute("noctalia msg config-set widget.present.icon_color " .. q(toml_quote(color)) .. " >/dev/null 2>&1 || true")
-    os.execute("noctalia msg config-set widget.present.label " .. q(toml_quote(label)) .. " >/dev/null 2>&1 || true")
-    os.execute("noctalia msg config-set widget.present.tooltip " .. q(toml_quote(tooltip)) .. " >/dev/null 2>&1 || true")
+    os.execute(cmd .. " >/dev/null 2>&1 || true")
+
+    if mode == "present" or mode == "virtual-share" or mode == "virtual-control" then
+        local ws = type(state) == "table" and (state.present_workspace or state.virtual_workspace) or nil
+        local ctrl = type(state) == "table" and (state.control_virtual == true or state.control_on_laptop == true)
+        local payload = json.encode({
+            mode = mode,
+            ws = ws and tonumber(ws) or nil,
+            control = ctrl and true or false,
+            output = type(state) == "table" and (state.external_monitor or state.virtual_monitor) or nil,
+        })
+        os.execute("kaze-shell msg island-activity display " .. q(payload) .. " >/dev/null 2>&1 || true")
+    else
+        os.execute("kaze-shell msg island-clear display >/dev/null 2>&1 || true")
+    end
 end
 
 local function refresh_present_indicator(state)
     if type(state) ~= "table" then
-        sync_present_indicator(nil)
+        sync_present_indicator(nil, nil, nil)
         return
     end
     if state.control_virtual == true then
         local detail = state.virtual_workspace and ("WS " .. tostring(state.virtual_workspace)) or "kaze-share"
-        sync_present_indicator("virtual-control", detail)
+        sync_present_indicator("virtual-control", detail, state)
     elseif state.mode == "present" or state.present_workspace ~= nil then
         local detail = state.present_workspace and ("WS " .. tostring(state.present_workspace)) or ""
-        sync_present_indicator("present", detail)
+        sync_present_indicator("present", detail, state)
     elseif state.virtual_monitor == "kaze-share" or state.mode == "virtual-share" then
         local detail = state.virtual_workspace and ("WS " .. tostring(state.virtual_workspace)) or "kaze-share"
-        sync_present_indicator("virtual-share", detail)
+        sync_present_indicator("virtual-share", detail, state)
     else
-        sync_present_indicator(nil)
+        sync_present_indicator(nil, nil, state)
     end
 end
 
@@ -576,10 +547,6 @@ local function reapply_virtual_share_after_reload(state, primary_mon)
     hypr_eval('hl.monitor({ output = "kaze-share", mode = "1920x1080@60", position = "9999x0", scale = 1, disabled = false, mirror = "" })')
     if cmd_exists("kaze-shell") then
         os.execute("kaze-shell msg bar-hide kaze-share >/dev/null 2>&1 || true")
-    elseif cmd_exists("noctalia") then
-        for _, bar_name in ipairs(active_bar_names()) do
-            os.execute("noctalia msg bar-hide " .. fs.shell_quote(bar_name) .. " kaze-share >/dev/null 2>&1 || true")
-        end
     end
     if state.virtual_workspace then
         set_edge_to_edge_workspace(state.virtual_workspace, "kaze-share-edge", "kaze-share")
@@ -651,64 +618,37 @@ local function spawn_wl_mirror(args)
 end
 
 local function shell_dnd_status()
-    if cmd_exists("kaze-shell") then
-        local out = fs.capture("kaze-shell msg dnd-status 2>/dev/null")
-        if out then
-            local trimmed = out:gsub("^%s+", ""):gsub("%s+$", "")
-            if trimmed == "on" or trimmed == "off" then
-                return trimmed, "kaze-shell"
-            end
-        end
+    if not cmd_exists("kaze-shell") then
+        return nil
     end
-    if not cmd_exists("noctalia") then
-        return nil, nil
+    local out = fs.capture("kaze-shell msg dnd-status 2>/dev/null")
+    if not out then
+        return nil
     end
-    local out = fs.capture("noctalia msg notification-dnd-status 2>/dev/null")
-    if not out then return nil, nil end
     local trimmed = out:gsub("^%s+", ""):gsub("%s+$", "")
     if trimmed == "on" or trimmed == "off" then
-        return trimmed, "noctalia"
+        return trimmed
     end
-    return nil, nil
+    return nil
 end
 
 local function enable_managed_dnd(state)
-    local cur, backend = shell_dnd_status()
-    if not backend then
-        if cmd_exists("kaze-shell") then
-            backend = "kaze-shell"
-        elseif cmd_exists("noctalia") then
-            backend = "noctalia"
-        else
-            return
-        end
+    if not cmd_exists("kaze-shell") then
+        return
     end
+    local cur = shell_dnd_status()
     if not state.dnd_managed then
         state.dnd_managed = true
         state.dnd_was_active = (cur == "on")
         if not state.dnd_was_active then
-            if backend == "kaze-shell" then
-                local ok = os.execute("kaze-shell msg dnd-on >/dev/null 2>&1")
-                if not (ok == true or ok == 0) and cmd_exists("noctalia") then
-                    os.execute("noctalia msg notification-dnd-set on >/dev/null 2>&1 || true")
-                end
-            else
-                os.execute("noctalia msg notification-dnd-set on >/dev/null 2>&1 || true")
-            end
+            os.execute("kaze-shell msg dnd-on >/dev/null 2>&1 || true")
         end
     end
 end
 
 local function restore_dnd_if_managed(state)
-    if display.should_restore_dnd(state) then
-        local restored = false
-        if cmd_exists("kaze-shell") then
-            local ok = os.execute("kaze-shell msg dnd-off >/dev/null 2>&1")
-            restored = (ok == true or ok == 0)
-        end
-        if not restored and cmd_exists("noctalia") then
-            os.execute("noctalia msg notification-dnd-set off >/dev/null 2>&1 || true")
-        end
+    if display.should_restore_dnd(state) and cmd_exists("kaze-shell") then
+        os.execute("kaze-shell msg dnd-off >/dev/null 2>&1 || true")
     end
     state.dnd_managed = nil
     state.dnd_was_active = nil
@@ -718,15 +658,10 @@ local function hide_bar_on(state, monitor_name)
     if type(monitor_name) ~= "string" or monitor_name == "" then
         return
     end
-    if cmd_exists("kaze-shell") then
-        os.execute("kaze-shell msg bar-hide " .. fs.shell_quote(monitor_name) .. " >/dev/null 2>&1 || true")
-    elseif cmd_exists("noctalia") then
-        for _, bar_name in ipairs(active_bar_names()) do
-            os.execute("noctalia msg bar-hide " .. fs.shell_quote(bar_name) .. " " .. fs.shell_quote(monitor_name) .. " >/dev/null 2>&1 || true")
-        end
-    else
+    if not cmd_exists("kaze-shell") then
         return
     end
+    os.execute("kaze-shell msg bar-hide " .. fs.shell_quote(monitor_name) .. " >/dev/null 2>&1 || true")
     state.bar_hidden_monitors = type(state.bar_hidden_monitors) == "table" and state.bar_hidden_monitors or {}
     for _, m in ipairs(state.bar_hidden_monitors) do
         if m == monitor_name then
@@ -737,16 +672,10 @@ local function hide_bar_on(state, monitor_name)
 end
 
 local function restore_bars(state)
-    if type(state.bar_hidden_monitors) == "table" then
+    if type(state.bar_hidden_monitors) == "table" and cmd_exists("kaze-shell") then
         for _, m in ipairs(state.bar_hidden_monitors) do
             if type(m) == "string" and m ~= "" then
-                if cmd_exists("kaze-shell") then
-                    os.execute("kaze-shell msg bar-show " .. fs.shell_quote(m) .. " >/dev/null 2>&1 || true")
-                elseif cmd_exists("noctalia") then
-                    for _, bar_name in ipairs(active_bar_names()) do
-                        os.execute("noctalia msg bar-show " .. fs.shell_quote(bar_name) .. " " .. fs.shell_quote(m) .. " >/dev/null 2>&1 || true")
-                    end
-                end
+                os.execute("kaze-shell msg bar-show " .. fs.shell_quote(m) .. " >/dev/null 2>&1 || true")
             end
         end
     end
@@ -757,7 +686,7 @@ local function has_lock_layer(tbl)
     if type(tbl) ~= "table" then return false end
     if type(tbl.namespace) == "string" then
         local ns = tbl.namespace:lower()
-        if (ns:find("noctalia") and ns:find("lock")) or ns == "lockscreen" then
+        if ns == "lockscreen" or ns:find("hyprlock") then
             return true
         end
     end
@@ -1452,18 +1381,12 @@ if cmd == "--on-disconnect" then
     end
     save_state(state)
     refresh_present_indicator(state)
-    -- If External Only confirmation was open on the unplugged output, reset Noctalia's
-    -- launcher panel state so future `noctalia dmenu` invocations stay unblocked.
+    -- If External Only confirmation was open on the unplugged output, close kaze-shell launcher cleanly.
     local rpath = revert_file_path()
     if rec.recover_internal and rpath and fs.file_exists(rpath) then
         os.remove(rpath)
-        local closed = false
         if cmd_exists("kaze-shell") then
-            local ok = os.execute("kaze-shell msg launcher-close >/dev/null 2>&1")
-            closed = (ok == true or ok == 0)
-        end
-        if not closed and cmd_exists("noctalia") then
-            os.execute("noctalia msg panel-open launcher >/dev/null 2>&1 || true; noctalia msg panel-close launcher >/dev/null 2>&1 || true")
+            os.execute("kaze-shell msg launcher-close >/dev/null 2>&1 || true")
         end
     end
     if rec.recover_internal then
@@ -1900,10 +1823,6 @@ local function run_virtual_share(ws_arg, interactive_pick)
     end
     if cmd_exists("kaze-shell") then
         os.execute("kaze-shell msg bar-hide kaze-share >/dev/null 2>&1 || true")
-    elseif cmd_exists("noctalia") then
-        for _, bar_name in ipairs(active_bar_names()) do
-            os.execute("noctalia msg bar-hide " .. fs.shell_quote(bar_name) .. " kaze-share >/dev/null 2>&1 || true")
-        end
     end
     set_edge_to_edge_workspace(ws_id, "kaze-share-edge", "kaze-share")
     move_workspace_to_monitor(ws_id, "kaze-share", primary, existing_ws)

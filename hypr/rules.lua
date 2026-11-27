@@ -1,7 +1,7 @@
 local ok_ctx, ctx = pcall(require, "kaze._ctx")
 local cfg = (ok_ctx and type(ctx) == "table" and ctx.cfg) or require("kaze.hypr_user").defaults()
-local noc_colors = (ok_ctx and type(ctx) == "table" and type(ctx.noctalia) == "table" and type(ctx.noctalia.colors) == "table")
-    and ctx.noctalia.colors
+local theme_colors = (ok_ctx and type(ctx) == "table" and type(ctx.theme) == "table" and type(ctx.theme.colors) == "table")
+    and ctx.theme.colors
     or {}
 
 hl.window_rule({
@@ -38,13 +38,13 @@ end
 hl.window_rule({
     name = "state-border-pinned",
     match = { pin = true },
-    border_color = noc_colors.error or "rgba(e0af68dd)",
+    border_color = theme_colors.error or "rgba(e0af68dd)",
 })
 
 hl.window_rule({
     name = "state-border-fullscreen",
     match = { fullscreen = true },
-    border_color = noc_colors.secondary or "rgba(9ece6acc)",
+    border_color = theme_colors.secondary or "rgba(9ece6acc)",
 })
 
 hl.window_rule({
@@ -69,15 +69,6 @@ hl.window_rule({
     },
     float = true,
     center = true,
-})
-
--- Noctalia GUI Settings floats centered
-hl.window_rule({
-    name = "noctalia-settings",
-    match = { class = "^dev\\.noctalia\\.Noctalia$" },
-    float = true,
-    center = true,
-    size = "(monitor_w*0.5625) (monitor_h*0.85)",
 })
 
 -- Floating TUI drawer (sysmon / btop), centered Mirror Optimizer TUI, and top dropdown
@@ -163,22 +154,23 @@ hl.window_rule({
     no_focus = true,
 })
 
--- Disable Hyprland layer animations on kaze-shell (and legacy Noctalia) surfaces
--- so shell surfaces never double-animate or tear.
+-- Disable Hyprland layer animations on kaze-shell surfaces so spring physics never double-animate or tear.
 hl.layer_rule({
     name = "kaze-shell-no-anim",
     match = {
-        namespace = "^(kaze-bar-.+|kaze-island|kaze-osd|kaze-notify|kaze-launcher)$",
+        namespace = "^(kaze-bar-.+|kaze-island|kaze-osd|kaze-notify|kaze-launcher|kaze-cc|kaze-tray-menu)$",
     },
     no_anim = true,
 })
 
+-- Subtle blur for Dynamic Island & Control Center when active preset enables blur.
 hl.layer_rule({
-    name = "noctalia-no-anim",
+    name = "kaze-shell-blur",
     match = {
-        namespace = "^noctalia-(bar-.+|notification|dock|panel|attached-panel|osd|window-switcher)$",
+        namespace = "^(kaze-island|kaze-cc)$",
     },
-    no_anim = true,
+    blur = true,
+    ignore_alpha = 0.25,
 })
 
 hl.layer_rule({ match = { namespace = "^(selection|hyprpicker)$" }, no_anim = true })

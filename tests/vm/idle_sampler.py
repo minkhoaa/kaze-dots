@@ -29,8 +29,12 @@ PORTALS = {
 PORTAL_COMMS = {"xdg-desktop-por", "xdg-document-po", "xdg-permission-"}
 SESSION = PORTALS | {
     "dconf.service", "kaze-fcitx5.service", "at-spi-dbus-bus.service", "gvfs-daemon.service",
+    "kaze-hypridle.service", "kaze-polkit.service", "kaze-cliphist.service",
 }
-SESSION_COMMS = PORTAL_COMMS | {"fcitx5", "at-spi-bus-laun", "at-spi2-registr", "gvfsd", "gvfsd-fuse"}
+SESSION_COMMS = PORTAL_COMMS | {
+    "fcitx5", "at-spi-bus-laun", "at-spi2-registr", "gvfsd", "gvfsd-fuse",
+    "hypridle", "hyprpolkitagent", "wl-paste",
+}
 UNIT_STARTING = "7d4958e842da4a758f6c1cdc7b36dcc5"  # systemd SD_MESSAGE_UNIT_STARTING
 OUTSIDE = {
     "Hyprland", "start-hyprland", "Xwayland", "pipewire", "pipewire-pulse", "wireplumber",
@@ -190,8 +194,8 @@ def t0_issues(totals, portals, started):
     errors = []
     shell, cpu, ctx = totals["shell"]
     combined = shell + totals["session"][0]
-    for name, value, limit in (("shell PSS", shell, 100.0), ("shell+session PSS", combined, 105.0),
-                               ("idle CPU", cpu, 0.20), ("context switches/s", ctx, 8.0)):
+    for name, value, limit in (("shell PSS", shell, 75.0), ("shell+session PSS", combined, 75.0),
+                               ("idle CPU", cpu, 0.20), ("context switches/s", ctx, 4.0)):
         if value > limit:
             errors.append(f"{name}: {value:.2f} > {limit:.2f}")
     if SHELL_UNIT not in started:

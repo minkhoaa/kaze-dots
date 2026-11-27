@@ -12,5 +12,5 @@ Slice=session.slice
 EnvironmentFile=%t/kaze/session.env
 ExecStart=%h/.local/bin/kaze-shell daemon
 Restart=on-failure
-RestartSec=250ms
+RestartSec=1
 TimeoutStopSec=5s

@@ -218,15 +218,15 @@ local function do_wallpaper(paths_arg)
         notify("Wallpaper failed", "File not found: " .. path, "critical")
         return 1
     end
-    if not fs.command_exists("noctalia") then
-        notify("Wallpaper failed", "noctalia not found in PATH", "critical")
+    if not fs.command_exists("kaze-shell") then
+        notify("Wallpaper failed", "kaze-shell not found in PATH", "critical")
         return 1
     end
-    local rc = fs.exit_status(os.execute("noctalia msg wallpaper-set " .. q(path) .. " >/dev/null 2>&1"))
+    local rc = fs.exit_status(os.execute("kaze-shell msg wallpaper-set " .. q(path) .. " >/dev/null 2>&1"))
     if rc == 0 then
         notify("Wallpaper updated", basename(path))
     else
-        notify("Wallpaper failed", "Noctalia rejected " .. basename(path), "critical")
+        notify("Wallpaper failed", "kaze-shell rejected " .. basename(path), "critical")
     end
     return rc
 end

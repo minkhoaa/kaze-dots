@@ -5,9 +5,11 @@ mod daemon;
 use kaze_core::Config;
 use kaze_ipc::{default_socket_path, send_request, send_request_with_timeout, IpcRequest};
 use std::env;
+use std::fs;
 use std::io::{self, Read};
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, Stdio};
 
 fn print_usage() {
     println!(
@@ -16,6 +18,8 @@ Usage:\n\
   kaze-shell daemon [--config PATH]\n\
   kaze-shell dmenu [-p|--prompt TEXT]\n\
   kaze-shell msg <command> [args...]\n\
+  kaze-shell inspect\n\
+  kaze-shell doctor [--offline] [--config PATH]\n\
   kaze-shell config validate [PATH]\n\
   kaze-shell --help | --version\n\n\
 IPC Commands (via `kaze-shell msg`):\n\
@@ -51,7 +55,7 @@ IPC Commands (via `kaze-shell msg`):\n\
   notify-clear                      Dismiss active notification popups & unread badge\n\
   launcher-toggle | launcher-close  Toggle or close the App Launcher / dmenu overlay\n\
   reload                            Reload config.toml without restarting\n\
-  status                            Print daemon JSON status",
+  inspect | status                  Print daemon JSON diagnostics",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -75,6 +79,8 @@ fn main() -> ExitCode {
         "daemon" => run_daemon_cmd(&args[1..]),
         "dmenu" => run_dmenu_cmd(&args[1..]),
         "msg" => run_msg_cmd(&args[1..]),
+        "inspect" => run_inspect_cmd(&args[1..]),
+        "doctor" => run_doctor_cmd(&args[1..]),
         "config" => run_config_cmd(&args[1..]),
         other => {
             eprintln!("kaze-shell: unknown subcommand '{other}'");
@@ -82,6 +88,268 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+fn run_inspect_cmd(args: &[String]) -> ExitCode {
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("Usage: kaze-shell inspect");
+        return ExitCode::SUCCESS;
+    }
+    if !args.is_empty() {
+        eprintln!("kaze-shell inspect: unexpected argument '{}'", args[0]);
+        return ExitCode::from(2);
+    }
+    let sock = match default_socket_path() {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("kaze-shell inspect: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let req = IpcRequest {
+        cmd: "inspect".to_string(),
+        args: Vec::new(),
+    };
+    match send_request(&sock, &req) {
+        Ok(resp) if resp.ok => {
+            if let Some(data) = resp.data {
+                if let Ok(pretty) = serde_json::to_string_pretty(&data) {
+                    println!("{pretty}");
+                    return ExitCode::SUCCESS;
+                }
+            }
+            eprintln!("kaze-shell inspect: daemon returned empty payload");
+            ExitCode::FAILURE
+        }
+        Ok(resp) => {
+            eprintln!("kaze-shell inspect: {}", resp.message);
+            ExitCode::FAILURE
+        }
+        Err(err) => {
+            eprintln!("kaze-shell inspect: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_doctor_cmd(args: &[String]) -> ExitCode {
+    let mut offline = false;
+    let mut config_path: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-h" | "--help" => {
+                println!("Usage: kaze-shell doctor [--offline] [--config PATH]");
+                return ExitCode::SUCCESS;
+            }
+            "--offline" => offline = true,
+            "--config" => {
+                i += 1;
+                let Some(p) = args.get(i) else {
+                    eprintln!("kaze-shell doctor: --config requires a path");
+                    return ExitCode::from(2);
+                };
+                config_path = Some(PathBuf::from(p));
+            }
+            other => {
+                eprintln!("kaze-shell doctor: unknown option '{other}'");
+                return ExitCode::from(2);
+            }
+        }
+        i += 1;
+    }
+
+    let mut fails = 0u32;
+
+    // 1. Validate config.toml
+    let cfg_path = match config_path {
+        Some(p) => Ok(p),
+        None => Config::default_path(),
+    };
+    let loaded_cfg = match cfg_path {
+        Ok(path) => match Config::load_from_path(&path) {
+            Ok(cfg) => {
+                println!("[OK]   config: {}", path.display());
+                Some(cfg)
+            }
+            Err(err) => {
+                println!("[FAIL] config: {err}");
+                fails += 1;
+                None
+            }
+        },
+        Err(err) => {
+            println!("[FAIL] config: {err}");
+            fails += 1;
+            None
+        }
+    };
+
+    // 2. Check configured font availability
+    let font_hint = loaded_cfg
+        .as_ref()
+        .map(|c| c.bar.font.as_str())
+        .unwrap_or("JetBrainsMono Nerd Font");
+    let font_ok = Command::new("fc-match")
+        .args(["-f", "%{file}", font_hint])
+        .stdin(Stdio::null())
+        .output()
+        .is_ok_and(|out| out.status.success() && !out.stdout.is_empty());
+    if font_ok {
+        println!("[OK]   font: '{font_hint}' resolved via fontconfig");
+    } else {
+        println!("[WARN] font: '{font_hint}' could not be verified via fc-match");
+    }
+
+    if offline {
+        println!("[OK]   runtime: skipped live IPC/D-Bus checks (--offline)");
+        return if fails == 0 {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+
+    // 3. Check IPC socket presence, permissions & connectivity
+    let sock = match default_socket_path() {
+        Ok(p) => Some(p),
+        Err(err) => {
+            println!("[FAIL] socket: {err}");
+            fails += 1;
+            None
+        }
+    };
+
+    if let Some(ref sock_path) = sock {
+        match fs::metadata(sock_path) {
+            Ok(meta) if meta.file_type().is_socket() => {
+                let mode = meta.permissions().mode() & 0o777;
+                if mode & 0o077 == 0 {
+                    println!("[OK]   socket: {} (mode {:04o})", sock_path.display(), mode);
+                } else {
+                    println!(
+                        "[FAIL] socket: {} has overly permissive mode {:04o} (expected 0600)",
+                        sock_path.display(),
+                        mode
+                    );
+                    fails += 1;
+                }
+            }
+            Ok(_) => {
+                println!(
+                    "[FAIL] socket: {} is not a UNIX socket",
+                    sock_path.display()
+                );
+                fails += 1;
+            }
+            Err(err) => {
+                println!("[FAIL] socket: {} unreachable ({err})", sock_path.display());
+                fails += 1;
+            }
+        }
+
+        // 4. Query daemon inspect JSON & verify D-Bus ownership + Hyprland + zero orphan noctalia
+        let req = IpcRequest {
+            cmd: "inspect".to_string(),
+            args: Vec::new(),
+        };
+        match send_request(sock_path, &req) {
+            Ok(resp) if resp.ok => {
+                if let Some(data) = resp.data {
+                    let pid = data["pid"].as_u64().unwrap_or(0);
+                    let preset = data["layout_preset"].as_str().unwrap_or("unknown");
+                    let surfaces = data["surface_count"].as_u64().unwrap_or(0);
+                    let hypr_ok = data["hypr_connected"].as_bool().unwrap_or(false);
+                    let notif_ok = data["notifications_bus_owned"].as_bool().unwrap_or(false);
+                    let tray_ok = data["tray_bus_owned"].as_bool().unwrap_or(false);
+
+                    println!("[OK]   daemon: pid={pid} preset={preset} surfaces={surfaces}");
+                    if hypr_ok {
+                        println!("[OK]   hyprland: IPC connected");
+                    } else {
+                        println!("[FAIL] hyprland: IPC disconnected");
+                        fails += 1;
+                    }
+                    if notif_ok {
+                        println!("[OK]   dbus: owns org.freedesktop.Notifications");
+                    } else {
+                        println!("[FAIL] dbus: does not own org.freedesktop.Notifications");
+                        fails += 1;
+                    }
+                    if tray_ok {
+                        println!("[OK]   dbus: owns org.kde.StatusNotifierWatcher");
+                    } else {
+                        println!("[FAIL] dbus: does not own org.kde.StatusNotifierWatcher");
+                        fails += 1;
+                    }
+                } else {
+                    println!("[FAIL] daemon: inspect returned empty data");
+                    fails += 1;
+                }
+            }
+            Ok(resp) => {
+                println!("[FAIL] daemon: inspect error: {}", resp.message);
+                fails += 1;
+            }
+            Err(err) => {
+                println!("[FAIL] daemon: IPC query failed: {err}");
+                fails += 1;
+            }
+        }
+    }
+
+    // 5. Ensure 0 orphan `noctalia` processes for current UID
+    let orphan_noctalia = count_own_processes("noctalia");
+    if orphan_noctalia == 0 {
+        println!("[OK]   standalone: 0 orphan noctalia processes");
+    } else {
+        println!("[FAIL] standalone: found {orphan_noctalia} orphan noctalia process(es)");
+        fails += 1;
+    }
+
+    if fails == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn count_own_processes(target_comm: &str) -> usize {
+    // SAFETY: `getuid` has no preconditions and always succeeds.
+    let my_uid = unsafe { libc::getuid() };
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return 0;
+    };
+    let mut count = 0usize;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid_str) = name.to_str() else {
+            continue;
+        };
+        if pid_str.parse::<u32>().is_err() {
+            continue;
+        }
+        let proc_dir = entry.path();
+        let Ok(comm) = fs::read_to_string(proc_dir.join("comm")) else {
+            continue;
+        };
+        if comm.trim() != target_comm {
+            continue;
+        }
+        let Ok(status) = fs::read_to_string(proc_dir.join("status")) else {
+            continue;
+        };
+        let owned = status
+            .lines()
+            .find(|l| l.starts_with("Uid:"))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|u| u.parse::<libc::uid_t>().ok())
+            == Some(my_uid);
+        if owned {
+            count += 1;
+        }
+    }
+    count
 }
 
 fn run_dmenu_cmd(args: &[String]) -> ExitCode {

@@ -795,20 +795,15 @@ append_line(mock_dir .. "/noctalia.log", table.concat(raw, " "))
 
 if arg[1] == "msg" then
   local sub = arg[2] or ""
-  if sub == "notification-dnd-status" then
+  if sub == "dnd-status" then
     local st = (read_all(mock_dir .. "/dnd_status") or "off"):gsub("%s+$", "")
     io.write(st .. "\n")
     os.exit(0)
-  elseif sub == "notification-dnd-set" then
-    local val = arg[3] or ""
-    write_all(mock_dir .. "/dnd_status", val .. "\n")
+  elseif sub == "dnd-on" then
+    write_all(mock_dir .. "/dnd_status", "on\n")
     os.exit(0)
-  elseif sub == "config-get" then
-    local key = arg[3] or ""
-    local val = read_all(mock_dir .. "/config_get_" .. key)
-    if val then
-      io.write(val)
-    end
+  elseif sub == "dnd-off" then
+    write_all(mock_dir .. "/dnd_status", "off\n")
     os.exit(0)
   else
     os.exit(0)
@@ -1023,13 +1018,13 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       end
 
       write_file(sb.bin .. "/hyprctl", MOCK_HYPRCTL_LUA)
-      write_file(sb.bin .. "/noctalia", MOCK_NOCTALIA_LUA)
+      write_file(sb.bin .. "/kaze-shell", MOCK_NOCTALIA_LUA)
       write_file(sb.bin .. "/wl-mirror", MOCK_WL_MIRROR_SH)
       write_file(sb.bin .. "/loginctl", MOCK_LOGINCTL_SH)
       write_file(sb.bin .. "/notify-send", MOCK_NOTIFY_SH)
       assert_eq(exec_code("/usr/bin/chmod +x "
         .. sh_quote(sb.bin .. "/hyprctl") .. " "
-        .. sh_quote(sb.bin .. "/noctalia") .. " "
+        .. sh_quote(sb.bin .. "/kaze-shell") .. " "
         .. sh_quote(sb.bin .. "/wl-mirror") .. " "
         .. sh_quote(sb.bin .. "/loginctl") .. " "
         .. sh_quote(sb.bin .. "/notify-send")), 0, "chmod mock scripts")
@@ -1500,7 +1495,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       local r_pres = sb:run({ "present", "3" })
       assert_true(not r_pres.stderr:find("stack traceback:", 1, true), "present crashed with eDP-1+kaze-share")
       assert_true(
-        not log_has_line(sb:noctalia_log(), "bar-hide default kaze-share"),
+        not log_has_line(sb:noctalia_log(), "bar-hide kaze-share"),
         "present must not treat headless kaze-share as external display"
       )
     end)
@@ -1599,8 +1594,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       )
 
       local nlog = sb:noctalia_log()
-      assert_contains(nlog, "msg bar-hide default HDMI-A-1", "present must hide Noctalia bar on external")
-      assert_contains(nlog, "msg notification-dnd-set on", "present must enable DND")
+      assert_contains(nlog, "msg bar-hide HDMI-A-1", "present must hide kaze-shell bar on external")
+      assert_contains(nlog, "msg dnd-on", "present must enable DND")
       assert_eq(sb:get_dnd(), "on", "DND should now be on")
 
       local st = sb:read_state()
@@ -1609,13 +1604,13 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       assert_eq(st.dnd_managed, true, "state.dnd_managed must be true")
       assert_eq(st.dnd_was_active, false, "state.dnd_was_active must be false when DND was off")
 
-      -- Stop presentation: must restore DND off and bar-show default HDMI-A-1
+      -- Stop presentation: must restore DND off and bar-show HDMI-A-1
       sb:clear_logs()
       r = sb:run({ "stop-present" })
       assert_eq(r.code, 0, "stop-present failed: " .. r.stderr)
       local nlog2 = sb:noctalia_log()
-      assert_contains(nlog2, "msg notification-dnd-set off", "stop-present must restore DND off")
-      assert_contains(nlog2, "msg bar-show default HDMI-A-1", "stop-present must restore bar on external")
+      assert_contains(nlog2, "msg dnd-off", "stop-present must restore DND off")
+      assert_contains(nlog2, "msg bar-show HDMI-A-1", "stop-present must restore bar on external")
       assert_eq(sb:get_dnd(), "off", "DND must be restored to off")
 
       local st2 = sb:read_state()
@@ -1651,7 +1646,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
 
       local r = sb:run({ "present", "4" })
       assert_eq(r.code, 0, "present 4 with DND already on failed: " .. r.stderr)
-      assert_contains(sb:noctalia_log(), "msg bar-hide default DP-1", "present must hide bar on DP-1")
+      assert_contains(sb:noctalia_log(), "msg bar-hide DP-1", "present must hide bar on DP-1")
 
       local st = sb:read_state()
       assert_true(st ~= nil, "state must exist")
@@ -1662,10 +1657,10 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       r = sb:run({ "stop-present" })
       assert_eq(r.code, 0, "stop-present failed: " .. r.stderr)
       local nlog = sb:noctalia_log()
-      assert_contains(nlog, "msg bar-show default DP-1", "stop-present must restore bar on DP-1")
+      assert_contains(nlog, "msg bar-show DP-1", "stop-present must restore bar on DP-1")
       assert_true(
-        not log_has_line(nlog, "notification-dnd-set off"),
-        "stop-present MUST NOT turn off DND when user already had DND on! noctalia.log:\n" .. nlog
+        not log_has_line(nlog, "msg dnd-off"),
+        "stop-present MUST NOT turn off DND when user already had DND on! log:\n" .. nlog
       )
       assert_eq(sb:get_dnd(), "on", "DND must remain on")
     end)
@@ -1728,7 +1723,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
         mode = function(v) return tostring(v or ""):find("1920x1080@60", 1, true) ~= nil end,
       }, "extend-left")
 
-      assert_contains(sb:noctalia_log(), "msg bar-hide default kaze-share", "must hide bar on kaze-share")
+      assert_contains(sb:noctalia_log(), "msg bar-hide kaze-share", "must hide bar on kaze-share")
       local st = sb:read_state()
       assert_true(st ~= nil, "state missing after virtual-share")
       if type(st.bar_hidden_monitors) == "table" then
@@ -2042,21 +2037,21 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       assert_eq(sb:dmenu_calls(), "", "--hotplug must NOT call dmenu when LockedHint=yes")
     end)
 
-    -- (b) hyprctl -j layers has noctalia-lockscreen -> silent exit 0, no dmenu
+    -- (b) hyprctl -j layers has hyprlock -> silent exit 0, no dmenu
     with_sandbox(function(sb)
       sb:set_layers({
         ["eDP-1"] = {
           levels = {
             ["3"] = jarray({
-              { address = "0x9", x = 0, y = 0, w = 1920, h = 1200, namespace = "noctalia-lockscreen" },
+              { address = "0x9", x = 0, y = 0, w = 1920, h = 1200, namespace = "hyprlock" },
             }),
           },
         },
       })
       sb:clear_logs()
       local r = sb:run({ "--hotplug", "HDMI-A-1" })
-      assert_eq(r.code, 0, "--hotplug with noctalia-lockscreen layer must exit 0")
-      assert_eq(sb:dmenu_calls(), "", "--hotplug must NOT call dmenu when noctalia-lockscreen layer exists")
+      assert_eq(r.code, 0, "--hotplug with hyprlock layer must exit 0")
+      assert_eq(sb:dmenu_calls(), "", "--hotplug must NOT call dmenu when hyprlock layer exists")
     end)
 
     -- (c) hyprctl -j locked returns {"locked":true} -> silent exit 0, no dmenu
@@ -2158,11 +2153,11 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
 
       local nlog = sb:noctalia_log()
       assert_true(
-        not log_has_line(nlog, "bar-show default " .. presented_mon),
+        not log_has_line(nlog, "bar-show " .. presented_mon),
         "unplugging unrelated " .. idle_mon .. " MUST NOT restore bar on presented " .. presented_mon .. "; log:\n" .. nlog
       )
       assert_true(
-        not log_has_line(nlog, "notification-dnd-set off"),
+        not log_has_line(nlog, "msg dnd-off"),
         "unplugging unrelated " .. idle_mon .. " MUST NOT disable DND; log:\n" .. nlog
       )
       local st_after = sb:read_state()
@@ -2174,8 +2169,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       local r_disc2 = sb:run({ "--on-disconnect", presented_mon })
       assert_eq(r_disc2.code, 0, "--on-disconnect active presented monitor failed: " .. r_disc2.stderr)
       local nlog2 = sb:noctalia_log()
-      assert_contains(nlog2, "msg bar-show default " .. presented_mon, "disconnecting presented monitor must restore bar")
-      assert_contains(nlog2, "msg notification-dnd-set off", "disconnecting presented monitor must restore DND off when dnd_was_active=false")
+      assert_contains(nlog2, "msg bar-show " .. presented_mon, "disconnecting presented monitor must restore bar")
+      assert_contains(nlog2, "msg dnd-off", "disconnecting presented monitor must restore DND off when dnd_was_active=false")
       local st_cleared = sb:read_state()
       if st_cleared then
         assert_true(st_cleared.mode ~= "present", "disconnecting presented monitor must clear present mode")
@@ -2191,9 +2186,9 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       sb:clear_logs()
       assert_eq(sb:run({ "--on-disconnect", "DP-1" }).code, 0, "--on-disconnect DP-1 failed")
       local nlog = sb:noctalia_log()
-      assert_contains(nlog, "msg bar-show default DP-1", "must restore bar on DP-1")
+      assert_contains(nlog, "msg bar-show DP-1", "must restore bar on DP-1")
       assert_true(
-        not log_has_line(nlog, "notification-dnd-set off"),
+        not log_has_line(nlog, "msg dnd-off"),
         "disconnecting presented monitor MUST NOT turn off DND when user already had DND on! log:\n" .. nlog
       )
     end)
@@ -2299,8 +2294,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       end
       assert_contains(sb:hypr_ops(), "output remove kaze-share", "cleanup must remove kaze-share")
       local nlog = sb:noctalia_log()
-      assert_contains(nlog, "msg bar-show default HDMI-A-1", "cleanup must restore bar")
-      assert_contains(nlog, "msg notification-dnd-set off", "cleanup must restore DND off when originally off")
+      assert_contains(nlog, "msg bar-show HDMI-A-1", "cleanup must restore bar")
+      assert_contains(nlog, "msg dnd-off", "cleanup must restore DND off when originally off")
       assert_eq(sb:get_dnd(), "off", "DND must be off after cleanup")
 
       if file_exists(sb:monitors_lua_path()) then
@@ -2313,7 +2308,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       local r2 = sb:run({ "cleanup" })
       assert_eq(r2.code, 0, "idempotent cleanup failed: " .. r2.stderr)
       assert_true(
-        not log_has_line(sb:noctalia_log(), "notification-dnd-set off"),
+        not log_has_line(sb:noctalia_log(), "msg dnd-off"),
         "idempotent cleanup on clean state should not spuriously toggle DND off"
       )
     end)
@@ -2329,9 +2324,9 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       local r = sb:run({ "cleanup" })
       assert_eq(r.code, 0, "cleanup (DND originally on) failed: " .. r.stderr)
       local nlog = sb:noctalia_log()
-      assert_contains(nlog, "msg bar-show default HDMI-A-1", "cleanup must restore bar")
+      assert_contains(nlog, "msg bar-show HDMI-A-1", "cleanup must restore bar")
       assert_true(
-        not log_has_line(nlog, "notification-dnd-set off"),
+        not log_has_line(nlog, "msg dnd-off"),
         "cleanup MUST NOT turn off DND when user already had DND on! log:\n" .. nlog
       )
       assert_eq(sb:get_dnd(), "on", "DND must stay on after cleanup")
@@ -2457,7 +2452,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       assert_eq(st.dnd_was_active, false, "re-entrant present MUST preserve original dnd_was_active=false!")
       sb:clear_logs()
       assert_eq(sb:run({ "stop-present" }).code, 0, "stop-present after re-entrant present failed")
-      assert_contains(sb:noctalia_log(), "msg notification-dnd-set off", "stop-present after re-entrant present must restore DND off")
+      assert_contains(sb:noctalia_log(), "msg dnd-off", "stop-present after re-entrant present must restore DND off")
       assert_eq(sb:get_dnd(), "off", "DND must be restored to off")
     end)
   end)

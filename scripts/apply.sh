@@ -211,6 +211,8 @@ for f in hyprland.lua env.lua core.lua rules.lua execs.lua keybinds.lua; do
     backup_and_link "$REPO_DIR/hypr/$f" "$CONFIG_HOME/hypr/$f"
 done
 backup_and_link "$REPO_DIR/config/hypr/xdph.conf" "$CONFIG_HOME/hypr/xdph.conf"
+backup_and_link "$REPO_DIR/config/hypr/hyprlock.conf" "$CONFIG_HOME/hypr/hyprlock.conf"
+backup_and_link "$REPO_DIR/config/hypr/hypridle.conf" "$CONFIG_HOME/hypr/hypridle.conf"
 
 backup_and_link "$REPO_DIR/config/foot/foot.ini" "$CONFIG_HOME/foot/foot.ini"
 backup_and_link "$REPO_DIR/config/starship/starship.toml" "$CONFIG_HOME/starship.toml"
@@ -275,6 +277,7 @@ fi
 if [ -d "$REPO_DIR/config/noctalia/palettes" ]; then
     for pal_file in "$REPO_DIR"/config/noctalia/palettes/*.json; do
         [ -e "$pal_file" ] || continue
+        backup_and_link "$pal_file" "$CONFIG_HOME/kaze-shell/palettes/$(basename "$pal_file")"
         backup_and_link "$pal_file" "$CONFIG_HOME/noctalia/palettes/$(basename "$pal_file")"
     done
 fi

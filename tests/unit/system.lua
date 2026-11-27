@@ -49,8 +49,13 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
 
             local min_out, min_ok = read_all(env .. " " .. installer .. " --profile minimal --dry-run 2>&1")
             assert_true(min_ok, "minimal --dry-run exit 0")
-            assert_contains(min_out, "  noctalia\n", "minimal includes noctalia")
             assert_contains(min_out, "  hyprland\n", "minimal includes hyprland")
+            assert_contains(min_out, "  hyprlock\n", "minimal includes hyprlock")
+            assert_contains(min_out, "  hypridle\n", "minimal includes hypridle")
+            assert_contains(min_out, "  hyprpolkitagent\n", "minimal includes hyprpolkitagent")
+            assert_contains(min_out, "  cliphist\n", "minimal includes cliphist")
+            assert_contains(min_out, "  grim\n", "minimal includes grim")
+            assert_contains(min_out, "  slurp\n", "minimal includes slurp")
             assert_contains(min_out, "  pipewire\n", "minimal includes pipewire")
             assert_contains(min_out, "  pipewire-pulse\n", "minimal includes pipewire-pulse")
             assert_contains(min_out, "  pipewire-alsa\n", "minimal includes pipewire-alsa")
@@ -60,29 +65,29 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             assert_contains(min_out, "  zsh-autosuggestions\n", "minimal includes zsh-autosuggestions")
             assert_contains(min_out, "  zsh-syntax-highlighting\n", "minimal includes zsh-syntax-highlighting")
             assert_contains(min_out, "sudo pacman -Syu --needed", "uses pacman -Syu")
-            assert_contains(min_out, "Display manager: noctalia\n", "defaults display manager to noctalia")
+            assert_contains(min_out, "Display manager: greetd\n", "defaults display manager to greetd")
             assert_contains(min_out, "AUR helper: yay-bin\n", "defaults AUR helper to yay-bin")
-            assert_contains(min_out, "greetd noctalia-greeter base-devel git", "default dry-run includes noctalia-greeter + AUR prereqs")
+            assert_contains(min_out, "greetd greetd-tuigreet base-devel git", "default dry-run includes greetd-tuigreet + AUR prereqs")
             assert_contains(min_out, "0 AUR", "zero AUR at core")
 
             local function has_word(text, word)
                 local pat = "%f[%w_-]" .. word:gsub("%-", "%%-") .. "%f[^%w_-]"
                 return text:find(pat) ~= nil
             end
-            for _, removed in ipairs({ "waybar", "swaybg", "fuzzel", "fnott", "hypridle", "hyprlock", "cliphist", "hyprsunset", "matugen", "mate-polkit", "grim", "swappy" }) do
+            for _, removed in ipairs({ "noctalia", "waybar", "swaybg", "fuzzel", "fnott", "hyprsunset", "matugen", "mate-polkit", "swappy" }) do
                 assert_true(not has_word(min_out, removed), "removed package leaked into minimal: " .. removed)
             end
 
             local full_out, full_ok = read_all(env .. " " .. installer .. " --profile full --dry-run --yes 2>&1")
             assert_true(full_ok, "full --dry-run exit 0")
             for _, pkg in ipairs({
-                "noctalia", "slurp", "wf-recorder", "ffmpeg", "hyprpicker",
+                "hyprlock", "hypridle", "cliphist", "grim", "slurp", "wf-recorder", "ffmpeg", "hyprpicker",
                 "thunar", "adw-gtk-theme", "yazi", "zathura", "zathura-pdf-poppler", "fcitx5", "fcitx5-bamboo",
                 "fzf", "zoxide", "eza", "bat", "ripgrep", "fd", "starship", "wl-mirror",
             }) do
                 assert_contains(full_out, "  " .. pkg .. "\n", "full includes " .. pkg)
             end
-            for _, removed in ipairs({ "waybar", "swaybg", "fuzzel", "fnott", "hypridle", "hyprlock", "cliphist", "hyprsunset", "matugen", "mate-polkit", "grim", "swappy", "gst-plugin-pipewire", "zathura-pdf-mupdf" }) do
+            for _, removed in ipairs({ "noctalia", "waybar", "swaybg", "fuzzel", "fnott", "hyprsunset", "matugen", "mate-polkit", "swappy", "gst-plugin-pipewire", "zathura-pdf-mupdf" }) do
                 assert_true(not has_word(full_out, removed), "removed package leaked into full: " .. removed)
             end
 
@@ -151,9 +156,14 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             assert_eq(fs.read_file(zprof_local), "# user zprofile marker\n")
 
             for _, link_path in ipairs({
-                cfg .. "/systemd/user/kaze-noctalia.service",
+                cfg .. "/systemd/user/kaze-shell.service",
+                cfg .. "/systemd/user/kaze-hypridle.service",
+                cfg .. "/systemd/user/kaze-polkit.service",
+                cfg .. "/systemd/user/kaze-cliphist.service",
                 cfg .. "/systemd/user/kaze-fcitx5.service",
                 cfg .. "/hypr/xdph.conf",
+                cfg .. "/hypr/hyprlock.conf",
+                cfg .. "/hypr/hypridle.conf",
                 cfg .. "/foot/foot.ini",
                 cfg .. "/starship.toml",
                 cfg .. "/yazi/yazi.toml",
@@ -192,9 +202,14 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             assert_eq(fs.read_file(zprof_local), "# user zprofile marker\n")
             assert_eq(fs.read_file(cfg .. "/noctalia/config.toml"), "# pre-existing user noctalia\n")
             for _, gone in ipairs({
-                cfg .. "/systemd/user/kaze-noctalia.service",
+                cfg .. "/systemd/user/kaze-shell.service",
+                cfg .. "/systemd/user/kaze-hypridle.service",
+                cfg .. "/systemd/user/kaze-polkit.service",
+                cfg .. "/systemd/user/kaze-cliphist.service",
                 cfg .. "/systemd/user/kaze-fcitx5.service",
                 cfg .. "/hypr/xdph.conf",
+                cfg .. "/hypr/hyprlock.conf",
+                cfg .. "/hypr/hypridle.conf",
                 cfg .. "/foot/foot.ini",
                 cfg .. "/starship.toml",
                 cfg .. "/yazi/yazi.toml",
@@ -261,13 +276,25 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
 
             link_host_bin(stub_bin, "lua")
             for _, b in ipairs({
-                "hyprland", "hyprctl", "noctalia", "notify-send",
-                "foot", "footclient", "wl-copy", "wl-paste",
+                "hyprland", "hyprctl", "hyprlock", "hypridle", "cliphist", "grim", "slurp",
+                "notify-send", "foot", "footclient", "wl-copy", "wl-paste",
                 "wpctl", "brightnessctl", "playerctl",
                 "busctl", "systemctl", "flock",
             }) do
                 write_stub(stub_bin, b, "exit 0")
             end
+            write_stub(stub_bin, "kaze-shell", [[
+if [ "${1:-}" = "config" ] && [ "${2:-}" = "validate" ]; then
+    exit 0
+elif [ "${1:-}" = "msg" ] && [ "${2:-}" = "ping" ]; then
+    printf 'pong\n'
+    exit 0
+elif [ "${1:-}" = "inspect" ]; then
+    printf '{"notifications_bus_owned":true,"tray_bus_owned":true,"hypr_connected":true}\n'
+    exit 0
+fi
+exit 0
+]])
             write_stub(stub_bin, "zsh", [[
 if [ "${1:-}" = "-n" ] && [ -n "${2:-}" ]; then
     printf '%s\n' "$2" >> "$HOME/zsh-checked"
@@ -291,13 +318,16 @@ exit 0
             )
             assert_true(os.execute(sys_env .. " " .. q(repo_dir .. "/scripts/install.sh") .. " --profile minimal --skip-packages --yes >/dev/null 2>&1"))
 
+            fs.mkdir_p(runtime .. "/kaze")
+            assert_true(os.execute("python3 -c \"import socket,sys; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.bind(sys.argv[1]); s.close()\" " .. q(runtime .. "/kaze/shell.sock")))
+
             link_host_bin(stub_bin, "id")
             write_stub(stub_bin, "hyprctl", [[if [ "$1" = configerrors ]; then exit 0; fi; exit 2]])
             write_stub(stub_bin, "systemctl", [[
 case "$*" in
   '--user show-environment')
     printf 'WAYLAND_DISPLAY=wayland-1\nHYPRLAND_INSTANCE_SIGNATURE=sig-live\nXDG_CURRENT_DESKTOP=Hyprland\n' ;;
-  '--user is-active --quiet pipewire.service'|'--user is-active --quiet wireplumber.service') exit 0 ;;
+  '--user is-active --quiet pipewire.service'|'--user is-active --quiet wireplumber.service'|'--user is-active --quiet kaze-shell.service') exit 0 ;;
   '--user is-active --quiet pipewire-pulse.socket')
     [ "${TEST_PULSE_MODE:-socket}" = "socket" ] && exit 0 || exit 1 ;;
   '--user is-active --quiet pipewire-pulse.service')
@@ -313,14 +343,15 @@ fi
 exit 2
 ]])
             write_stub(stub_bin, "ps", [[
-printf '  101 noctalia /usr/bin/noctalia\n  102 foot /usr/bin/foot --server=3\n'
-if [ "${DUP_NOC:-0}" = 1 ]; then printf '  199 noctalia /usr/bin/noctalia\n'; fi
+printf '  101 kaze-shell /usr/bin/kaze-shell\n  102 foot /usr/bin/foot --server=3\n'
+if [ "${DUP_KS:-0}" = 1 ]; then printf '  199 kaze-shell /usr/bin/kaze-shell\n'; fi
+if [ "${ORPHAN_NOC:-0}" = 1 ]; then printf '  299 noctalia /usr/bin/noctalia\n'; fi
 ]])
 
             local live_env = base_env .. " HYPRLAND_INSTANCE_SIGNATURE=sig-live WAYLAND_DISPLAY=wayland-1"
             local live_out, live_ok = read_all(live_env .. " " .. doctor .. " 2>&1")
             assert_true(live_ok, "live minimal doctor should pass:\n" .. live_out)
-            assert_contains(live_out, "[OK]   noctalia: config.toml validated cleanly")
+            assert_contains(live_out, "[OK]   kaze-shell: config.toml validated cleanly")
             assert_contains(live_out, "[OK]   foot: foot.ini validated cleanly")
             assert_contains(live_out, "[OK]   zsh: ~/.zshrc, ~/.zprofile, and conf.d/*.zsh validated cleanly")
             assert_contains(live_out, "[OK]   daemons (minimal):")
@@ -335,7 +366,7 @@ if [ "${DUP_NOC:-0}" = 1 ]; then printf '  199 noctalia /usr/bin/noctalia\n'; fi
             assert_contains(full_miss_out, "fzf, zoxide, eza, bat, rg, fd, starship, wl-mirror")
 
             for _, b in ipairs({
-                "slurp", "wf-recorder", "ffmpeg", "ffprobe", "hyprpicker",
+                "wf-recorder", "ffmpeg", "ffprobe", "hyprpicker",
                 "thunar", "yazi", "imv", "zathura", "gnome-keyring-daemon", "fcitx5",
                 "fzf", "zoxide", "eza", "bat", "rg", "fd", "starship", "wl-mirror",
             }) do
@@ -345,9 +376,13 @@ if [ "${DUP_NOC:-0}" = 1 ]; then printf '  199 noctalia /usr/bin/noctalia\n'; fi
             assert_true(full_ok, "full offline doctor pass with all binaries:\n" .. full_ok_out)
             assert_contains(full_ok_out, "[OK]   binaries (full): all full-profile tools found")
 
-            local dup_out, dup_ok = read_all(live_env .. " DUP_NOC=1 " .. doctor .. " 2>&1")
-            assert_true(not dup_ok, "duplicate noctalia PID must fail doctor")
-            assert_contains(dup_out, "noctalia (expected 1, got 2)")
+            local dup_out, dup_ok = read_all(live_env .. " DUP_KS=1 " .. doctor .. " 2>&1")
+            assert_true(not dup_ok, "duplicate kaze-shell PID must fail doctor")
+            assert_contains(dup_out, "kaze-shell (expected 1, got 2)")
+
+            local noc_out, noc_ok = read_all(live_env .. " ORPHAN_NOC=1 " .. doctor .. " 2>&1")
+            assert_true(not noc_ok, "orphan noctalia PID must fail doctor")
+            assert_contains(noc_out, "orphan noctalia process(es) detected (1)")
 
             -- pipewire-pulse.service active (even if socket inactive) passes; both inactive fails
             local psvc_out, psvc_ok = read_all(live_env .. " TEST_PULSE_MODE=service " .. doctor .. " 2>&1")
@@ -616,14 +651,9 @@ if [ "${2:-}" = "s1" ] && [ "${3:-}" = "-p" ] && [ "${4:-}" = "LockedHint" ]; th
     printf '%s\n' "${TEST_LOCKED:-no}"
 fi
 ]])
-            write_stub(stub_bin, "noctalia", [[
-if [ "$1" = "msg" ] && [ "$2" = "notification-dnd-status" ]; then
+            write_stub(stub_bin, "kaze-shell", [[
+if [ "$1" = "msg" ] && [ "$2" = "dnd-status" ]; then
     printf '%s\n' "${TEST_DND:-off}"
-    exit 0
-elif [ "$1" = "msg" ] && [ "$2" = "config-get" ] && [ "${3:-}" = "widget.present.type" ]; then
-    if [ "${TEST_PRESENT_WIDGET:-0}" = "1" ]; then
-        printf "'custom_button'\n"
-    fi
     exit 0
 fi
 printf '%s\n' "$*" >> "$HOME/noc-calls"
@@ -694,13 +724,13 @@ fi
             assert_true(lock_ok, "--hotplug should exit 0 silently when locked")
             assert_true(not fs.file_exists(home .. "/noc-calls"), "locked hotplug must not invoke noctalia dmenu")
 
-            local _, layer_lock_ok = read_all(cli_env .. ' TEST_LAYERS=\'{"eDP-1":{"levels":{"3":[{"namespace":"noctalia-lockscreen"}]}}}\' ' .. kdisplay .. " --hotplug HDMI-A-1 2>&1")
-            assert_true(layer_lock_ok, "--hotplug should exit 0 silently on Noctalia lock layer")
-            assert_true(not fs.file_exists(home .. "/noc-calls"), "lock-layer hotplug must not invoke noctalia dmenu")
+            local _, layer_lock_ok = read_all(cli_env .. ' TEST_LAYERS=\'{"eDP-1":{"levels":{"3":[{"namespace":"hyprlock"}]}}}\' ' .. kdisplay .. " --hotplug HDMI-A-1 2>&1")
+            assert_true(layer_lock_ok, "--hotplug should exit 0 silently on hyprlock layer")
+            assert_true(not fs.file_exists(home .. "/noc-calls"), "lock-layer hotplug must not invoke kaze-shell dmenu")
 
             local _, hypr_lock_ok = read_all(cli_env .. " TEST_HYPR_LOCKED=1 " .. kdisplay .. " --hotplug HDMI-A-1 2>&1")
             assert_true(hypr_lock_ok, "--hotplug should exit 0 silently when hyprctl -j locked is true")
-            assert_true(not fs.file_exists(home .. "/noc-calls"), "ext-session-lock-v1 hotplug must not invoke noctalia dmenu")
+            assert_true(not fs.file_exists(home .. "/noc-calls"), "ext-session-lock-v1 hotplug must not invoke kaze-shell dmenu")
 
             local _, unlock_ok = read_all(cli_env .. " " .. kdisplay .. " --hotplug HDMI-A-1 2>&1")
             assert_true(unlock_ok, "unlocked --hotplug with empty dmenu choice exits 0")
@@ -711,8 +741,9 @@ fi
             local p_out, p_ok = read_all(cli_env .. " TEST_DND=off " .. kdisplay .. " present 3 2>&1")
             assert_true(p_ok, "present 3 failed: " .. p_out)
             local noc_log = assert(fs.read_file(home .. "/noc-calls"))
-            assert_contains(noc_log, "msg bar-hide default HDMI-A-1\n")
-            assert_contains(noc_log, "msg notification-dnd-set on\n")
+            assert_contains(noc_log, "msg bar-hide HDMI-A-1\n")
+            assert_contains(noc_log, "msg dnd-on\n")
+            assert_contains(noc_log, "msg island-activity display ")
             local hypr_log = assert(fs.read_file(home .. "/hypr-calls"))
             assert_contains(hypr_log, 'workspace.move({ workspace = "3", monitor = "HDMI-A-1" })')
             local st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
@@ -723,8 +754,9 @@ fi
             fs.write_atomic(home .. "/noc-calls", "")
             assert_true(os.execute(cli_env .. " " .. kdisplay .. " stop-present >/dev/null 2>&1"))
             local stop_noc = assert(fs.read_file(home .. "/noc-calls"))
-            assert_contains(stop_noc, "msg bar-show default HDMI-A-1\n")
-            assert_contains(stop_noc, "msg notification-dnd-set off\n")
+            assert_contains(stop_noc, "msg bar-show HDMI-A-1\n")
+            assert_contains(stop_noc, "msg dnd-off\n")
+            assert_contains(stop_noc, "msg island-clear display\n")
 
             -- 3. present when user already had DND on must NOT disable DND on stop-present
             fs.write_atomic(home .. "/noc-calls", "")
@@ -732,7 +764,7 @@ fi
             fs.write_atomic(home .. "/noc-calls", "")
             assert_true(os.execute(cli_env .. " " .. kdisplay .. " stop-present >/dev/null 2>&1"))
             local keep_noc = assert(fs.read_file(home .. "/noc-calls"))
-            assert_true(not keep_noc:find("notification-dnd-set off", 1, true), "must preserve pre-existing user DND")
+            assert_true(not keep_noc:find("msg dnd-off", 1, true), "must preserve pre-existing user DND")
 
             -- 4. virtual-share + toggle-preview + toggle-window-share + stop-virtual ordering
             fs.write_atomic(home .. "/hypr-calls", "")
@@ -743,7 +775,7 @@ fi
             local p_pin = assert(vs_log:find('output = "eDP-1"', 1, true))
             local p_ks = assert(vs_log:find('output = "kaze-share"', 1, true))
             assert_true(p_pin < p_ks, "primary must be pinned at 0x0 before configuring kaze-share")
-            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg bar-hide default kaze-share\n")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg bar-hide kaze-share\n")
             local vs_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
             assert_eq(vs_st.bar_hidden_monitors, nil, "virtual-share must not record kaze-share in bar_hidden_monitors")
 
@@ -794,7 +826,7 @@ fi
             local disc_hypr = assert(fs.read_file(home .. "/hypr-calls"))
             assert_contains(disc_hypr, 'output = "eDP-1"')
             assert_contains(disc_hypr, 'position = "0x0"')
-            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg notification-dnd-set off\n")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg dnd-off\n")
 
             -- 6. cleanup clears display-state.json and tears down active virtual-share
             fs.write_atomic(home .. "/mock-monitors.json", [[
@@ -903,7 +935,7 @@ fi
             assert_contains(assert(fs.read_file(home .. "/dmenu-items")), "Stop Mirror (HDMI-A-1)")
             assert_contains(assert(fs.read_file(home .. "/hypr-calls")), "reload\n")
             assert_contains(assert(fs.read_file(home .. "/hypr-calls")), 'position = "auto-right"')
-            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg notification-dnd-set off\n")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg dnd-off\n")
             local after_stop_mir = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
             assert_eq(after_stop_mir.mode, "extend-right")
 
@@ -975,7 +1007,7 @@ fi
             local p_ws_back = assert(ret_hypr:find('workspace.move({ workspace = "3", monitor = "HDMI-A-1" })', 1, true))
             local p_ws_restore = assert(ret_hypr:find('focus({ workspace = "1" })', 1, true))
             assert_true(p_reload < p_ext_pos and p_ext_pos < p_ws_back and p_ws_back < p_ws_restore)
-            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg bar-hide default HDMI-A-1\n")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg bar-hide HDMI-A-1\n")
             local ret_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
             assert_eq(ret_st.control_on_laptop, false)
             assert_eq(ret_st.saved_laptop_workspace, nil)
@@ -993,25 +1025,21 @@ fi
             assert_contains(chain_hypr, 'hl.window_rule({ name = "kaze-present-edge", enabled = false })', "present -> mirror must disable kaze-present-edge")
             fs.write_atomic(home .. "/noc-calls", "")
             assert_true(os.execute(cli_env .. " " .. kdisplay .. " extend-right >/dev/null 2>&1"))
-            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg notification-dnd-set off\n", "present -> mirror -> extend-right must restore DND")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg dnd-off\n", "present -> mirror -> extend-right must restore DND")
 
-            -- 12. Dynamic Island widget.present live indicator + floating-rail dual-bar hide/show
-            fs.write_atomic(cfg .. "/kaze/style", "floating-rail\n")
+            -- 12. Dynamic Island live activity + bar hide/show
             fs.write_atomic(home .. "/noc-calls", "")
-            assert_true(os.execute(cli_env .. " TEST_PRESENT_WIDGET=1 TEST_DND=off " .. kdisplay .. " present 3 >/dev/null 2>&1"))
+            assert_true(os.execute(cli_env .. " TEST_DND=off " .. kdisplay .. " present 3 >/dev/null 2>&1"))
             local multi_noc = assert(fs.read_file(home .. "/noc-calls"))
-            assert_contains(multi_noc, "msg bar-hide default HDMI-A-1\n")
-            assert_contains(multi_noc, "msg bar-hide rail HDMI-A-1\n")
-            assert_contains(multi_noc, "msg config-set widget.present.enabled true\n")
-            assert_contains(multi_noc, 'msg config-set widget.present.label "LIVE"\n')
+            assert_contains(multi_noc, "msg bar-hide HDMI-A-1\n")
+            assert_contains(multi_noc, "msg display-status present WS 3\n")
+            assert_contains(multi_noc, "msg island-activity display ")
             fs.write_atomic(home .. "/noc-calls", "")
-            assert_true(os.execute(cli_env .. " TEST_PRESENT_WIDGET=1 " .. kdisplay .. " stop-present >/dev/null 2>&1"))
+            assert_true(os.execute(cli_env .. " " .. kdisplay .. " stop-present >/dev/null 2>&1"))
             local multi_stop = assert(fs.read_file(home .. "/noc-calls"))
-            assert_contains(multi_stop, "msg bar-show default HDMI-A-1\n")
-            assert_contains(multi_stop, "msg bar-show rail HDMI-A-1\n")
-            assert_contains(multi_stop, "msg config-set widget.present.enabled false\n")
-            assert_contains(multi_stop, 'msg config-set widget.present.label ""\n')
-            os.remove(cfg .. "/kaze/style")
+            assert_contains(multi_stop, "msg bar-show HDMI-A-1\n")
+            assert_contains(multi_stop, "msg display-status idle\n")
+            assert_contains(multi_stop, "msg island-clear display\n")
 
             -- switch-share evacuates previous virtual workspace back to primary monitor
             fs.write_atomic(home .. "/mock-monitors.json", [[
@@ -1071,7 +1099,7 @@ fi
             assert_contains(vs_reload_hypr, "reload\n")
             assert_contains(vs_reload_hypr, 'output = "kaze-share", mode = "1920x1080@60", position = "9999x0", scale = 1')
             assert_contains(vs_reload_hypr, 'name = "kaze-share-edge"')
-            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg bar-hide default kaze-share\n")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg bar-hide kaze-share\n")
             assert_true(os.execute(cli_env .. " " .. kdisplay .. " stop-virtual >/dev/null 2>&1"))
 
             -- 11. Zero-monitor --on-disconnect still cleans up active present + restores DND
@@ -1086,7 +1114,7 @@ fi
             fs.write_atomic(home .. "/noc-calls", "")
             fs.write_atomic(home .. "/hypr-calls", "")
             assert_true(os.execute(cli_env .. " " .. kdisplay .. " --on-disconnect HDMI-A-1 >/dev/null 2>&1"))
-            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg notification-dnd-set off\n")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg dnd-off\n")
             assert_contains(assert(fs.read_file(home .. "/hypr-calls")), 'hl.window_rule({ name = "kaze-present-edge", enabled = false })')
             local zero_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
             assert_eq(zero_st.present_workspace, nil)
@@ -1119,7 +1147,7 @@ fi
             local to_hypr = assert(fs.read_file(home .. "/hypr-calls"))
             assert_contains(to_hypr, 'output = "eDP-1", disabled = true')
             assert_contains(to_hypr, 'focus({ monitor = "eDP-1" })')
-            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg panel-close launcher\n", "timed-out dmenu must dismiss Noctalia launcher overlay")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg launcher-close\n", "timed-out dmenu must dismiss kaze-shell launcher overlay")
             local after_to_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
             assert_eq(after_to_st.mode, "extend-left", "timed-out External Only must auto-revert")
 
@@ -1229,7 +1257,8 @@ fi
             assert_contains(vc_hypr, 'focus({ monitor = "kaze-share" })')
             assert_true(not vc_hypr:find("reload", 1, true), "kaze-share direct control must NEVER reload Hyprland")
             assert_true(not vc_hypr:find("window.move", 1, true), "kaze-share direct control must NEVER move windows off kaze-share")
-            assert_contains(assert(fs.read_file(home .. "/noc-calls")), 'msg config-set widget.present.label "CTRL"\n')
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg display-status virtual-control WS 9\n")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg island-activity display ")
             local vc_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
             assert_eq(vc_st.control_virtual, true)
             assert_true(type(vc_st.control_pid) == "number" and vc_st.control_pid > 0)
@@ -1259,7 +1288,8 @@ fi
             assert_contains(vc_exit_hypr, 'focus({ workspace = "1" })')
             assert_true(not vc_exit_hypr:find("reload", 1, true), "exiting kaze-share direct control must NEVER reload Hyprland")
             assert_contains(assert(fs.read_file(home .. "/wlmirror-calls")), "--title kaze-share-preview kaze-share\n")
-            assert_contains(assert(fs.read_file(home .. "/noc-calls")), 'msg config-set widget.present.label "SHARE"\n')
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg display-status virtual-share WS 9\n")
+            assert_contains(assert(fs.read_file(home .. "/noc-calls")), "msg island-activity display ")
             local vc_exit_st = json.decode(assert(fs.read_file(runtime .. "/kaze/display-state.json")))
             assert_eq(vc_exit_st.control_virtual, nil)
             assert_eq(vc_exit_st.control_pid, nil)
@@ -1338,7 +1368,7 @@ fi
             return table.concat(list, "\n"), #list
         end
 
-        for _, prof in ipairs({ { name = "minimal", count = 27 }, { name = "full", count = 55 } }) do
+        for _, prof in ipairs({ { name = "minimal", count = 32 }, { name = "full", count = 59 } }) do
             local p_out, p_ok = read_all(pkg_script .. " --profile " .. prof.name .. " --dry-run 2>&1")
             local i_out, i_ok = read_all(inst_script .. " --profile " .. prof.name .. " --dry-run 2>&1")
             assert_true(p_ok, "install-packages.sh --dry-run failed for " .. prof.name .. ": " .. p_out)
@@ -1399,7 +1429,8 @@ fi
             for _, d in ipairs({ home, cfg .. "/noctalia", data, cache, runtime, stub_bin }) do fs.mkdir_p(d) end
             link_host_bin(stub_bin, "lua")
             for _, b in ipairs({
-                "hyprland", "hyprctl", "noctalia", "notify-send",
+                "hyprland", "hyprctl", "kaze-shell", "hyprlock", "hypridle",
+                "cliphist", "grim", "slurp", "noctalia", "notify-send",
                 "foot", "footclient", "zsh", "wl-copy", "wl-paste",
                 "wpctl", "brightnessctl", "playerctl",
                 "busctl", "systemctl", "flock",
@@ -1794,7 +1825,7 @@ Include = /etc/pacman.d/mirror*
             local stub_bin = tmp .. "/stubs"
             fs.mkdir_p(stub_bin)
             link_host_bin(stub_bin, "lua")
-            write_stub(stub_bin, "noctalia", [[
+            write_stub(stub_bin, "kaze-shell", [[
 if [ "$1" = "dmenu" ]; then
     cat > "$HOME/mirror-menu.txt"
     exit 0

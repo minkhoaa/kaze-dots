@@ -3,7 +3,7 @@
 # Single source of truth for official Arch Linux [core]/[extra] packages (0 AUR).
 # Sourced by scripts/install.sh and scripts/install-packages.sh.
 
-PKG_MIN_DESKTOP=(hyprland noctalia)
+PKG_MIN_DESKTOP=(hyprland hyprlock hypridle hyprpolkitagent cliphist grim slurp)
 PKG_MIN_PORTALS=(xdg-desktop-portal xdg-desktop-portal-hyprland xdg-desktop-portal-gtk dconf libnotify)
 PKG_MIN_TERM=(foot zsh zsh-autosuggestions zsh-syntax-highlighting zsh-completions)
 PKG_MIN_AUDIO=(pipewire pipewire-pulse pipewire-alsa wireplumber)
@@ -19,13 +19,12 @@ MINIMAL_PACKAGES=(
     "${PKG_MIN_FONTS[@]}"
 )
 
-# Optional official Arch [extra] groups (noctalia-greeter via greetd is default DM in install.sh).
-PKG_DM_NOCTALIA=(greetd noctalia-greeter)
+# Optional official Arch [extra] display managers.
 PKG_DM_LY=(ly)
 PKG_DM_GREETD=(greetd greetd-tuigreet)
 PKG_AUR_PREREQS=(base-devel git)
 
-PKG_FULL_CAPTURE=(slurp wf-recorder ffmpeg hyprpicker wl-mirror)
+PKG_FULL_CAPTURE=(wf-recorder ffmpeg hyprpicker wl-mirror)
 PKG_FULL_APPS=(thunar adw-gtk-theme papirus-icon-theme xdg-user-dirs yazi imv zathura zathura-pdf-poppler)
 PKG_FULL_IME=(gnome-keyring fcitx5 fcitx5-bamboo fcitx5-gtk noto-fonts noto-fonts-cjk noto-fonts-emoji)
 PKG_FULL_CLI=(fzf zoxide eza bat ripgrep fd starship fastfetch)

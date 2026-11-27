@@ -6,8 +6,7 @@ local dmenu_seq = 0
 
 function M.exec_detached(action_cmd)
     local cgroup = fs.read_file("/proc/self/cgroup")
-    local in_bar = cgroup ~= nil
-        and (cgroup:find("kaze%-shell%.service") ~= nil or cgroup:find("kaze%-noctalia%.service") ~= nil)
+    local in_bar = cgroup ~= nil and cgroup:find("kaze%-shell%.service") ~= nil
     local run_cmd = action_cmd
     if in_bar and fs.command_exists("systemd-run") then
         run_cmd = "systemd-run --user --scope --quiet -- /bin/sh -c " .. fs.shell_quote(action_cmd)
@@ -18,26 +17,11 @@ function M.exec_detached(action_cmd)
     return ok == true or ok == 0
 end
 
-local function select_dmenu_backend()
-    if fs.command_exists("kaze-shell") then
-        local live = os.execute("kaze-shell msg ping >/dev/null 2>&1")
-        if (live == true or live == 0) or not fs.command_exists("noctalia") then
-            return "kaze-shell"
-        end
-    end
-    if fs.command_exists("noctalia") then
-        return "noctalia"
-    end
-    return nil
-end
-
--- Launches `kaze-shell dmenu` (falling back to `noctalia dmenu` when `kaze-shell` is not running)
--- via a private temp file so stdin payload is never mangled by shell quoting.
+-- Launches `kaze-shell dmenu` via a private temp file so stdin payload is never mangled by shell quoting.
 function M.run_dmenu(entries, opts)
     opts = opts or {}
-    local backend = select_dmenu_backend()
-    if not backend then
-        return nil, "noctalia not found in PATH"
+    if not fs.command_exists("kaze-shell") then
+        return nil, "kaze-shell not found in PATH"
     end
 
     local lines = {}
@@ -79,7 +63,7 @@ function M.run_dmenu(entries, opts)
         return nil, "failed to write dmenu input file: " .. tostring(w_err or c_err)
     end
 
-    local argv = { backend, "dmenu" }
+    local argv = { "kaze-shell", "dmenu" }
     if opts.prompt and opts.prompt ~= "" then
         argv[#argv + 1] = "-p"
         argv[#argv + 1] = fs.shell_quote(opts.prompt)
@@ -89,12 +73,7 @@ function M.run_dmenu(entries, opts)
     local timeout_sec = tonumber(opts.timeout)
     local flag_path = nil
     local utf8_guard = "case \"${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}\" in *.UTF-8*|*.utf8*) ;; *) export LC_CTYPE=C.UTF-8 ;; esac; "
-    local soft_close = (backend == "kaze-shell")
-        and "kaze-shell msg launcher-close >/dev/null 2>&1 || true"
-        or "noctalia msg panel-close launcher >/dev/null 2>&1 || true"
-    local retry_close = (backend == "kaze-shell")
-        and "kaze-shell msg launcher-close >/dev/null 2>&1 || true"
-        or "noctalia msg panel-open launcher >/dev/null 2>&1 || true; noctalia msg panel-close launcher >/dev/null 2>&1 || true"
+    local close_cmd = "kaze-shell msg launcher-close >/dev/null 2>&1 || true"
     local cmd
     if timeout_sec and timeout_sec > 0 then
         local dur = (timeout_sec == math.floor(timeout_sec))
@@ -123,8 +102,8 @@ function M.run_dmenu(entries, opts)
                 fs.shell_quote(tmp_path),
                 dur,
                 fs.shell_quote(flag_path),
-                soft_close,
-                retry_close
+                close_cmd,
+                close_cmd
             )
     else
         cmd = utf8_guard .. dmenu_cmd .. " < " .. fs.shell_quote(tmp_path)
@@ -134,7 +113,7 @@ function M.run_dmenu(entries, opts)
     if not proc then
         os.remove(tmp_path)
         if flag_path then os.remove(flag_path) end
-        return nil, "failed to launch " .. backend .. " dmenu"
+        return nil, "failed to launch kaze-shell dmenu"
     end
     local out = proc:read("*a") or ""
     local ok, why, code = proc:close()
@@ -150,7 +129,7 @@ function M.run_dmenu(entries, opts)
     end
     local trimmed = (out:gsub("[\r\n]+$", ""))
     if rc ~= 0 and not (rc == 1 and trimmed == "") then
-        return nil, string.format("%s dmenu failed (exit %d)", backend, rc), false
+        return nil, string.format("kaze-shell dmenu failed (exit %d)", rc), false
     end
     return trimmed, nil, false
 end

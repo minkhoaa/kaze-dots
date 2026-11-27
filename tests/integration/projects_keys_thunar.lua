@@ -663,7 +663,7 @@ else
   exit_code = %d
 end
 ]], dmenu_stdout, dmenu_stderr, dmenu_exit, msg_stdout, msg_stderr, msg_exit)
-    return self:install_stub("noctalia", {
+    return self:install_stub("kaze-shell", {
       read_stdin = "dmenu",
       extra_body = extra,
     })
@@ -1177,8 +1177,8 @@ return {
       sb:install_noctalia_stub({ dmenu_stdout = "~/Projects/alpha\n", dmenu_exit = 0 })
       local r_sel = sb:run(BIN_PROJECT, { "--shell" })
       assert_eq(r_sel.code, 0, "dmenu selection must exit 0; stderr=" .. r_sel.stderr)
-      local noc = sb:read_calls("noctalia")
-      assert_eq(#noc, 1, "expected 1 noctalia dmenu call")
+      local noc = sb:read_calls("kaze-shell")
+      assert_eq(#noc, 1, "expected 1 kaze-shell dmenu call")
       assert_argv(noc[1], { "dmenu", "-p", "Project > " }, "kaze-project dmenu argv")
       assert_contains(noc[1].stdin, "~/Projects/alpha", "dmenu stdin must include ~/Projects/alpha")
       local fc_sel = sb:wait_for_calls("footclient", 1, 800)
@@ -1245,7 +1245,7 @@ return {
         assert_eq(res.code, 2, "kaze-keys " .. fmt_argv(args) .. " must exit 2; stderr=" .. res.stderr)
       end
 
-      assert_eq(#sb:read_calls("noctalia"), 0, "noctalia must not be called on CLI validation errors")
+      assert_eq(#sb:read_calls("kaze-shell"), 0, "kaze-shell must not be called on CLI validation errors")
     end)
   end)
 
@@ -1310,9 +1310,9 @@ return {
       sb:install_noctalia_stub({ dmenu_stdout = "Super + Return   Terminal\n", dmenu_exit = 0 })
       local r_sel = sb:run(BIN_KEYS, {})
       assert_eq(r_sel.code, 0, "selection in kaze-keys must exit 0; stderr=" .. r_sel.stderr)
-      local calls = sb:read_calls("noctalia")
-      assert_eq(#calls, 1, "expected 1 noctalia call")
-      assert_argv(calls[1], { "dmenu", "-p", "Keys > " }, "kaze-keys noctalia dmenu argv")
+      local calls = sb:read_calls("kaze-shell")
+      assert_eq(#calls, 1, "expected 1 kaze-shell call")
+      assert_argv(calls[1], { "dmenu", "-p", "Keys > " }, "kaze-keys kaze-shell dmenu argv")
       assert_contains(calls[1].stdin, "Shift + P", "dmenu stdin must include shortcut rows")
       assert_contains(calls[1].stdin, "Ctrl + Alt + M", "dmenu stdin must include Ctrl + Alt + M")
       assert_eq(calls[1].stdin, list_res.stdout, "dmenu stdin should match --list rows")
@@ -1323,16 +1323,16 @@ return {
       local r_esc = sb:run(BIN_KEYS, {})
       assert_eq(r_esc.code, 0, "Esc cancel in kaze-keys must exit 0; stderr=" .. r_esc.stderr)
 
-      -- noctalia absent from PATH -> exits 1
-      sb:remove_bin("noctalia")
+      -- kaze-shell absent from PATH -> exits 1
+      sb:remove_bin("kaze-shell")
       local r_missing = sb:run(BIN_KEYS, {})
-      assert_eq(r_missing.code, 1, "missing noctalia must cause kaze-keys to exit 1; stderr=" .. r_missing.stderr)
+      assert_eq(r_missing.code, 1, "missing kaze-shell must cause kaze-keys to exit 1; stderr=" .. r_missing.stderr)
 
-      -- noctalia fails unambiguously (exit 2, not Esc cancel) -> exits 1
+      -- kaze-shell fails unambiguously (exit 2, not Esc cancel) -> exits 1
       sb:clear_logs()
-      sb:install_noctalia_stub({ dmenu_stdout = "", dmenu_stderr = "noctalia failed\n", dmenu_exit = 2 })
+      sb:install_noctalia_stub({ dmenu_stdout = "", dmenu_stderr = "kaze-shell failed\n", dmenu_exit = 2 })
       local r_fail = sb:run(BIN_KEYS, {})
-      assert_eq(r_fail.code, 1, "failing noctalia (exit 2) must cause kaze-keys to exit 1; stderr=" .. r_fail.stderr)
+      assert_eq(r_fail.code, 1, "failing kaze-shell (exit 2) must cause kaze-keys to exit 1; stderr=" .. r_fail.stderr)
     end)
   end)
 
@@ -1558,30 +1558,30 @@ return {
       local r3 = sb:run(BIN_THUNAR, { "copy-path", f1 })
       assert_eq(r3.code, 1, "copy-path without wl-copy must exit 1")
 
-      -- wallpaper existing file -> noctalia msg wallpaper-set <path>
+      -- wallpaper existing file -> kaze-shell msg wallpaper-set <path>
       sb:clear_logs()
       local r4 = sb:run(BIN_THUNAR, { "wallpaper", f2 })
       assert_eq(r4.code, 0, "wallpaper valid file failed; stderr=" .. r4.stderr)
-      local nc = sb:read_calls("noctalia")
-      assert_eq(#nc, 1, "expected 1 noctalia call for wallpaper")
-      assert_argv(nc[1], { "msg", "wallpaper-set", f2 }, "wallpaper noctalia argv")
+      local nc = sb:read_calls("kaze-shell")
+      assert_eq(#nc, 1, "expected 1 kaze-shell call for wallpaper")
+      assert_argv(nc[1], { "msg", "wallpaper-set", f2 }, "wallpaper kaze-shell argv")
 
-      -- wallpaper missing file -> exit 1 & no noctalia call
+      -- wallpaper missing file -> exit 1 & no kaze-shell call
       sb:clear_logs()
       local r5 = sb:run(BIN_THUNAR, { "wallpaper", d .. "/missing.png" })
       assert_eq(r5.code, 1, "wallpaper missing file must exit 1")
-      assert_eq(#sb:read_calls("noctalia"), 0, "missing file must not invoke noctalia")
+      assert_eq(#sb:read_calls("kaze-shell"), 0, "missing file must not invoke kaze-shell")
 
-      -- wallpaper failing noctalia -> exit 1
+      -- wallpaper failing kaze-shell -> exit 1
       sb:clear_logs()
       sb:install_noctalia_stub({ msg_exit = 1, msg_stderr = "ipc failed\n" })
       local r6 = sb:run(BIN_THUNAR, { "wallpaper", f2 })
-      assert_eq(r6.code, 1, "failing noctalia must make wallpaper exit 1")
+      assert_eq(r6.code, 1, "failing kaze-shell must make wallpaper exit 1")
 
-      -- wallpaper missing noctalia -> exit 1
-      sb:remove_bin("noctalia")
+      -- wallpaper missing kaze-shell -> exit 1
+      sb:remove_bin("kaze-shell")
       local r7 = sb:run(BIN_THUNAR, { "wallpaper", f2 })
-      assert_eq(r7.code, 1, "missing noctalia must make wallpaper exit 1")
+      assert_eq(r7.code, 1, "missing kaze-shell must make wallpaper exit 1")
     end)
   end)
 

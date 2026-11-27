@@ -147,13 +147,14 @@ local COREUTILS_WHITELIST = {
 }
 
 local MINIMAL_BINS = {
-  "hyprland", "hyprctl", "noctalia", "notify-send", "foot", "footclient", "zsh",
+  "hyprland", "hyprctl", "kaze-shell", "hyprlock", "hypridle", "cliphist",
+  "grim", "slurp", "notify-send", "foot", "footclient", "zsh",
   "wl-copy", "wl-paste", "wpctl", "brightnessctl", "playerctl", "lua", "busctl",
   "systemctl", "flock",
 }
 
 local FULL_EXTRA_BINS = {
-  "slurp", "wf-recorder", "ffmpeg", "ffprobe", "hyprpicker", "thunar", "yazi",
+  "wf-recorder", "ffmpeg", "ffprobe", "hyprpicker", "thunar", "yazi",
   "imv", "zathura", "gnome-keyring-daemon", "fcitx5", "fzf", "zoxide", "eza",
   "bat", "rg", "fd", "starship", "wl-mirror",
 }
@@ -343,7 +344,23 @@ done < "$procs_file"
 exit 0
 ]], sh_quote(sb.state_dir .. "/ps_procs")))
 
-  -- Configurable noctalia, foot, zsh config-check stubs.
+  -- Configurable kaze-shell, noctalia, foot, zsh config-check stubs.
+  write_file(sb.state_dir .. "/kaze_shell_validate_rc", "0\n")
+  add_stub("kaze-shell", string.format([[#!/usr/bin/sh
+echo "STUB:kaze-shell:$*" >> %s
+if [ "${1:-}" = "config" ] && [ "${2:-}" = "validate" ]; then
+  rc=$(/usr/bin/cat %s 2>/dev/null || echo 0)
+  exit "$rc"
+elif [ "${1:-}" = "msg" ] && [ "${2:-}" = "ping" ]; then
+  echo "pong"
+  exit 0
+elif [ "${1:-}" = "inspect" ] || ([ "${1:-}" = "msg" ] && [ "${2:-}" = "status" ]); then
+  echo '{"notifications_bus_owned":true,"tray_bus_owned":true,"hypr_connected":true}'
+  exit 0
+fi
+exit 0
+]], sh_quote(sb.log), sh_quote(sb.state_dir .. "/kaze_shell_validate_rc")))
+
   write_file(sb.state_dir .. "/noctalia_validate_rc", "0\n")
   add_stub("noctalia", string.format([[#!/usr/bin/sh
 echo "STUB:noctalia:$*" >> %s
@@ -565,8 +582,13 @@ local function set_live_healthy(sb, opts)
     "pipewire.service",
     "wireplumber.service",
     "pipewire-pulse.socket",
+    "kaze-shell.service",
   }
   write_file(sb.state_dir .. "/systemctl_active_units", table.concat(active_units, "\n") .. "\n")
+
+  local sock_path = sb.runtime .. "/kaze/shell.sock"
+  exec_code("/usr/bin/rm -f -- " .. sh_quote(sock_path))
+  create_unix_socket(sock_path)
 
   local sys_env_lines = opts.systemctl_env_lines or {
     "WAYLAND_DISPLAY=" .. display,
@@ -589,7 +611,7 @@ local function set_live_healthy(sb, opts)
   write_file(sb.state_dir .. "/busctl_activatable", table.concat(bus_lines, "\n") .. "\n")
   write_file(sb.state_dir .. "/busctl_rc", tostring(opts.busctl_rc or 0) .. "\n")
 
-  local procs = opts.procs or { "noctalia", "foot", "fcitx5" }
+  local procs = opts.procs or { "kaze-shell", "foot", "fcitx5" }
   write_file(sb.state_dir .. "/ps_procs", table.concat(procs, "\n") .. "\n")
 
   return {
@@ -1408,7 +1430,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       assert_eq(run_apply(sb, { "--yes" }).rc, 0, "apply failed")
 
       -- Healthy live baseline (minimal & full)
-      local live_env = set_live_healthy(sb, { procs = { "noctalia", "foot", "fcitx5" } })
+      local live_env = set_live_healthy(sb, { procs = { "kaze-shell", "foot", "fcitx5" } })
       local r_min = run_doctor(sb, { "--profile", "minimal" }, { env = live_env })
       assert_eq(r_min.rc, 0, "healthy live minimal must exit 0:\n" .. r_min.combined)
       assert_true(not r_min.combined:find("[FAIL]", 1, true), "healthy live minimal must have no [FAIL]")
@@ -1501,38 +1523,39 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       assert_eq(run_apply(sb, { "--yes" }).rc, 0, "apply failed")
       local live_env = set_live_healthy(sb)
 
-      -- Minimal profile matrix: noctalia=1, foot=1 required; fcitx5 not required
+      -- Minimal profile matrix: kaze-shell=1, foot=1 required, noctalia=0; fcitx5 not required
       local minimal_cases = {
-        { procs = { noctalia = 1, foot = 1, fcitx5 = 0 }, expect_rc = 0 },
-        { procs = { noctalia = 0, foot = 1, fcitx5 = 0 }, expect_rc = 1 },
-        { procs = { noctalia = 2, foot = 1, fcitx5 = 0 }, expect_rc = 1 },
-        { procs = { noctalia = 1, foot = 0, fcitx5 = 0 }, expect_rc = 1 },
-        { procs = { noctalia = 1, foot = 2, fcitx5 = 0 }, expect_rc = 1 },
+        { procs = { ["kaze-shell"] = 1, foot = 1, fcitx5 = 0 }, expect_rc = 0 },
+        { procs = { ["kaze-shell"] = 0, foot = 1, fcitx5 = 0 }, expect_rc = 1 },
+        { procs = { ["kaze-shell"] = 2, foot = 1, fcitx5 = 0 }, expect_rc = 1 },
+        { procs = { ["kaze-shell"] = 1, foot = 0, fcitx5 = 0 }, expect_rc = 1 },
+        { procs = { ["kaze-shell"] = 1, foot = 2, fcitx5 = 0 }, expect_rc = 1 },
+        { procs = { ["kaze-shell"] = 1, foot = 1, noctalia = 1 }, expect_rc = 1 },
       }
       for _, tc in ipairs(minimal_cases) do
         set_procs(sb, tc.procs)
         local r = run_doctor(sb, { "--profile", "minimal" }, { env = live_env })
-        local desc = string.format("minimal noctalia=%d foot=%d", tc.procs.noctalia, tc.procs.foot)
+        local desc = string.format("minimal kaze-shell=%d foot=%d noctalia=%d", tc.procs["kaze-shell"] or 0, tc.procs.foot or 0, tc.procs.noctalia or 0)
         assert_eq(r.rc, tc.expect_rc, desc .. " expected rc=" .. tc.expect_rc .. ", got " .. r.rc .. ":\n" .. r.combined)
         if tc.expect_rc == 1 then
           assert_contains(r.combined, "[FAIL]", desc .. " must emit [FAIL]")
         end
       end
 
-      -- Full profile matrix: noctalia=1, foot=1, fcitx5=1 required
+      -- Full profile matrix: kaze-shell=1, foot=1, fcitx5=1 required
       local full_cases = {
-        { procs = { noctalia = 1, foot = 1, fcitx5 = 1 }, expect_rc = 0 },
-        { procs = { noctalia = 1, foot = 1, fcitx5 = 0 }, expect_rc = 1 },
-        { procs = { noctalia = 1, foot = 1, fcitx5 = 2 }, expect_rc = 1 },
-        { procs = { noctalia = 0, foot = 1, fcitx5 = 1 }, expect_rc = 1 },
-        { procs = { noctalia = 2, foot = 1, fcitx5 = 1 }, expect_rc = 1 },
-        { procs = { noctalia = 1, foot = 0, fcitx5 = 1 }, expect_rc = 1 },
-        { procs = { noctalia = 1, foot = 2, fcitx5 = 1 }, expect_rc = 1 },
+        { procs = { ["kaze-shell"] = 1, foot = 1, fcitx5 = 1 }, expect_rc = 0 },
+        { procs = { ["kaze-shell"] = 1, foot = 1, fcitx5 = 0 }, expect_rc = 1 },
+        { procs = { ["kaze-shell"] = 1, foot = 1, fcitx5 = 2 }, expect_rc = 1 },
+        { procs = { ["kaze-shell"] = 0, foot = 1, fcitx5 = 1 }, expect_rc = 1 },
+        { procs = { ["kaze-shell"] = 2, foot = 1, fcitx5 = 1 }, expect_rc = 1 },
+        { procs = { ["kaze-shell"] = 1, foot = 0, fcitx5 = 1 }, expect_rc = 1 },
+        { procs = { ["kaze-shell"] = 1, foot = 2, fcitx5 = 1 }, expect_rc = 1 },
       }
       for _, tc in ipairs(full_cases) do
         set_procs(sb, tc.procs)
         local r = run_doctor(sb, { "--profile", "full" }, { env = live_env })
-        local desc = string.format("full noctalia=%d foot=%d fcitx5=%d", tc.procs.noctalia, tc.procs.foot, tc.procs.fcitx5)
+        local desc = string.format("full kaze-shell=%d foot=%d fcitx5=%d", tc.procs["kaze-shell"], tc.procs.foot, tc.procs.fcitx5)
         assert_eq(r.rc, tc.expect_rc, desc .. " expected rc=" .. tc.expect_rc .. ", got " .. r.rc .. ":\n" .. r.combined)
         if tc.expect_rc == 1 then
           assert_contains(r.combined, "[FAIL]", desc .. " must emit [FAIL]")
@@ -1541,7 +1564,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
 
       -- Full profile with fcitx5 = false in hypr/user.lua -> fcitx5=0 must PASS
       write_file(sb.config .. "/hypr/user.lua", "return { fcitx5 = false }\n")
-      set_procs(sb, { noctalia = 1, foot = 1, fcitx5 = 0 })
+      set_procs(sb, { ["kaze-shell"] = 1, foot = 1, fcitx5 = 0 })
       local r_optout = run_doctor(sb, { "--profile", "full" }, { env = live_env })
       assert_eq(r_optout.rc, 0, "full profile with fcitx5=false in user.lua and fcitx5=0 must exit 0:\n" .. r_optout.combined)
       assert_true(not r_optout.combined:find("[FAIL]", 1, true), "fcitx5=false opt-out must have no [FAIL]")
@@ -1606,11 +1629,15 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       end)
       assert_true(has_3f_gesture, "minimal profile must register 3-finger horizontal workspace gesture")
 
-      -- Layer rule: noctalia-no-anim
-      local has_noctalia_layer = list_has_matching_entry(cap.calls.layer_rule, function(lr)
-        return value_contains_str(lr, "noctalia-no-anim")
+      -- Layer rules: kaze-shell-no-anim & kaze-shell-blur
+      local has_shell_layer = list_has_matching_entry(cap.calls.layer_rule, function(lr)
+        return value_contains_str(lr, "kaze-shell-no-anim")
       end)
-      assert_true(has_noctalia_layer, "must register noctalia-no-anim layer rule")
+      assert_true(has_shell_layer, "must register kaze-shell-no-anim layer rule")
+      local has_blur_layer = list_has_matching_entry(cap.calls.layer_rule, function(lr)
+        return value_contains_str(lr, "kaze-shell-blur")
+      end)
+      assert_true(has_blur_layer, "must register kaze-shell-blur layer rule")
 
       -- Required window rules
       local required_wr = {
@@ -1619,7 +1646,6 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
         "kaze-tui-drawer",
         "kaze-mirror-tui",
         "kaze-theme-hub",
-        "noctalia-settings",
       }
       for _, name in ipairs(required_wr) do
         local found = list_has_matching_entry(cap.calls.window_rule, function(wr)
@@ -1737,11 +1763,11 @@ _G._KAZE_BB_MARKERS.monitors_loaded = true
 hl.monitor({ output = "DP-9", mode = "2560x1440@144", position = "1920x0", scale = 1.25 })
 ]])
 
-      -- Write ~/.config/hypr/noctalia.lua providing apply_theme()
-      write_file(sb.config .. "/hypr/noctalia.lua", [[
+      -- Write ~/.config/hypr/kaze-theme.lua providing apply_theme()
+      write_file(sb.config .. "/hypr/kaze-theme.lua", [[
 local M = {}
 function M.apply_theme()
-  _G._KAZE_BB_MARKERS.noctalia_apply_theme_calls = (_G._KAZE_BB_MARKERS.noctalia_apply_theme_calls or 0) + 1
+  _G._KAZE_BB_MARKERS.kaze_apply_theme_calls = (_G._KAZE_BB_MARKERS.kaze_apply_theme_calls or 0) + 1
   hl.config({ general = { _kaze_bb_theme_applied = true } })
 end
 apply_theme = M.apply_theme
@@ -1749,7 +1775,7 @@ return M
 ]])
 
       local res, cap = eval_hyprland_lua(sb, abs_repo)
-      assert_eq(res.rc, 0, "hyprland.lua with runtime monitors.lua + noctalia.lua must exit 0:\n" .. res.combined)
+      assert_eq(res.rc, 0, "hyprland.lua with runtime monitors.lua + kaze-theme.lua must exit 0:\n" .. res.combined)
       assert_true(cap ~= nil and cap.ok == true, "hyprland.lua capture must succeed")
 
       -- Runtime monitors.lua overlay was applied
@@ -1759,9 +1785,9 @@ return M
       end)
       assert_true(has_dp9, "runtime monitors.lua overlay must register DP-9 monitor rule")
 
-      -- noctalia.lua's apply_theme() was invoked
-      assert_eq(cap.markers.noctalia_apply_theme_calls, 1, "~/.config/hypr/noctalia.lua apply_theme() must be invoked once")
-      assert_true(value_has_kv(cap.config, "_kaze_bb_theme_applied", true), "noctalia.lua apply_theme() effects must reach hl.config")
+      -- kaze-theme.lua's apply_theme() was invoked
+      assert_eq(cap.markers.kaze_apply_theme_calls, 1, "~/.config/hypr/kaze-theme.lua apply_theme() must be invoked once")
+      assert_true(value_has_kv(cap.config, "_kaze_bb_theme_applied", true), "kaze-theme.lua apply_theme() effects must reach hl.config")
     end)
   end)
 end

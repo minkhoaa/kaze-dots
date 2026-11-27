@@ -77,22 +77,25 @@ local function register_tests(test, assert_eq, assert_true, assert_contains, rep
 
         assert_eq(by_chord["SUPER + SPACE"].cmd, "kaze-shell msg launcher-toggle")
         assert_eq(by_chord["SUPER + SUPER_L"].release, true)
-        assert_eq(by_chord["SUPER + A"].cmd, "noctalia msg panel-toggle control-center")
-        assert_eq(by_chord["SUPER + N"].cmd, "noctalia msg panel-toggle control-center notifications")
-        assert_eq(by_chord["SUPER + I"].cmd, "noctalia msg settings-toggle")
+        assert_eq(by_chord["SUPER + A"].cmd, "kaze-shell msg cc-toggle")
+        assert_eq(by_chord["SUPER + N"].cmd, "kaze-shell msg cc-toggle")
+        assert_eq(by_chord["SUPER + I"].cmd, "kaze-shell msg cc-toggle")
+        assert_eq(by_chord["SUPER + ALT + L"].cmd, "kaze-shell msg layout-next")
+        assert_eq(by_chord["SUPER + ALT + I"].cmd, "kaze-shell msg island-toggle")
         assert_eq(by_chord["SUPER + SHIFT + T"].cmd, "kaze-shell msg theme-mode-toggle")
-        assert_eq(by_chord["SUPER + V"].cmd, "noctalia msg panel-toggle clipboard")
-        assert_eq(by_chord["SUPER + SHIFT + W"].cmd, "noctalia msg panel-toggle wallpaper")
-        assert_eq(by_chord["CTRL + ALT + Delete"].cmd, "noctalia msg panel-toggle session")
+        assert_eq(by_chord["SUPER + V"].cmd, "kaze-shell msg clipboard-toggle")
+        assert_contains(by_chord["SUPER + SHIFT + W"].cmd, "kaze-shell msg wallpaper-set")
+        assert_eq(by_chord["CTRL + ALT + Delete"].cmd, "kaze-shell msg cc-toggle")
         assert_eq(by_chord["CTRL + ALT + C"].cmd, "kaze-shell msg notify-clear")
-        assert_eq(by_chord["SUPER + SHIFT + D"].cmd, "kaze-shell msg dnd-toggle")
-        assert_eq(by_chord["SUPER + TAB"].cmd, "noctalia msg window-switcher hold")
+        assert_eq(by_chord["SUPER + SHIFT + N"].cmd, "kaze-shell msg dnd-toggle")
+        assert_eq(by_chord["SUPER + SHIFT + D"].cmd, "kaze-shell msg nightlight-toggle")
+        assert_contains(by_chord["SUPER + TAB"].cmd, "kaze-shell dmenu")
         assert_eq(by_chord["XF86AudioRaiseVolume"].cmd, "kaze-shell msg volume-up")
         assert_eq(by_chord["XF86MonBrightnessUp"].cmd, "kaze-shell msg brightness-up")
         assert_eq(by_chord["XF86AudioPlay"].cmd, "kaze-shell msg media play-pause")
-        assert_eq(by_chord["Print"].cmd, "noctalia msg screenshot-fullscreen")
-        assert_eq(by_chord["SUPER + SHIFT + S"].cmd, "noctalia msg screenshot-region")
-        assert_eq(by_chord["SUPER + SHIFT + ALT + S"].cmd, "noctalia msg screenshot-annotate")
+        assert_contains(by_chord["Print"].cmd, "grim")
+        assert_contains(by_chord["SUPER + SHIFT + S"].cmd, "slurp")
+        assert_contains(by_chord["SUPER + SHIFT + ALT + S"].cmd, "wl-copy")
         assert_contains(by_chord["SUPER + SHIFT + C"].cmd, "hyprpicker")
         assert_contains(by_chord["SUPER + E"].cmd, "exec thunar")
         assert_eq(by_chord["CTRL + ALT + R"].cmd, "kaze-record")
@@ -139,15 +142,6 @@ local function register_tests(test, assert_eq, assert_true, assert_contains, rep
             assert_contains(list_out, "Search Hyprland keyboard shortcuts")
             assert_contains(list_out, "Open terminal")
 
-            stub("noctalia", [[
-printf '%s\n' "$@" > "$HOME/noc-args"
-/usr/bin/cat > "$HOME/noc-stdin"
-]])
-            assert(os.execute(run("")))
-            assert_eq(fs.read_file(tmp .. "/noc-args"), "dmenu\n-p\nKeys > \n")
-            assert_eq(fs.read_file(tmp .. "/noc-stdin"), list_out)
-
-            -- When kaze-shell is live, popups.run_dmenu prefers kaze-shell dmenu over noctalia
             stub("kaze-shell", [[
 if [ "$1" = "msg" ] && [ "$2" = "ping" ]; then
     printf 'pong\n'
@@ -346,20 +340,20 @@ return {
                 assert_true(g_by_chord["SUPER_L"].opts.transparent and g_by_chord["SUPER_L"].opts.non_consuming)
                 assert_true(g_by_chord["SUPER + SUPER_L"].opts.release and g_by_chord["SUPER + SUPER_L"].opts.ignore_mods)
 
-                -- Quick tap opens launcher and re-enables auto_hide
+                -- Quick tap opens launcher and hides peeked Ghost bar
                 g_by_chord["SUPER_L"].dispatcher()
-                assert_eq(g_execs[#g_execs], "noctalia msg bar-auto-hide-set off default >/dev/null 2>&1 || true")
+                assert_eq(g_execs[#g_execs], "kaze-shell msg bar-peek on >/dev/null 2>&1 || true")
                 g_by_chord["SUPER + SUPER_L"].dispatcher()
-                assert_eq(g_execs[#g_execs - 1], "noctalia msg bar-auto-hide-set on default >/dev/null 2>&1 || true")
+                assert_eq(g_execs[#g_execs - 1], "kaze-shell msg bar-peek off >/dev/null 2>&1 || true")
                 assert_eq(g_execs[#g_execs], "kaze-shell msg launcher-toggle")
 
-                -- Hold >= 0.30s only re-enables auto_hide without toggling launcher
+                -- Hold >= 0.30s only hides Ghost peek without toggling launcher
                 local before_hold = #g_execs
                 g_by_chord["SUPER_L"].dispatcher()
                 os.execute("sleep 0.30")
                 g_by_chord["SUPER + SUPER_L"].dispatcher()
                 assert_eq(#g_execs, before_hold + 2, "hold must not toggle launcher")
-                assert_eq(g_execs[#g_execs], "noctalia msg bar-auto-hide-set on default >/dev/null 2>&1 || true")
+                assert_eq(g_execs[#g_execs], "kaze-shell msg bar-peek off >/dev/null 2>&1 || true")
             end)
         end)
         rm_rf(tmp_k)

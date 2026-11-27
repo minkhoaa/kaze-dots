@@ -359,8 +359,12 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         assert_contains(manifest, tmp .. "/.local/bin/kaze-session\n")
         assert_contains(manifest, tmp .. "/.local/bin/kaze-project\n")
         assert_contains(manifest, cfg .. "/hypr/xdph.conf\n")
+        assert_contains(manifest, cfg .. "/hypr/hyprlock.conf\n")
+        assert_contains(manifest, cfg .. "/hypr/hypridle.conf\n")
         assert_contains(manifest, cfg .. "/systemd/user/kaze-shell.service\n")
-        assert_contains(manifest, cfg .. "/systemd/user/kaze-noctalia.service\n")
+        assert_contains(manifest, cfg .. "/systemd/user/kaze-hypridle.service\n")
+        assert_contains(manifest, cfg .. "/systemd/user/kaze-polkit.service\n")
+        assert_contains(manifest, cfg .. "/systemd/user/kaze-cliphist.service\n")
         assert_contains(manifest, cfg .. "/foot/foot.ini\n")
         assert_contains(manifest, cfg .. "/starship.toml\n")
         assert_contains(manifest, cfg .. "/fastfetch/config.jsonc\n")
@@ -506,7 +510,7 @@ exit "${CLIENT_STATUS:-0}"
     end)
 end)
 
-test("rules: Noctalia layer no_anim, Settings float, smart_gaps, and TUI drawer rules", function()
+test("rules: kaze-shell layer no_anim/blur, smart_gaps, and TUI drawer rules", function()
     local function run_rules(cfg_override, noc_colors)
         local wins, ws_rules, layers = {}, {}, {}
         local prev_hl, prev_ctx = rawget(_G, "hl"), package.loaded["kaze._ctx"]
@@ -517,7 +521,7 @@ test("rules: Noctalia layer no_anim, Settings float, smart_gaps, and TUI drawer 
             workspace_rule = function(r) ws_rules[#ws_rules + 1] = r end,
             layer_rule = function(r) layers[#layers + 1] = r end,
         })
-        package.loaded["kaze._ctx"] = { cfg = cfg, noctalia = noc_colors and { colors = noc_colors } or nil }
+        package.loaded["kaze._ctx"] = { cfg = cfg, theme = noc_colors and { colors = noc_colors } or nil }
         local ok, err = pcall(dofile, repo_dir .. "/hypr/rules.lua")
         rawset(_G, "hl", prev_hl)
         package.loaded["kaze._ctx"] = prev_ctx
@@ -528,7 +532,6 @@ test("rules: Noctalia layer no_anim, Settings float, smart_gaps, and TUI drawer 
     local wins, ws_rules, layers = run_rules({ smart_gaps = true }, { error = "rgb(f7768e)", secondary = "rgb(9ece6a)" })
     local by_name = {}
     for _, r in ipairs(wins) do if r.name then by_name[r.name] = r end end
-    assert_true(by_name["noctalia-settings"] ~= nil and by_name["noctalia-settings"].float == true)
     assert_true(by_name["kaze-tui-drawer"] ~= nil and by_name["kaze-tui-drawer"].float == true)
     assert_true(by_name["kaze-mirror-tui"] ~= nil and by_name["kaze-mirror-tui"].float == true and by_name["kaze-mirror-tui"].center == true)
     assert_eq(by_name["kaze-mirror-tui"].match.class, "^kaze-mirror-tui$")
@@ -542,13 +545,17 @@ test("rules: Noctalia layer no_anim, Settings float, smart_gaps, and TUI drawer 
     assert_eq(by_name["state-border-fullscreen"].border_color, "rgb(9ece6a)")
     assert_true(#ws_rules >= 3, "smart_gaps + special workspace rules")
 
-    local has_noctalia_layer = false
+    local has_shell_no_anim, has_shell_blur = false, false
     for _, l in ipairs(layers) do
-        if l.name == "noctalia-no-anim" and l.no_anim == true then
-            has_noctalia_layer = true
+        if l.name == "kaze-shell-no-anim" and l.no_anim == true then
+            has_shell_no_anim = true
+        end
+        if l.name == "kaze-shell-blur" and l.blur == true then
+            has_shell_blur = true
         end
     end
-    assert_true(has_noctalia_layer, "noctalia-no-anim layer rule must be present")
+    assert_true(has_shell_no_anim, "kaze-shell-no-anim layer rule must be present")
+    assert_true(has_shell_blur, "kaze-shell-blur layer rule must be present")
 end)
 
 test("kaze.json: strict decode and deterministic encode", function()
@@ -645,7 +652,7 @@ fi
         stub("fd", "exit 0")
         stub("nvim", "exit 0")
         stub("footclient", [[printf '%s\n' "$@" >> "$HOME/foot-calls"]])
-        stub("noctalia", [[
+        stub("kaze-shell", [[
 if [ "$1" = "dmenu" ]; then
     cat > "$HOME/proj-dmenu"
     head -n 1 "$HOME/proj-dmenu"
@@ -717,11 +724,9 @@ case "$*" in
   *) exit 0 ;;
 esac
 ]])
-        stub("noctalia", [[
-if [ "$1" = "msg" ] && [ "$2" = "config-get" ]; then
-    printf "'custom_button'\n"
-elif [ "$1" = "msg" ] && [ "$2" = "config-set" ]; then
-    printf '%s\n' "$*" >> "$HOME/noc-rec-set"
+        stub("kaze-shell", [[
+if [ "$1" = "msg" ]; then
+    printf '%s\n' "$*" >> "$HOME/kshell-rec-set"
 elif [ "$1" = "dmenu" ]; then
     cat > "$HOME/rec-menu"
     if [ -n "${TEST_REC_CHOICE:-}" ]; then
@@ -752,19 +757,21 @@ case "$*" in
 esac
 ]])
 
-        -- 1. Menu selection: Fullscreen + System Audio -> sets KAZE_RECORD_AUDIO=.monitor & Noctalia red indicator
+        -- 1. Menu selection: Fullscreen + System Audio -> sets KAZE_RECORD_AUDIO=.monitor & kaze-shell live status
         assert(os.execute(run("kaze-record", "--menu", vars .. " TEST_REC_CHOICE='Fullscreen + System Audio'")))
         local menu_txt = assert(fs.read_file(tmp .. "/rec-menu"))
         assert_contains(menu_txt, "Fullscreen + System Audio\n")
         assert_contains(menu_txt, "Region → GIF\n")
         local env_txt = assert(fs.read_file(tmp .. "/runtime/kaze/record.env"))
         assert_contains(env_txt, 'KAZE_RECORD_AUDIO="alsa_output.pci.stereo.monitor"\n')
-        assert_contains(assert(fs.read_file(tmp .. "/noc-rec-set")), 'msg config-set widget.record.icon_color "error"\n')
+        assert_contains(assert(fs.read_file(tmp .. "/kshell-rec-set")), "msg display-status recording\n")
+        assert_contains(assert(fs.read_file(tmp .. "/kshell-rec-set")), "msg island-activity record ")
 
-        -- 2. Bar click while active (--bar) stops immediately and resets Noctalia indicator
+        -- 2. Bar click while active (--bar) stops immediately and resets kaze-shell status
         local stop_out = assert(fs.capture(run("kaze-record", "--bar", vars)))
         assert_contains(stop_out, ".mp4\n")
-        assert_contains(assert(fs.read_file(tmp .. "/noc-rec-set")), 'msg config-set widget.record.icon_color "on_surface_variant"\n')
+        assert_contains(assert(fs.read_file(tmp .. "/kshell-rec-set")), "msg display-status idle\n")
+        assert_contains(assert(fs.read_file(tmp .. "/kshell-rec-set")), "msg island-clear record\n")
 
         -- 3. Fullscreen -> GIF mode produces .gif on stop
         assert(os.execute(run("kaze-record", "--gif", vars)))
@@ -956,6 +963,18 @@ test("kaze.styles & kaze-style: renders all 11 presets safely, manages palettes/
         fs.mkdir_p(tmp .. "/cfg/gtk-3.0")
         fs.write_atomic(tmp .. "/cfg/noctalia/config.toml", user_toml)
 
+        stub("kaze-shell", [[
+case "${1:-}" in
+  dmenu)
+    cat > "$HOME/style-menu"
+    printf '%s\n' "${TEST_STYLE_CHOICE:-  dynamic-island   | [Dynamic & Modern] | Centered pill}"
+    ;;
+  msg)
+    printf '%s\n' "$@" >> "$HOME/kshell-calls"
+    exit 0
+    ;;
+esac
+]])
         stub("noctalia", [[
 printf '%s\n' "$@" >> "$HOME/noc-calls"
 case "${1:-}" in
@@ -1045,7 +1064,7 @@ test("kaze-thunar-action: terminal, yazi, copy-path, checksum, wallpaper, compre
         local q = fs.shell_quote
         stub("notify-send", "printf '%s\\n' \"$*\" >> \"$HOME/notify.log\"")
         stub("wl-copy", "cat > \"$HOME/clipboard.out\"")
-        stub("noctalia", "printf '%s\\n' \"$*\" >> \"$HOME/noc.log\"")
+        stub("kaze-shell", "printf '%s\\n' \"$*\" >> \"$HOME/kshell.log\"")
         stub("kaze-footclient", "printf '%s\\n' \"$*\" >> \"$HOME/foot.log\"")
         stub("yazi", "exit 0")
 
@@ -1072,9 +1091,9 @@ test("kaze-thunar-action: terminal, yazi, copy-path, checksum, wallpaper, compre
         local hash = assert(fs.read_file(tmp .. "/clipboard.out"))
         assert_true(hash:match("^[0-9a-f]+$") ~= nil and #hash == 64, "sha256 hex digest copied")
 
-        -- wallpaper via Noctalia IPC
+        -- wallpaper via kaze-shell IPC
         assert(os.execute(run("kaze-thunar-action", "wallpaper " .. q(img))))
-        assert_contains(assert(fs.read_file(tmp .. "/noc.log")), "msg wallpaper-set " .. img)
+        assert_contains(assert(fs.read_file(tmp .. "/kshell.log")), "msg wallpaper-set " .. img)
 
         -- terminal on file opens parent directory; yazi opens file in parent dir
         assert(os.execute(run("kaze-thunar-action", "terminal " .. q(f1))))

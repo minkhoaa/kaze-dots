@@ -110,54 +110,25 @@ local function parse_args(argv)
     return opts
 end
 
-local function toml_quote(s)
-    return '"' .. tostring(s):gsub("\\", "\\\\"):gsub('"', '\\"') .. '"'
-end
-
-local function is_live_pill_style()
-    local raw = fs.read_file(fs.config_dir() .. "/kaze/style")
-    if not raw then
-        return false
-    end
-    local st = raw:match("^%s*(%S+)%s*$")
-    return st == "dynamic-island" or st == "hardware-notch" or st == "cinema-frame"
-end
-
 local function sync_bar_indicator(recording, audio_mode, gif_mode)
-    if not fs.command_exists("noctalia") then
+    if not fs.command_exists("kaze-shell") then
         return
     end
-    local wtype = fs.capture("noctalia msg config-get widget.record.type 2>/dev/null")
-    if not wtype then
-        return
-    end
-    wtype = wtype:gsub("^%s+", ""):gsub("%s+$", ""):gsub("^['\"]", ""):gsub("['\"]$", "")
-    if wtype ~= "custom_button" then
-        return
-    end
-    local live_pill = is_live_pill_style()
-    local glyph, color, label, tooltip
     if recording then
-        glyph = "circle-dot"
-        color = "error"
-        label = live_pill and (gif_mode and "GIF" or "REC") or ""
-        local mode_tag = gif_mode and "GIF" or (audio_mode and audio_mode ~= "" and "Video + Audio" or "Video")
-        tooltip = "Recording active (" .. mode_tag .. ") — click to stop"
+        local has_audio = (audio_mode ~= nil and audio_mode ~= "") and "true" or "false"
+        local is_gif = gif_mode and "true" or "false"
+        local payload = string.format(
+            '{"active":true,"started_at":%d,"audio":%s,"gif":%s}',
+            os.time(),
+            has_audio,
+            is_gif
+        )
+        os.execute("kaze-shell msg display-status recording >/dev/null 2>&1 || true")
+        os.execute("kaze-shell msg island-activity record " .. q(payload) .. " >/dev/null 2>&1 || true")
     else
-        glyph = "video"
-        color = "on_surface_variant"
-        label = ""
-        tooltip = "Screen Recorder (Left: Menu, Right: Toggle)"
+        os.execute("kaze-shell msg display-status idle >/dev/null 2>&1 || true")
+        os.execute("kaze-shell msg island-clear record >/dev/null 2>&1 || true")
     end
-    if recording then
-        os.execute("noctalia msg config-set widget.record.enabled true >/dev/null 2>&1 || true")
-    elseif live_pill then
-        os.execute("noctalia msg config-set widget.record.enabled false >/dev/null 2>&1 || true")
-    end
-    os.execute("noctalia msg config-set widget.record.glyph " .. q(toml_quote(glyph)) .. " >/dev/null 2>&1 || true")
-    os.execute("noctalia msg config-set widget.record.icon_color " .. q(toml_quote(color)) .. " >/dev/null 2>&1 || true")
-    os.execute("noctalia msg config-set widget.record.label " .. q(toml_quote(label)) .. " >/dev/null 2>&1 || true")
-    os.execute("noctalia msg config-set widget.record.tooltip " .. q(toml_quote(tooltip)) .. " >/dev/null 2>&1 || true")
 end
 
 local function notify_saved(title, path)

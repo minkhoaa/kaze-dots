@@ -74,7 +74,7 @@ class IdleTest(unittest.TestCase):
             self.assertEqual(read(19, guest_sudo_pss=True), 123)
             self.assertEqual(command.call_args.args[0], ["sudo", "-n", "/usr/bin/cat", "/proc/19/smaps_rollup"])
 
-    def verdict(self, *, shell=90.0, session=1.5, cpu=0.09, ctx=5.6, live=None, journal=None):
+    def verdict(self, *, shell=35.0, session=5.0, cpu=0.05, ctx=1.5, live=None, journal=None):
         totals = {"shell": [shell, cpu, ctx], "session": [session, 0.0, 0.0]}
         started = {"kaze-shell.service"} | (set() if journal is None else journal)
         return sampler["t0_issues"](totals, set() if live is None else live, started)
@@ -88,10 +88,10 @@ class IdleTest(unittest.TestCase):
 
     def test_regressions_are_flagged(self):
         for kwargs, reason in (
-            ({"shell": 101.0}, "shell PSS"),
+            ({"shell": 76.0}, "shell PSS"),
             ({"cpu": 0.21}, "idle CPU"),
-            ({"ctx": 8.1}, "context switches/s"),
-            ({"shell": 96.0, "session": 10.0}, "shell+session PSS"),
+            ({"ctx": 4.1}, "context switches/s"),
+            ({"shell": 70.0, "session": 6.0}, "shell+session PSS"),
         ):
             bad = self.verdict(**kwargs)
             self.assertTrue(any(line.startswith(reason) for line in bad), bad)

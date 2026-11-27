@@ -37,20 +37,15 @@ local function monotonic_now()
 end
 
 local function query_dnd_on()
-    for _, cmd in ipairs({
-        "kaze-shell msg dnd-status 2>/dev/null",
-        "noctalia msg notification-dnd-status 2>/dev/null",
-    }) do
-        local p = io.popen(cmd, "r")
-        if p then
-            local out = p:read("*a") or ""
-            p:close()
-            local trimmed = out:gsub("^%s+", ""):gsub("%s+$", "")
-            if trimmed == "on" then
-                return true
-            elseif trimmed == "off" then
-                return false
-            end
+    local p = io.popen("kaze-shell msg dnd-status 2>/dev/null", "r")
+    if p then
+        local out = p:read("*a") or ""
+        p:close()
+        local trimmed = out:gsub("^%s+", ""):gsub("%s+$", "")
+        if trimmed == "on" then
+            return true
+        elseif trimmed == "off" then
+            return false
         end
     end
     return nil
@@ -78,17 +73,12 @@ local function toggle_focus_mode()
                 animations = { enabled = false },
             })
             if dnd == false then
-                hl.exec_cmd("kaze-shell msg dnd-on >/dev/null 2>&1 || noctalia msg notification-dnd-set on >/dev/null 2>&1 || true")
+                hl.exec_cmd("kaze-shell msg dnd-on >/dev/null 2>&1 || true")
             elseif dnd == nil then
-                hl.exec_cmd("kaze-shell msg dnd-toggle >/dev/null 2>&1 || noctalia msg notification-dnd-toggle >/dev/null 2>&1 || true")
+                hl.exec_cmd("kaze-shell msg dnd-toggle >/dev/null 2>&1 || true")
             end
             if fm.hide_bar == true then
-                local bars = active_bar_names()
-                focus_state.hidden_bars = bars
                 hl.exec_cmd("kaze-shell msg bar-hide >/dev/null 2>&1 || true")
-                for _, bar_name in ipairs(bars) do
-                    hl.exec_cmd("noctalia msg bar-hide " .. bar_name .. " >/dev/null 2>&1 || true")
-                end
                 focus_state.bar_hidden = true
             end
             focus_state.active = true
@@ -102,17 +92,13 @@ local function toggle_focus_mode()
             if not focus_state.dnd_was_on then
                 local dnd = query_dnd_on()
                 if dnd == true then
-                    hl.exec_cmd("kaze-shell msg dnd-off >/dev/null 2>&1 || noctalia msg notification-dnd-set off >/dev/null 2>&1 || true")
+                    hl.exec_cmd("kaze-shell msg dnd-off >/dev/null 2>&1 || true")
                 elseif dnd == nil then
-                    hl.exec_cmd("kaze-shell msg dnd-toggle >/dev/null 2>&1 || noctalia msg notification-dnd-toggle >/dev/null 2>&1 || true")
+                    hl.exec_cmd("kaze-shell msg dnd-toggle >/dev/null 2>&1 || true")
                 end
             end
             if focus_state.bar_hidden then
-                local bars = (#focus_state.hidden_bars > 0) and focus_state.hidden_bars or active_bar_names()
                 hl.exec_cmd("kaze-shell msg bar-show >/dev/null 2>&1 || true")
-                for _, bar_name in ipairs(bars) do
-                    hl.exec_cmd("noctalia msg bar-show " .. bar_name .. " >/dev/null 2>&1 || true")
-                end
             end
             focus_state.active = false
             focus_state.dnd_was_on = false
@@ -257,13 +243,13 @@ local ghost_super_down = nil
 
 local function on_ghost_super_press()
     ghost_super_down = monotonic_now()
-    hl.exec_cmd("noctalia msg bar-auto-hide-set off default >/dev/null 2>&1 || true")
+    hl.exec_cmd("kaze-shell msg bar-peek on >/dev/null 2>&1 || true")
 end
 
 local function on_ghost_super_release()
     local down = ghost_super_down
     ghost_super_down = nil
-    hl.exec_cmd("noctalia msg bar-auto-hide-set on default >/dev/null 2>&1 || true")
+    hl.exec_cmd("kaze-shell msg bar-peek off >/dev/null 2>&1 || true")
     if down and (monotonic_now() - down) < 0.25 then
         hl.exec_cmd("kaze-shell msg launcher-toggle")
     end

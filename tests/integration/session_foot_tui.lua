@@ -974,8 +974,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
 
   test("bb.session.lock_fallback_chain", function()
     with_sandbox(function(sb)
-      sb:add_stub("noctalia", [[
-exit "${TEST_NOCTALIA_EXIT:-0}"
+      sb:add_stub("hyprlock", [[
+exit "${TEST_HYPRLOCK_EXIT:-0}"
 ]])
       sb:add_stub("loginctl", [[
 case "${1:-}" in
@@ -990,24 +990,24 @@ esac
 exit 1
 ]])
 
-      -- Case 1: noctalia succeeds -> does NOT call loginctl
+      -- Case 1: hyprlock succeeds -> does NOT call loginctl
       sb:clear_calls()
-      local r1 = sb:run_bin("bin/kaze-session", { "lock" }, { TEST_NOCTALIA_EXIT = "0" })
-      assert_eq(r1.code, 0, "lock via noctalia should exit 0")
+      local r1 = sb:run_bin("bin/kaze-session", { "lock" }, { TEST_HYPRLOCK_EXIT = "0" })
+      assert_eq(r1.code, 0, "lock via hyprlock should exit 0")
       local c1 = sb:calls()
-      assert_true(has_call(c1, "noctalia", { "msg", "session", "lock" }) ~= nil, "must call noctalia msg session lock:" .. format_calls(c1))
-      assert_eq(#find_calls(c1, "loginctl"), 0, "must not call loginctl when noctalia succeeds")
+      assert_true(has_call(c1, "hyprlock", {}) ~= nil, "must call hyprlock:" .. format_calls(c1))
+      assert_eq(#find_calls(c1, "loginctl"), 0, "must not call loginctl when hyprlock succeeds")
 
-      -- Case 2: noctalia fails -> falls back to loginctl show-user <uid> -p Display --value -> lock-session <id>
+      -- Case 2: hyprlock fails -> falls back to loginctl show-user <uid> -p Display --value -> lock-session <id>
       sb:clear_calls()
       local r2 = sb:run_bin("bin/kaze-session", { "lock" }, {
-        TEST_NOCTALIA_EXIT = "1",
+        TEST_HYPRLOCK_EXIT = "1",
         TEST_DISPLAY_SESSION = "c4",
         TEST_LOCK_SESSION_EXIT = "0",
       })
       assert_eq(r2.code, 0, "lock fallback via loginctl should exit 0, stderr=" .. r2.stderr)
       local c2 = sb:calls()
-      assert_true(has_call(c2, "noctalia", { "msg", "session", "lock" }) ~= nil, "should try noctalia first")
+      assert_true(has_call(c2, "hyprlock", {}) ~= nil, "should try hyprlock first")
       assert_true(
         has_call(c2, "loginctl", { "show-user", HOST_UID, "-p", "Display", "--value" }) ~= nil,
         "must query loginctl show-user <uid> -p Display --value:" .. format_calls(c2)
@@ -1017,18 +1017,18 @@ exit 1
         "must invoke loginctl lock-session c4:" .. format_calls(c2)
       )
 
-      -- Case 3: noctalia missing -> falls back to loginctl
-      sb:remove_stub("noctalia")
+      -- Case 3: hyprlock missing -> falls back to loginctl
+      sb:remove_stub("hyprlock")
       sb:clear_calls()
       local r3 = sb:run_bin("bin/kaze-session", { "lock" }, {
         TEST_DISPLAY_SESSION = "9",
         TEST_LOCK_SESSION_EXIT = "0",
       })
-      assert_eq(r3.code, 0, "lock fallback when noctalia missing should exit 0")
+      assert_eq(r3.code, 0, "lock fallback when hyprlock missing should exit 0")
       local c3 = sb:calls()
       assert_true(has_call(c3, "loginctl", { "lock-session", "9" }) ~= nil, "must lock session 9:" .. format_calls(c3))
 
-      -- Case 4: noctalia missing & loginctl returns empty display -> exit 1
+      -- Case 4: hyprlock missing & loginctl returns empty display -> exit 1
       sb:clear_calls()
       local r4 = sb:run_bin("bin/kaze-session", { "lock" }, { TEST_DISPLAY_SESSION = "" })
       assert_eq(r4.code, 1, "lock must fail exit 1 when Display session is empty")
@@ -1036,7 +1036,7 @@ exit 1
         assert_true(lc.args[1] ~= "lock-session", "must not invoke loginctl lock-session with empty session id")
       end
 
-      -- Case 5: noctalia missing & loginctl lock-session fails -> exit 1
+      -- Case 5: hyprlock missing & loginctl lock-session fails -> exit 1
       sb:clear_calls()
       local r5 = sb:run_bin("bin/kaze-session", { "lock" }, {
         TEST_DISPLAY_SESSION = "c4",

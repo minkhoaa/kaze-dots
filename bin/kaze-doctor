@@ -169,19 +169,20 @@ if profile ~= "minimal" and profile ~= "full" then
     report_fail(string.format("profile: invalid configured profile '%s' (expected minimal or full)", tostring(profile)))
     profile = "minimal"
 else
-    report_ok(string.format("profile: %s (Noctalia native)", profile))
+    report_ok(string.format("profile: %s (kaze-shell native)", profile))
 end
 
 -- 1. Required binaries in PATH for active profile
 local MINIMAL_BINS = {
-    "hyprland", "hyprctl", "noctalia", "notify-send",
+    "hyprland", "hyprctl", "kaze-shell", "hyprlock", "hypridle",
+    "cliphist", "grim", "slurp", "notify-send",
     "foot", "footclient", "zsh", "wl-copy", "wl-paste",
     "wpctl", "brightnessctl", "playerctl",
     "lua", "busctl", "systemctl", "flock",
 }
 
 local FULL_EXTRA_BINS = {
-    "slurp", "wf-recorder", "ffmpeg", "ffprobe", "hyprpicker",
+    "wf-recorder", "ffmpeg", "ffprobe", "hyprpicker",
     "thunar", "yazi", "imv", "zathura", "gnome-keyring-daemon", "fcitx5",
     "fzf", "zoxide", "eza", "bat", "rg", "fd", "starship",
     "wl-mirror",
@@ -191,9 +192,7 @@ local has_kaze_shell = cmd_exists("kaze-shell")
 
 local missing_minimal = {}
 for _, bin in ipairs(MINIMAL_BINS) do
-    if bin == "noctalia" and has_kaze_shell then
-        -- kaze-shell natively replaces Noctalia on minimal installs.
-    elseif not cmd_exists(bin) then
+    if not cmd_exists(bin) then
         missing_minimal[#missing_minimal + 1] = bin
     end
 end
@@ -229,6 +228,8 @@ do
     local scan_script = string.format([[
 for p in %s/hypr/*.lua \
          %s/hypr/xdph.conf \
+         %s/hypr/hyprlock.conf \
+         %s/hypr/hypridle.conf \
          %s/foot/foot.ini \
          %s/starship.toml \
          %s/yazi/*.toml \
@@ -237,7 +238,7 @@ for p in %s/hypr/*.lua \
          %s/mimeapps.list \
          %s/gtk-3.0/settings.ini \
          %s/gtk-3.0/kaze-thunar.css \
-         %s/noctalia/palettes/*.json \
+         %s/kaze-shell/palettes/*.json \
          %s/Thunar/uca.xml \
          %s/.zshrc \
          %s/.zprofile \
@@ -275,7 +276,6 @@ done
         q(config_home),
         q(config_home),
         q(config_home),
-        q(config_home),
         q(data_home),
         q(data_home),
         q(bin_home)
@@ -299,6 +299,8 @@ done
         data_home .. "/applications/yazi.desktop",
         config_home .. "/hypr/hyprland.lua",
         config_home .. "/hypr/xdph.conf",
+        config_home .. "/hypr/hyprlock.conf",
+        config_home .. "/hypr/hypridle.conf",
         config_home .. "/foot/foot.ini",
         config_home .. "/starship.toml",
         config_home .. "/yazi/yazi.toml",
@@ -309,16 +311,16 @@ done
         config_home .. "/mimeapps.list",
         config_home .. "/gtk-3.0/settings.ini",
         config_home .. "/gtk-3.0/kaze-thunar.css",
-        config_home .. "/noctalia/palettes/Kaze-Swiss.json",
-        config_home .. "/noctalia/palettes/Kaze-Phosphor.json",
-        config_home .. "/noctalia/palettes/Kaze-Amber.json",
-        config_home .. "/noctalia/palettes/Kaze-Retro90s.json",
+        config_home .. "/kaze-shell/palettes/Kaze-Swiss.json",
+        config_home .. "/kaze-shell/palettes/Kaze-Phosphor.json",
+        config_home .. "/kaze-shell/palettes/Kaze-Amber.json",
+        config_home .. "/kaze-shell/palettes/Kaze-Retro90s.json",
         config_home .. "/Thunar/uca.xml",
         fs.home() .. "/.zshrc",
         fs.home() .. "/.zprofile",
         config_home .. "/zsh/conf.d",
         config_home .. "/systemd/user/kaze-session.target",
-        config_home .. "/systemd/user/kaze-noctalia.service",
+        config_home .. "/systemd/user/kaze-shell.service",
         bin_home .. "/kaze-session",
     }
     if profile == "full" then
@@ -577,22 +579,35 @@ else
             end
 
             local owner_out = fs.capture("busctl --user status org.freedesktop.Notifications 2>/dev/null") or ""
-            local status_out = fs.capture("kaze-shell msg status 2>/dev/null") or ""
-            local owns_bus = (owner_out:find("kaze%-shell") ~= nil)
-                or (status_out:find('"notifications_bus_owned"%s*:%s*true') ~= nil)
-            if owns_bus then
+            local inspect_out = fs.capture("kaze-shell inspect 2>/dev/null")
+                or fs.capture("kaze-shell msg status 2>/dev/null")
+                or ""
+            local owns_notif = (owner_out:find("kaze%-shell") ~= nil)
+                or (inspect_out:find('"notifications_bus_owned"%s*:%s*true') ~= nil)
+            if owns_notif then
                 report_ok("kaze-shell: owns D-Bus org.freedesktop.Notifications")
             else
                 report_fail("kaze-shell: does not own D-Bus org.freedesktop.Notifications")
             end
-        elseif not cmd_exists("noctalia") then
+
+            local tray_out = fs.capture("busctl --user status org.kde.StatusNotifierWatcher 2>/dev/null") or ""
+            local owns_tray = (tray_out:find("kaze%-shell") ~= nil)
+                or (inspect_out:find('"tray_bus_owned"%s*:%s*true') ~= nil)
+            if owns_tray then
+                report_ok("kaze-shell: owns D-Bus org.kde.StatusNotifierWatcher")
+            else
+                report_fail("kaze-shell: does not own D-Bus org.kde.StatusNotifierWatcher")
+            end
+        else
             report_fail("kaze-shell: kaze-shell.service is inactive")
         end
+    else
+        report_fail("kaze-shell: binary not found in PATH")
     end
 
     local expected_daemons = {
-        { name = kaze_shell_active and "kaze-shell" or "noctalia", count = 1 },
-        { name = "foot",                                           count = 1 },
+        { name = "kaze-shell", count = 1 },
+        { name = "foot",       count = 1 },
     }
     if enable_fcitx5 then
         expected_daemons[#expected_daemons + 1] = { name = "fcitx5", count = 1 }
@@ -602,7 +617,7 @@ else
     if not ps_out then
         report_fail("daemons: could not query user processes via ps")
     else
-        local counts = {}
+        local counts = { noctalia = 0 }
         for _, d in ipairs(expected_daemons) do
             counts[d.name] = 0
         end
@@ -611,6 +626,9 @@ else
             if pid then
                 local argv0 = args_str:match("^(%S+)") or comm
                 local argv0_base = argv0:match("([^/]+)$") or argv0
+                if comm == "noctalia" or argv0_base == "noctalia" then
+                    counts.noctalia = counts.noctalia + 1
+                end
                 for _, d in ipairs(expected_daemons) do
                     if comm == d.name or argv0_base == d.name then
                         counts[d.name] = counts[d.name] + 1
@@ -625,8 +643,11 @@ else
                 daemon_issues[#daemon_issues + 1] = string.format("%s (expected %d, got %d)", d.name, d.count, got)
             end
         end
+        if counts.noctalia > 0 then
+            daemon_issues[#daemon_issues + 1] = string.format("orphan noctalia process(es) detected (%d)", counts.noctalia)
+        end
         if #daemon_issues == 0 then
-            report_ok(string.format("daemons (%s): all core singleton PID counts match", profile))
+            report_ok(string.format("daemons (%s): all core singleton PID counts match (0 orphan noctalia)", profile))
         else
             report_fail("daemons: PID count mismatch: " .. table.concat(daemon_issues, ", "))
         end

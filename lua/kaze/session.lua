@@ -137,14 +137,14 @@ function M.stop()
 end
 
 function M.lock()
-    if fs.command_exists("noctalia") then
-        if os.execute("noctalia msg session lock >/dev/null 2>&1") then
+    if fs.command_exists("hyprlock") then
+        if os.execute("pgrep -x hyprlock >/dev/null 2>&1 || hyprlock >/dev/null 2>&1") then
             return true
         end
     end
     local id = fs.capture('loginctl show-user "$(id -u)" -p Display --value')
     id = id and id:match("^([%w_-]+)\n?$")
-    if not id then return nil, "could not lock session via noctalia or logind" end
+    if not id then return nil, "could not lock session via hyprlock or logind" end
     if not os.execute("loginctl lock-session " .. fs.shell_quote(id)) then
         return nil, "logind refused the lock request"
     end

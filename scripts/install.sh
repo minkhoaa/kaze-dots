@@ -64,7 +64,7 @@ Options:
                                   Angular: omarchy-rail, swiss-grid, corner-hud, ghost-zero
                                   Dynamic: dynamic-island, hardware-notch, glass-studio, floating-rail
                                   Retro:   tui-hacker, retro-90s, cinema-frame
-  --dm <none|noctalia|ly|greetd> Official display manager (default: noctalia; none = TTY1)
+  --dm <none|greetd|ly>          Official display manager (default: greetd; none = TTY1)
   --aur <none|yay-bin|paru-bin> AUR helper built after core install (default: yay-bin)
   --system-setup                Enable systemd/audio/group/font setup explicitly
   --skip-system-setup           Skip systemd/audio/group/font setup
@@ -279,11 +279,9 @@ ALL_PACMAN_PACKAGES=()
 compute_pacman_packages() {
     get_packages_for_profile "$PROFILE"
     ADDON_PACKAGES=()
-    if [[ "$DM_CHOICE" == "noctalia" ]]; then
-        ADDON_PACKAGES+=("${PKG_DM_NOCTALIA[@]}")
-    elif [[ "$DM_CHOICE" == "ly" ]]; then
+    if [[ "$DM_CHOICE" == "ly" ]]; then
         ADDON_PACKAGES+=("${PKG_DM_LY[@]}")
-    elif [[ "$DM_CHOICE" == "greetd" ]]; then
+    elif [[ "$DM_CHOICE" == "greetd" || "$DM_CHOICE" == "noctalia" ]]; then
         ADDON_PACKAGES+=("${PKG_DM_GREETD[@]}")
     fi
     if [[ "$AUR_HELPER" != "none" ]]; then
@@ -316,7 +314,7 @@ resolve_effective_defaults() {
         if [[ "$SKIP_PACKAGES" == true ]]; then
             DM_CHOICE="none"
         else
-            DM_CHOICE="noctalia"
+            DM_CHOICE="greetd"
         fi
     fi
     if [[ "$AUR_HELPER" == "auto" ]]; then

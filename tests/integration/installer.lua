@@ -187,7 +187,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
     -- =========================================================================
 
     local MINIMAL_PKGS = {
-        "hyprland", "noctalia", "xdg-desktop-portal", "xdg-desktop-portal-hyprland",
+        "hyprland", "hyprlock", "hypridle", "hyprpolkitagent", "cliphist",
+        "grim", "slurp", "xdg-desktop-portal", "xdg-desktop-portal-hyprland",
         "xdg-desktop-portal-gtk", "dconf", "libnotify", "foot", "zsh",
         "zsh-autosuggestions", "zsh-syntax-highlighting", "zsh-completions",
         "pipewire", "pipewire-pulse", "pipewire-alsa", "wireplumber",
@@ -197,7 +198,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
     }
 
     local FULL_EXTRA_PKGS = {
-        "slurp", "wf-recorder", "ffmpeg", "hyprpicker", "wl-mirror",
+        "wf-recorder", "ffmpeg", "hyprpicker", "wl-mirror",
         "thunar", "adw-gtk-theme", "papirus-icon-theme", "xdg-user-dirs",
         "yazi", "imv", "zathura", "zathura-pdf-poppler", "gnome-keyring",
         "fcitx5", "fcitx5-bamboo", "fcitx5-gtk", "noto-fonts", "noto-fonts-cjk",
@@ -214,8 +215,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
     end
 
     local LEGACY_BANNED_PKGS = {
-        "waybar", "swaybg", "fuzzel", "fnott", "hypridle", "hyprlock",
-        "cliphist", "hyprsunset", "matugen", "mate-polkit", "grim", "swappy",
+        "noctalia", "waybar", "swaybg", "fuzzel", "fnott",
+        "hyprsunset", "matugen", "mate-polkit", "swappy",
         "pulseaudio", "pipewire-media-session", "gst-plugin-pipewire",
         "zathura-pdf-mupdf",
     }
@@ -1432,14 +1433,14 @@ exit 0
                     local expected_def = {}
                     for i = 1, #expected do expected_def[#expected_def + 1] = expected[i] end
                     expected_def[#expected_def + 1] = "greetd"
-                    expected_def[#expected_def + 1] = "noctalia-greeter"
+                    expected_def[#expected_def + 1] = "greetd-tuigreet"
                     expected_def[#expected_def + 1] = "base-devel"
                     expected_def[#expected_def + 1] = "git"
                     assert_pkg_set_eq(p1, expected, "install-packages " .. prof)
                     assert_pkg_set_eq(p2, expected, "install.sh --dm none --aur none " .. prof)
                     assert_eq(#p1, #p2, "exact count parity for " .. prof)
-                    assert_pkg_set_eq(p_def, expected_def, "install.sh default includes greetd + noctalia-greeter + base-devel + git for " .. prof)
-                    assert_contains(r_ins_def.combined, "Display manager: noctalia", "default DM is noctalia for " .. prof)
+                    assert_pkg_set_eq(p_def, expected_def, "install.sh default includes greetd + greetd-tuigreet + base-devel + git for " .. prof)
+                    assert_contains(r_ins_def.combined, "Display manager: greetd", "default DM is greetd for " .. prof)
                     assert_contains(r_ins_def.combined, "AUR helper: yay-bin", "default AUR helper is yay-bin for " .. prof)
                 end
             end)
@@ -1589,7 +1590,7 @@ exit 0
             with_sandbox({ skip_xdg_mkdir = true }, function(sb)
                 local before = sb:xdg_snapshot()
                 local profiles = { "minimal", "full" }
-                local dms = { "none", "noctalia", "ly", "greetd" }
+                local dms = { "none", "ly", "greetd" }
                 local aurs = { "none", "yay-bin", "paru-bin" }
 
                 for _, prof in ipairs(profiles) do
@@ -1663,7 +1664,7 @@ exit 0
                 assert_true(not sb:calls():find("CHSH", 1, true), "SET_ZSH remains false under --skip-packages")
             end)
 
-            -- Default Arch live run (no --skip-packages): SYSTEM_SETUP=true, SET_ZSH=true, DM=noctalia, AND AUR=yay-bin
+            -- Default Arch live run (no --skip-packages): SYSTEM_SETUP=true, SET_ZSH=true, DM=greetd, AND AUR=yay-bin
             with_sandbox({
                 login_shell = "/usr/bin/bash",
                 units_exist = { "greetd.service", "NetworkManager.service", "bluetooth.service" },
@@ -1672,16 +1673,11 @@ exit 0
                 assert_eq(r.rc, 0, "default Arch live run exit 0: " .. r.combined)
                 assert_contains(sb:calls(), "PACMAN -Syu", "default Arch runs pacman -Syu")
                 assert_contains(sb:calls(), "SYSTEMCTL enable NetworkManager.service", "default Arch enables system setup")
-                assert_contains(sb:calls(), "SYSTEMCTL enable greetd.service", "default Arch enables greetd.service for noctalia-greeter")
+                assert_contains(sb:calls(), "SYSTEMCTL enable greetd.service", "default Arch enables greetd.service for tuigreet")
                 assert_contains(sb:calls(), "CHSH", "default Arch switches login shell to zsh")
                 assert_contains(sb:calls(), "yay-bin.git", "default Arch clones yay-bin AUR helper")
                 assert_contains(sb:calls(), "MAKEPKG -si --needed --noconfirm", "default Arch builds yay-bin via makepkg")
-                assert_contains(read_file(sb.greetd_cfg) or "", "/usr/bin/noctalia-greeter-session --session Hyprland", "writes noctalia-greeter greetd config")
-                local greeter_sync = read_file(sb.greeter_dir .. "/sync.toml") or ""
-                assert_contains(greeter_sync, 'scheme = "Kanagawa"', "seeds Kanagawa greeter theme")
-                assert_contains(greeter_sync, 'path = "' .. sb.greeter_dir .. '/wallpaper.jpg"', "seeds bundled 4K greeter wallpaper path")
-                assert_true(is_file(sb.greeter_dir .. "/wallpaper.jpg"), "installs bundled 4K wallpaper into greeter_dir")
-                assert_contains(read_file(sb.greeter_dir .. "/greeter.toml") or "", 'default = "Hyprland"', "seeds Hyprland default greeter session")
+                assert_contains(read_file(sb.greetd_cfg) or "", "tuigreet --time --remember", "writes tuigreet greetd config")
             end)
 
             -- VM GPU mode adds WLR_NO_HARDWARE_CURSORS=1 automatically to noctalia-greeter command
