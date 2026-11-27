@@ -23,6 +23,18 @@ CONFLICT_HARD=()
 CONFLICT_SOFT=()
 EXISTING_DM=""
 
+SNAPPER_AVAILABLE=false
+SNAPPER_CONFIG="root"
+KAZE_SNAPSHOT_PRE_NUM=""
+KAZE_SNAPSHOT_POST_NUM=""
+KAZE_ENABLED_SYS_UNITS=()
+KAZE_ENABLED_DM_UNIT=""
+KAZE_DISABLED_GETTY=false
+KAZE_GREETD_CONFIG_PATH=""
+KAZE_GREETD_BACKUP=""
+KAZE_ADDED_VIDEO_GROUP=false
+KAZE_PREV_SHELL=""
+
 _kaze_msg_ok() {
     if declare -F log_ok >/dev/null 2>&1; then
         log_ok "$1"
@@ -393,6 +405,7 @@ kaze_run_system_setup() {
                 _kaze_msg_ok "NetworkManager.service already enabled"
             else
                 sudo systemctl enable NetworkManager.service
+                KAZE_ENABLED_SYS_UNITS+=("NetworkManager.service")
                 _kaze_msg_ok "Enabled NetworkManager.service (without --now to preserve active link)"
             fi
         else
@@ -405,6 +418,7 @@ kaze_run_system_setup() {
                 _kaze_msg_ok "bluetooth.service already enabled"
             else
                 sudo systemctl enable bluetooth.service
+                KAZE_ENABLED_SYS_UNITS+=("bluetooth.service")
                 _kaze_msg_ok "Enabled bluetooth.service"
             fi
         else
@@ -432,6 +446,7 @@ kaze_run_system_setup() {
             _kaze_msg_ok "User '$target_user' already in group 'video'"
         else
             sudo usermod -aG video "$target_user"
+            KAZE_ADDED_VIDEO_GROUP=true
             _kaze_msg_ok "Added '$target_user' to group 'video'"
         fi
     fi
@@ -606,10 +621,12 @@ EOF
             fi
 
             local greetd_cfg="${KAZE_GREETD_CONFIG:-/etc/greetd/config.toml}"
+            KAZE_GREETD_CONFIG_PATH="$greetd_cfg"
             if [[ -e "$greetd_cfg" || -L "$greetd_cfg" ]]; then
                 local bak_path
                 bak_path="${greetd_cfg}.kaze-bak-$(date +%Y%m%d-%H%M%S)"
                 sudo cp -a -- "$greetd_cfg" "$bak_path"
+                KAZE_GREETD_BACKUP="$bak_path"
                 _kaze_msg_info "Backed up existing $greetd_cfg -> $bak_path"
             fi
             local greeter_cmd="/usr/bin/noctalia-greeter-session --session Hyprland"
@@ -632,6 +649,7 @@ EOF
             rm -f -- "$tmp_cfg"
             if ! systemctl is-enabled --quiet greetd.service 2>/dev/null; then
                 sudo systemctl enable greetd.service
+                KAZE_ENABLED_DM_UNIT="greetd.service"
             fi
             _kaze_msg_ok "Configured $greetd_cfg and enabled greetd.service (noctalia-greeter, Kanagawa)"
             ;;
@@ -639,11 +657,14 @@ EOF
             if _kaze_unit_exists "ly@.service"; then
                 if systemctl is-enabled --quiet getty@tty1.service 2>/dev/null; then
                     sudo systemctl disable getty@tty1.service
+                    KAZE_DISABLED_GETTY=true
                 fi
                 sudo systemctl enable ly@tty1.service
+                KAZE_ENABLED_DM_UNIT="ly@tty1.service"
                 _kaze_msg_ok "Enabled ly@tty1.service (TTY2-TTY6 kept as rescue shells)"
             elif _kaze_unit_exists "ly.service"; then
                 sudo systemctl enable ly.service
+                KAZE_ENABLED_DM_UNIT="ly.service"
                 _kaze_msg_ok "Enabled ly.service"
             else
                 _kaze_msg_warn "Neither ly@.service nor ly.service unit found; skipping ly enable"
@@ -655,10 +676,12 @@ EOF
                 return 0
             fi
             local greetd_cfg="${KAZE_GREETD_CONFIG:-/etc/greetd/config.toml}"
+            KAZE_GREETD_CONFIG_PATH="$greetd_cfg"
             if [[ -e "$greetd_cfg" || -L "$greetd_cfg" ]]; then
                 local bak_path
                 bak_path="${greetd_cfg}.kaze-bak-$(date +%Y%m%d-%H%M%S)"
                 sudo cp -a -- "$greetd_cfg" "$bak_path"
+                KAZE_GREETD_BACKUP="$bak_path"
                 _kaze_msg_info "Backed up existing $greetd_cfg -> $bak_path"
             fi
             local tmp_cfg
@@ -676,6 +699,7 @@ EOF
             rm -f -- "$tmp_cfg"
             if ! systemctl is-enabled --quiet greetd.service 2>/dev/null; then
                 sudo systemctl enable greetd.service
+                KAZE_ENABLED_DM_UNIT="greetd.service"
             fi
             _kaze_msg_ok "Configured $greetd_cfg and enabled greetd.service (tuigreet)"
             ;;
@@ -734,4 +758,85 @@ kaze_install_aur_helper() {
     fi
     kaze_cleanup_aur_tmp
     _kaze_msg_ok "Installed opt-in AUR helper $aur_pkg ($bin_name)"
+}
+
+kaze_detect_snapper() {
+    SNAPPER_AVAILABLE=false
+    SNAPPER_CONFIG="${KAZE_SNAPPER_CONFIG_NAME:-root}"
+    local cfg_file="${KAZE_SNAPPER_CONFIG:-/etc/snapper/configs/${SNAPPER_CONFIG}}"
+    if command -v snapper >/dev/null 2>&1 && [[ -f "$cfg_file" ]]; then
+        SNAPPER_AVAILABLE=true
+    fi
+}
+
+kaze_snapshot_pre() {
+    local desc="${1:-kaze-dots install}"
+    if [[ "$SNAPPER_AVAILABLE" != true ]]; then
+        return 1
+    fi
+    local num=""
+    if num="$(sudo snapper -c "$SNAPPER_CONFIG" create --type pre --cleanup-algorithm number --print-number --description "$desc" 2>/dev/null)" && [[ "$num" =~ ^[0-9]+$ ]]; then
+        KAZE_SNAPSHOT_PRE_NUM="$num"
+        _kaze_msg_ok "Created Snapper pre-snapshot #${num} (config=${SNAPPER_CONFIG})"
+        return 0
+    fi
+    _kaze_msg_warn "Snapper pre-snapshot failed (config=${SNAPPER_CONFIG}); continuing without OS snapshot"
+    return 1
+}
+
+kaze_snapshot_post() {
+    local desc="${1:-kaze-dots install}"
+    if [[ -z "$KAZE_SNAPSHOT_PRE_NUM" || -n "$KAZE_SNAPSHOT_POST_NUM" ]]; then
+        return 0
+    fi
+    local num=""
+    if num="$(sudo snapper -c "$SNAPPER_CONFIG" create --type post --pre-number "$KAZE_SNAPSHOT_PRE_NUM" --cleanup-algorithm number --print-number --description "$desc" 2>/dev/null)" && [[ "$num" =~ ^[0-9]+$ ]]; then
+        KAZE_SNAPSHOT_POST_NUM="$num"
+        _kaze_msg_ok "Created Snapper post-snapshot #${num} (undo: sudo snapper -c ${SNAPPER_CONFIG} undochange ${KAZE_SNAPSHOT_PRE_NUM}..${num})"
+        return 0
+    fi
+    _kaze_msg_warn "Snapper post-snapshot failed for pre #${KAZE_SNAPSHOT_PRE_NUM}"
+    return 1
+}
+
+kaze_write_system_changes_manifest() {
+    local backup_dir="$1"
+    local target_user="${2:-${USER:-$(id -un)}}"
+    local added_pkgs_file="${3:-}"
+    if [[ -z "$backup_dir" || ! -d "$backup_dir" ]]; then
+        return 0
+    fi
+
+    local has_added_pkgs=false
+    if [[ -n "$added_pkgs_file" && -s "$added_pkgs_file" ]]; then
+        has_added_pkgs=true
+        cp -- "$added_pkgs_file" "$backup_dir/packages-added.list"
+    fi
+
+    local has_changes=false
+    if [[ "$has_added_pkgs" == true || -n "$KAZE_SNAPSHOT_PRE_NUM" || -n "$KAZE_PREV_SHELL" ||
+          -n "$KAZE_ENABLED_DM_UNIT" || "$KAZE_DISABLED_GETTY" == true || -n "$KAZE_GREETD_BACKUP" ||
+          "$KAZE_ADDED_VIDEO_GROUP" == true || ${#KAZE_ENABLED_SYS_UNITS[@]} -gt 0 ]]; then
+        has_changes=true
+    fi
+    if [[ "$has_changes" != true ]]; then
+        return 0
+    fi
+
+    local env_file="$backup_dir/system-changes.env"
+    local sys_units="${KAZE_ENABLED_SYS_UNITS[*]:-}"
+    {
+        printf '# Recorded system-level changes from kaze-dots install\n'
+        printf 'TARGET_USER=%q\n' "$target_user"
+        printf 'SNAPPER_CONFIG=%q\n' "$SNAPPER_CONFIG"
+        printf 'SNAPSHOT_PRE=%q\n' "$KAZE_SNAPSHOT_PRE_NUM"
+        printf 'SNAPSHOT_POST=%q\n' "$KAZE_SNAPSHOT_POST_NUM"
+        printf 'PREV_SHELL=%q\n' "$KAZE_PREV_SHELL"
+        printf 'ENABLED_SYS_UNITS=%q\n' "$sys_units"
+        printf 'ENABLED_DM_UNIT=%q\n' "$KAZE_ENABLED_DM_UNIT"
+        printf 'DISABLED_GETTY=%q\n' "$KAZE_DISABLED_GETTY"
+        printf 'GREETD_CONFIG=%q\n' "$KAZE_GREETD_CONFIG_PATH"
+        printf 'GREETD_BACKUP=%q\n' "$KAZE_GREETD_BACKUP"
+        printf 'ADDED_VIDEO_GROUP=%q\n' "$KAZE_ADDED_VIDEO_GROUP"
+    } > "$env_file"
 }

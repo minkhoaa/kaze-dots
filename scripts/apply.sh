@@ -84,6 +84,8 @@ if [ -f "$LAST_BACKUP" ]; then
         cp -a -- "$previous/files/." "$BACKUP_DIR/files/"
         cp -- "$previous/installed.list" "$INSTALLED_LIST"
         cp -- "$previous/backed_up.list" "$BACKED_UP_LIST"
+        [ -f "$previous/system-changes.env" ] && cp -- "$previous/system-changes.env" "$BACKUP_DIR/system-changes.env"
+        [ -f "$previous/packages-added.list" ] && cp -- "$previous/packages-added.list" "$BACKUP_DIR/packages-added.list"
         REAPPLY=true
     fi
 fi
@@ -322,15 +324,21 @@ fi
 BACKUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAST_BACKUP="$(dirname -- "$BACKUP_DIR")/kaze/last-backup"
 AUTO_YES=false
+ROLLBACK_SYSTEM=false
 
 for arg in "$@"; do
     case "$arg" in
         --yes|-y)
             AUTO_YES=true
             ;;
+        --system)
+            ROLLBACK_SYSTEM=true
+            ;;
         -h|--help)
-            echo "Usage: $0 [--yes]"
+            echo "Usage: $0 [--yes] [--system]"
             echo "Removes kaze-dots symlinks/seeded files and restores backed-up configs from $BACKUP_DIR."
+            echo "Pass --system to also revert recorded login shell, systemd/DM units, and greetd config (uses sudo)."
+            echo "Packages are never auto-removed; use Snapper undochange or packages-added.list for package changes."
             exit 0
             ;;
         *)
@@ -341,7 +349,11 @@ for arg in "$@"; do
 done
 
 if [ "$AUTO_YES" = false ]; then
-    read -r -p "Rollback kaze-dots and restore configs from $BACKUP_DIR? [y/N] " reply
+    prompt_msg="Rollback kaze-dots and restore configs from $BACKUP_DIR? [y/N] "
+    if [ "$ROLLBACK_SYSTEM" = true ]; then
+        prompt_msg="Rollback kaze-dots configs AND recorded system changes (shell/services/DM via sudo) from $BACKUP_DIR? [y/N] "
+    fi
+    read -r -p "$prompt_msg" reply
     case "$reply" in
         [yY]|[yY][eE][sS]) ;;
         *)
@@ -356,40 +368,91 @@ if [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ] && systemctl --user is-ac
     exit 1
 fi
 
+DO_DOTFILES=true
 if [ ! -f "$LAST_BACKUP" ] || [[ "$(<"$LAST_BACKUP")" != "$BACKUP_DIR" ]]; then
-    echo "This is not the current Kaze backup. Use the path recorded in $LAST_BACKUP." >&2
-    exit 1
+    if [ "$ROLLBACK_SYSTEM" = true ] && [ -f "$BACKUP_DIR/system-changes.env" ] && [ ! -f "$BACKUP_DIR/system-rolled-back" ]; then
+        DO_DOTFILES=false
+    else
+        echo "This is not the current Kaze backup. Use the path recorded in $LAST_BACKUP." >&2
+        exit 1
+    fi
 fi
 
-if [ -f "$BACKUP_DIR/installed.list" ]; then
-    while IFS= read -r target; do
-        [ -n "$target" ] || continue
-        if [ -L "$target" ] || [ -f "$target" ]; then
-            rm -f "$target"
-        fi
-    done < "$BACKUP_DIR/installed.list"
-fi
-
-if [ -f "$BACKUP_DIR/backed_up.list" ]; then
-    while IFS=$'\t' read -r rel dst; do
-        [ -n "$rel" ] && [ -n "$dst" ] || continue
-        src="$BACKUP_DIR/files/$rel"
-        if [ -e "$src" ] || [ -L "$src" ]; then
-            mkdir -p "$(dirname "$dst")"
-            if [ -e "$dst" ] || [ -L "$dst" ]; then
-                rm -f "$dst"
+if [ "$DO_DOTFILES" = true ]; then
+    if [ -f "$BACKUP_DIR/installed.list" ]; then
+        while IFS= read -r target; do
+            [ -n "$target" ] || continue
+            if [ -L "$target" ] || [ -f "$target" ]; then
+                rm -f "$target"
             fi
-            cp -aT -- "$src" "$dst"
+        done < "$BACKUP_DIR/installed.list"
+    fi
+
+    if [ -f "$BACKUP_DIR/backed_up.list" ]; then
+        while IFS=$'\t' read -r rel dst; do
+            [ -n "$rel" ] && [ -n "$dst" ] || continue
+            src="$BACKUP_DIR/files/$rel"
+            if [ -e "$src" ] || [ -L "$src" ]; then
+                mkdir -p "$(dirname "$dst")"
+                if [ -e "$dst" ] || [ -L "$dst" ]; then
+                    rm -f "$dst"
+                fi
+                cp -aT -- "$src" "$dst"
+            fi
+        done < "$BACKUP_DIR/backed_up.list"
+    fi
+    rm -- "$LAST_BACKUP"
+
+    if [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ]; then
+        systemctl --user daemon-reload
+    fi
+
+    echo "Rolled back kaze-dots user configs using $BACKUP_DIR (hypr/user.lua preserved)."
+fi
+
+if [ -f "$BACKUP_DIR/system-changes.env" ]; then
+    # shellcheck disable=SC1091
+    source "$BACKUP_DIR/system-changes.env"
+    if [ "$ROLLBACK_SYSTEM" = true ]; then
+        if [ -n "${PREV_SHELL:-}" ] && [ -n "${TARGET_USER:-}" ] && command -v chsh >/dev/null 2>&1; then
+            sudo chsh -s "$PREV_SHELL" "$TARGET_USER"
+            echo "Restored login shell for $TARGET_USER -> $PREV_SHELL"
         fi
-    done < "$BACKUP_DIR/backed_up.list"
+        if [ -n "${ENABLED_DM_UNIT:-}" ] && command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl disable "$ENABLED_DM_UNIT" || true
+            echo "Disabled display manager unit: $ENABLED_DM_UNIT"
+        fi
+        if [ "${DISABLED_GETTY:-false}" = true ] && command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl enable getty@tty1.service || true
+            echo "Re-enabled getty@tty1.service"
+        fi
+        if [ -n "${GREETD_BACKUP:-}" ] && [ -n "${GREETD_CONFIG:-}" ] && [ -e "$GREETD_BACKUP" ]; then
+            sudo cp -a -- "$GREETD_BACKUP" "$GREETD_CONFIG"
+            echo "Restored $GREETD_CONFIG from $GREETD_BACKUP"
+        fi
+        if [ -n "${ENABLED_SYS_UNITS:-}" ] && command -v systemctl >/dev/null 2>&1; then
+            for u in $ENABLED_SYS_UNITS; do
+                sudo systemctl disable "$u" || true
+                echo "Disabled system unit: $u"
+            done
+        fi
+        if [ "${ADDED_VIDEO_GROUP:-false}" = true ] && [ -n "${TARGET_USER:-}" ]; then
+            echo "Note: '$TARGET_USER' was added to group 'video' (remove manually if desired: sudo gpasswd -d $TARGET_USER video)."
+        fi
+        : > "$BACKUP_DIR/system-rolled-back"
+    else
+        echo "Note: System-level changes (packages/services/DM/shell) are NOT reverted by default."
+        echo "  Revert shell/services/DM: $BACKUP_DIR/rollback.sh --system"
+    fi
+    if [ -n "${SNAPSHOT_PRE:-}" ] && [ -n "${SNAPSHOT_POST:-}" ]; then
+        echo "  Full OS rollback (Snapper): sudo snapper -c ${SNAPPER_CONFIG:-root} undochange ${SNAPSHOT_PRE}..${SNAPSHOT_POST}"
+    elif [ -n "${SNAPSHOT_PRE:-}" ]; then
+        echo "  Pre-install Snapper snapshot: #${SNAPSHOT_PRE} (config=${SNAPPER_CONFIG:-root})"
+    fi
+    if [ -f "$BACKUP_DIR/packages-added.list" ]; then
+        echo "  Newly installed packages recorded in: $BACKUP_DIR/packages-added.list"
+    fi
 fi
-rm -- "$LAST_BACKUP"
-
-if [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ]; then
-    systemctl --user daemon-reload
-fi
-
-echo "Rolled back kaze-dots using $BACKUP_DIR (hypr/user.lua preserved)."
 ROLLBACK_EOF
 chmod +x "$BACKUP_DIR/rollback.sh"
 : > "$BACKUP_DIR/active-install"

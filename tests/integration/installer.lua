@@ -2405,25 +2405,19 @@ exit 0
                     assert_eq(r.rc, 0, "--replace-conflicts exit 0: " .. r.combined)
 
                     local lines = sb:call_lines()
-                    local rdd_idx, syu_idx, rdd_line
-                    for i, l in ipairs(lines) do
-                        if l:find("^PACMAN %-Rdd") and not rdd_idx then
-                            rdd_idx = i
-                            rdd_line = l
-                        elseif l:find("^PACMAN %-Syu") and not syu_idx then
-                            syu_idx = i
+                    local syu_line
+                    for _, l in ipairs(lines) do
+                        if l:find("^PACMAN %-Syu") and not syu_line then
+                            syu_line = l
                         end
                     end
-                    assert_true(rdd_idx ~= nil, "pacman -Rdd was invoked")
-                    assert_true(syu_idx ~= nil, "pacman -Syu was invoked")
-                    assert_true(rdd_idx < syu_idx, "pacman -Rdd MUST run strictly BEFORE pacman -Syu")
-                    assert_contains(rdd_line, "--noconfirm", "--yes adds --noconfirm to -Rdd")
+                    assert_true(not sb:calls():find("PACMAN -Rdd", 1, true), "must NEVER invoke destructive pacman -Rdd")
+                    assert_true(syu_line ~= nil, "pacman -Syu was invoked")
+                    assert_contains(syu_line, "--noconfirm", "--yes adds --noconfirm to -Syu")
+                    assert_contains(syu_line, "--ask=4", "--replace-conflicts uses atomic pacman --ask=4 inside -Syu")
 
-                    for _, h in ipairs(hard) do
-                        assert_contains(rdd_line, h, "-Rdd removes hard conflict " .. h)
-                    end
                     for _, s in ipairs(soft_all) do
-                        assert_true(not rdd_line:find(s, 1, true), "-Rdd MUST NEVER remove soft conflict " .. s)
+                        assert_true(not syu_line:find(s, 1, true), "pacman must NEVER remove soft conflict " .. s)
                     end
 
                     assert_contains(r.combined, "sudo pacman -Rns", "warns with suggested sudo pacman -Rns")
@@ -2449,9 +2443,8 @@ exit 0
                     stdin = "y\ny\ny\n",
                 })
                 assert_eq(r.rc, 0, "interactive 'y' on hard conflict succeeds: " .. r.combined)
-                assert_contains(sb:calls(), "PACMAN -Rdd", "interactive 'y' calls pacman -Rdd")
-                assert_contains(sb:calls(), "pulseaudio", "interactive 'y' removes pulseaudio")
-                assert_contains(sb:calls(), "PACMAN -Syu", "interactive 'y' proceeds to pacman -Syu")
+                assert_true(not sb:calls():find("PACMAN -Rdd", 1, true), "interactive 'y' must NOT run -Rdd")
+                assert_contains(sb:calls(), "PACMAN -Syu --needed --ask=4", "interactive 'y' runs atomic pacman -Syu --needed --ask=4")
             end)
         end)
 

@@ -1,7 +1,7 @@
 # Deployment and VM scripts
 
 ## Scope
-Maintain the shared [package manifest](packages.sh), [package installer](install-packages.sh), [bootstrap wrapper](bootstrap.sh), [installer library](install-lib.sh), [profile installer](install.sh), [symlink and rollback installer](apply.sh), [VM launcher](launch-vm.sh) and [verification harness](../tests/vm/verify.sh).
+Maintain the shared [package manifest](packages.sh), [package installer](install-packages.sh), [bootstrap wrapper](bootstrap.sh), [installer library](install-lib.sh), [TUI wizard](install-tui.sh), [profile installer](install.sh), [symlink and rollback installer](apply.sh), [VM launcher](launch-vm.sh) and [verification harness](../tests/vm/verify.sh).
 
 ## Local rules
 - Use Bash strict mode (`set -euo pipefail`) and quote paths. Respect `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_STATE_HOME` when deploying or logging.

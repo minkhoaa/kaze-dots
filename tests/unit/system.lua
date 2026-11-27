@@ -1955,7 +1955,7 @@ elif [ "$1" = "-j" ] && [ "$2" = "activewindow" ]; then printf '{}\n'; fi
             local sock_ok = os.execute("python3 -c " .. q("import socket; s=socket.socket(socket.AF_UNIX); s.bind('" .. runtime .. "/bus')") .. " >/dev/null 2>&1")
             assert_true(sock_ok, "create mock dbus unix socket")
 
-            for _, b in ipairs({ "bash", "sh", "env", "lua", "luac", "realpath", "readlink", "find", "ln", "ls", "wc", "mktemp", "mkfifo", "tee", "sed", "grep", "cat", "cp", "mv", "rm", "mkdir", "install", "date", "sleep", "kill", "tr", "head", "paste", "cut", "basename", "dirname", "chmod", "touch" }) do
+            for _, b in ipairs({ "bash", "sh", "env", "lua", "luac", "realpath", "readlink", "find", "ln", "ls", "wc", "mktemp", "mkfifo", "tee", "sed", "grep", "cat", "cp", "mv", "rm", "mkdir", "install", "date", "sleep", "kill", "tr", "head", "paste", "cut", "basename", "dirname", "chmod", "touch", "sort", "comm" }) do
                 link_host_bin(stub_bin, b)
             end
 
@@ -1968,10 +1968,25 @@ exec "$@"
 ]])
             write_stub(stub_bin, "pacman", [[
 if [ "${1:-}" = "-Qq" ]; then
-    printf '%s\n' "${TEST_PACMAN_QQ:-}"
+    if [ -f "$HOME/pacman-installed" ]; then
+        cat "$HOME/pacman-installed"
+    else
+        printf '%s\n' "${TEST_PACMAN_QQ:-}"
+    fi
     exit 0
 fi
 printf 'pacman %s\n' "$*" >> "$HOME/pacman-calls"
+if [ "${1:-}" = "-Syu" ]; then
+    printf '%s\n' "${TEST_PACMAN_QQ:-}" "hyprland" "noctalia" "foot" > "$HOME/pacman-installed"
+fi
+exit 0
+]])
+            write_stub(stub_bin, "snapper", [[
+printf 'snapper %s\n' "$*" >> "$HOME/snapper-calls"
+case "$*" in
+  *"--type pre"*)  printf '41\n' ;;
+  *"--type post"*) printf '42\n' ;;
+esac
 exit 0
 ]])
             write_stub(stub_bin, "systemctl", [[
@@ -1985,9 +2000,9 @@ case "$*" in
     [ "${TEST_EXISTING_DM:-}" = "sddm" ] && exit 0 || exit 1 ;;
   'is-enabled --quiet getty@tty1.service')
     exit 0 ;;
-  'is-enabled --quiet '*)
+  'is-enabled --quiet '*|'--user is-enabled --quiet '*)
     exit 1 ;;
-  'is-active --quiet '*)
+  'is-active --quiet '*|'--user is-active --quiet '*)
     exit 1 ;;
   'list-unit-files '*)
     exit 0 ;;
@@ -2048,23 +2063,36 @@ exit 0
                 q(home), q(cfg), q(data), q(cache), q(state), q(runtime), q(tmp .. "/arch-release"), q(etc_greetd .. "/config.toml"), q(tmp .. "/var/lib/noctalia-greeter"), q(tmp .. "/no-greeter-setup.sh"), q(tmp .. "/etc/systemd/system"), q(stub_bin)
             )
 
+            local snapper_cfg = tmp .. "/snapper-root"
+            fs.write_atomic(snapper_cfg, "SUBVOLUME=\"/\"\n")
+
             -- 1. Hard conflict in --yes mode without --replace-conflicts MUST abort before pacman -Syu
-            local conf_fail_out, conf_fail_ok = read_all(env .. " TEST_PACMAN_QQ='pulseaudio\nxdg-desktop-portal-wlr\ndunst' " .. installer .. " --profile minimal --yes 2>&1")
+            local conf_fail_out, conf_fail_ok = read_all(env .. " KAZE_SNAPPER_CONFIG=" .. q(tmp .. "/no-snapper") .. " TEST_PACMAN_QQ='pulseaudio\nxdg-desktop-portal-wlr\ndunst' " .. installer .. " --profile minimal --yes 2>&1")
             assert_true(not conf_fail_ok, "hard conflict without --replace-conflicts must fail in --yes mode")
             assert_contains(conf_fail_out, "--replace-conflicts")
             assert_true(not fs.file_exists(home .. "/pacman-calls"), "aborted conflict check must not run pacman -Syu")
 
-            -- 2. --yes --replace-conflicts + --dm ly + --aur yay-bin runs full pipeline, removes ONLY hard conflict, logs cleanly
-            local ok_out, ok_st = read_all(env .. " TEST_PACMAN_QQ='pulseaudio\nxdg-desktop-portal-wlr\ndunst' " .. installer .. " --profile minimal --dm ly --aur yay-bin --replace-conflicts --yes 2>&1")
+            -- 1b. --snapshot when snapper root config is absent must fail cleanly before touching pacman
+            local snap_fail_out, snap_fail_ok = read_all(env .. " KAZE_SNAPPER_CONFIG=" .. q(tmp .. "/no-snapper") .. " " .. installer .. " --profile minimal --snapshot --yes 2>&1")
+            assert_true(not snap_fail_ok, "--snapshot without snapper config must fail")
+            assert_contains(snap_fail_out, "--snapshot")
+            assert_true(not fs.file_exists(home .. "/pacman-calls"), "failed --snapshot must not run pacman -Syu")
+
+            -- 2. --yes --replace-conflicts + --dm ly + --aur yay-bin runs atomic pacman --ask=4 (zero -Rdd), Snapper pre/post, system-changes.env, logs cleanly
+            local ok_out, ok_st = read_all(env .. " KAZE_SNAPPER_CONFIG=" .. q(snapper_cfg) .. " TEST_PACMAN_QQ='pulseaudio\nxdg-desktop-portal-wlr\ndunst' " .. installer .. " --profile minimal --dm ly --aur yay-bin --replace-conflicts --yes 2>&1")
             assert_true(ok_st, "full stubbed install failed:\n" .. ok_out)
 
             local pac_log = assert(fs.read_file(home .. "/pacman-calls"))
-            local p_rdd = assert(pac_log:find("pacman -Rdd --noconfirm pulseaudio\n", 1, true), "must remove hard conflict pulseaudio")
-            local p_syu = assert(pac_log:find("pacman -Syu --needed --noconfirm", 1, true), "must run pacman -Syu")
-            assert_true(p_rdd < p_syu, "pacman -Rdd must run before pacman -Syu")
+            assert_true(not pac_log:find("-Rdd", 1, true), "must NEVER call destructive pacman -Rdd")
+            assert_contains(pac_log, "pacman -Syu --needed --noconfirm --ask=4 ")
             assert_true(not pac_log:find("xdg-desktop-portal-wlr", 1, true), "must never remove soft conflict portal-wlr")
             assert_true(not pac_log:find("dunst", 1, true), "must never remove soft conflict dunst")
             assert_contains(pac_log, "ly base-devel git")
+
+            local snap_log = assert(fs.read_file(home .. "/snapper-calls"))
+            assert_contains(snap_log, "snapper -c root create --type pre")
+            assert_contains(snap_log, "snapper -c root create --type post --pre-number 41")
+            assert_contains(ok_out, "sudo snapper -c root undochange 41..42")
 
             local sys_log = assert(fs.read_file(home .. "/systemctl-calls"))
             assert_contains(sys_log, "systemctl enable NetworkManager.service\n")
@@ -2079,6 +2107,39 @@ exit 0
             assert_contains(assert(fs.read_file(home .. "/git-calls")), "https://aur.archlinux.org/yay-bin.git")
             assert_contains(assert(fs.read_file(home .. "/makepkg-calls")), "makepkg -si --needed --noconfirm\n")
 
+            -- Recorded system-changes.env & packages-added.list + rollback.sh --system test
+            local bdir = assert(fs.read_file(cfg .. "/kaze/last-backup")):gsub("%s+$", "")
+            local sc_env = assert(fs.read_file(bdir .. "/system-changes.env"))
+            assert_contains(sc_env, "SNAPSHOT_PRE=41")
+            assert_contains(sc_env, "SNAPSHOT_POST=42")
+            assert_contains(sc_env, "PREV_SHELL=/bin/bash")
+            assert_contains(sc_env, "ENABLED_DM_UNIT=ly@tty1.service")
+            assert_contains(sc_env, "DISABLED_GETTY=true")
+            local added_pkgs = assert(fs.read_file(bdir .. "/packages-added.list"))
+            assert_contains(added_pkgs, "hyprland")
+            assert_contains(added_pkgs, "noctalia")
+
+            -- Default rollback restores dotfiles without touching system units, and prints --system + Snapper hints
+            fs.write_atomic(home .. "/systemctl-calls", "")
+            fs.write_atomic(home .. "/chsh-calls", "")
+            local rb_out, rb_ok = read_all(env .. " " .. q(bdir .. "/rollback.sh") .. " --yes 2>&1")
+            assert_true(rb_ok, "rollback.sh --yes failed:\n" .. rb_out)
+            assert_contains(rb_out, "rollback.sh --system")
+            assert_contains(rb_out, "sudo snapper -c root undochange 41..42")
+            assert_eq(fs.read_file(home .. "/chsh-calls") or "", "", "default rollback must not call chsh")
+
+            -- Subsequent rollback --system reverts login shell, DM/system units, and getty@tty1 without removing packages
+            local pac_before_rb = fs.read_file(home .. "/pacman-calls")
+            local rbs_out, rbs_ok = read_all(env .. " " .. q(bdir .. "/rollback.sh") .. " --yes --system 2>&1")
+            assert_true(rbs_ok, "rollback.sh --yes --system failed:\n" .. rbs_out)
+            assert_contains(assert(fs.read_file(home .. "/chsh-calls")), "chsh -s /bin/bash tester\n")
+            local rb_sys = assert(fs.read_file(home .. "/systemctl-calls"))
+            assert_contains(rb_sys, "systemctl disable ly@tty1.service\n")
+            assert_contains(rb_sys, "systemctl enable getty@tty1.service\n")
+            assert_contains(rb_sys, "systemctl disable NetworkManager.service\n")
+            assert_contains(rb_sys, "systemctl disable bluetooth.service\n")
+            assert_eq(fs.read_file(home .. "/pacman-calls"), pac_before_rb, "rollback --system must never auto-remove packages")
+
             -- Log file exists, is ANSI-free, and includes kaze-doctor --offline output
             local log_path = assert(fs.capture("ls -1 " .. q(state .. "/kaze") .. "/install-*.log 2>/dev/null | head -n1")):gsub("\n$", "")
             assert_true(log_path ~= "", "install log file must be created")
@@ -2087,14 +2148,16 @@ exit 0
             assert_contains(log_txt, "Doctor summary:")
             assert_contains(log_txt, "sudo pacman -Rns xdg-desktop-portal-wlr dunst")
 
-            -- 3. Existing network stack (systemd-networkd) skips NetworkManager.service; existing DM (sddm) refuses overwrite
+            -- 3. Existing network stack (systemd-networkd) skips NetworkManager.service; existing DM (sddm) refuses overwrite; --no-snapshot skips snapper
             fs.write_atomic(home .. "/systemctl-calls", "")
-            local keep_out, keep_ok = read_all(env .. " TEST_OTHER_NET=systemd-networkd TEST_EXISTING_DM=sddm " .. installer .. " --profile minimal --dm greetd --skip-packages --system-setup --no-log --yes 2>&1")
+            fs.write_atomic(home .. "/snapper-calls", "")
+            local keep_out, keep_ok = read_all(env .. " KAZE_SNAPPER_CONFIG=" .. q(snapper_cfg) .. " TEST_OTHER_NET=systemd-networkd TEST_EXISTING_DM=sddm " .. installer .. " --profile minimal --dm greetd --skip-packages --system-setup --no-snapshot --no-log --yes 2>&1")
             assert_true(keep_ok, "skip-NM & refuse-DM install failed:\n" .. keep_out)
             local sys_keep = assert(fs.read_file(home .. "/systemctl-calls"))
             assert_true(not sys_keep:find("enable NetworkManager.service", 1, true), "must skip NetworkManager when systemd-networkd is active")
             assert_true(not sys_keep:find("enable greetd.service", 1, true), "must refuse to overwrite active sddm.service")
             assert_contains(keep_out, "Existing Display Manager detected (sddm.service)")
+            assert_eq(fs.read_file(home .. "/snapper-calls") or "", "", "--no-snapshot must not invoke snapper")
 
             -- 4. --dm greetd with no existing DM backs up /etc/greetd/config.toml and writes new config
             fs.write_atomic(home .. "/systemctl-calls", "")
