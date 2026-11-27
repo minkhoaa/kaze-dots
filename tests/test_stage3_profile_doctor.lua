@@ -1333,7 +1333,7 @@ fi
             return table.concat(list, "\n"), #list
         end
 
-        for _, prof in ipairs({ { name = "minimal", count = 27 }, { name = "full", count = 51 } }) do
+        for _, prof in ipairs({ { name = "minimal", count = 27 }, { name = "full", count = 52 } }) do
             local p_out, p_ok = read_all(pkg_script .. " --profile " .. prof.name .. " --dry-run 2>&1")
             local i_out, i_ok = read_all(inst_script .. " --profile " .. prof.name .. " --dry-run 2>&1")
             assert_true(p_ok, "install-packages.sh --dry-run failed for " .. prof.name .. ": " .. p_out)
