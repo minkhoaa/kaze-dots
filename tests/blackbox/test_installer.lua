@@ -1672,7 +1672,7 @@ exit 0
                 assert_contains(sb:calls(), "CHSH", "default Arch switches login shell to zsh")
                 assert_contains(read_file(sb.greetd_cfg) or "", "/usr/bin/noctalia-greeter-session --session Hyprland", "writes noctalia-greeter greetd config")
                 local greeter_sync = read_file(sb.greeter_dir .. "/sync.toml") or ""
-                assert_contains(greeter_sync, 'scheme = "Tokyo-Night"', "seeds Tokyo-Night greeter theme")
+                assert_contains(greeter_sync, 'scheme = "Kanagawa"', "seeds Kanagawa greeter theme")
                 assert_contains(greeter_sync, 'path = "' .. sb.greeter_dir .. '/wallpaper.jpg"', "seeds bundled 4K greeter wallpaper path")
                 assert_true(is_file(sb.greeter_dir .. "/wallpaper.jpg"), "installs bundled 4K wallpaper into greeter_dir")
                 assert_contains(read_file(sb.greeter_dir .. "/greeter.toml") or "", 'default = "Hyprland"', "seeds Hyprland default greeter session")

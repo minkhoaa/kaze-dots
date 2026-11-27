@@ -1370,7 +1370,7 @@ draw_screen_review() {
 
     local dm_desc="None (TTY1 auto-start via ~/.zprofile)"
     case "$DM_CHOICE" in
-        noctalia) dm_desc="noctalia-greeter (greetd, Tokyo-Night)" ;;
+        noctalia) dm_desc="noctalia-greeter (greetd, Kanagawa)" ;;
         ly)       dm_desc="ly (ly@tty1.service)" ;;
         greetd)   dm_desc="greetd + tuigreet (/etc/greetd/config.toml)" ;;
     esac

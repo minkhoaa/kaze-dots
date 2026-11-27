@@ -70,7 +70,7 @@ style = "compact"
 [theme]
 mode = "dark"
 source = "builtin"
-builtin = "Tokyo-Night"
+builtin = "Kanagawa"
 wallpaper_scheme = "m3-content"
 pure_black_dark = false
 sync_color_scheme = true
@@ -280,4 +280,4 @@ show_visualizer = false
 [wallpaper]
 enabled = true
 directory = "~/Pictures/Wallpapers"
-default = "~/Pictures/Wallpapers/01-tokyo-night-waves.jpg"
+default = "~/Pictures/Wallpapers/05-kanagawa.jpg"

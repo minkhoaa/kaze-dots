@@ -316,7 +316,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         local seeded_noc = assert(fs.read_file(noc_cfg))
         assert_contains(seeded_noc, "offline_mode = true\n")
         assert_contains(seeded_noc, 'directory = "' .. tmp .. '/Pictures/Wallpapers"\n', "expands wallpaper directory")
-        assert_contains(seeded_noc, 'default = "' .. tmp .. '/Pictures/Wallpapers/01-tokyo-night-waves.jpg"\n', "expands default wallpaper path")
+        assert_contains(seeded_noc, 'default = "' .. tmp .. '/Pictures/Wallpapers/05-kanagawa.jpg"\n', "expands default wallpaper path")
         assert_true(not seeded_noc:find("~/Pictures/Wallpapers", 1, true), "leaves no unexpanded ~/Pictures/Wallpapers")
         assert_eq(fs.read_file(user_wall), "user-wallpaper-bytes\n", "preserves pre-existing user wallpaper")
         assert_true(fs.file_exists(cfg .. "/foot/themes/noctalia"), "seeds empty Foot Noctalia theme")
@@ -358,7 +358,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-Everforest.json\n")
         assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-Monochrome.json\n")
         assert_contains(manifest, cfg .. "/noctalia/palettes/Kaze-Sakura.json\n")
-        assert_contains(manifest, tmp .. "/Pictures/Wallpapers/01-tokyo-night-waves.jpg\n")
+        assert_contains(manifest, tmp .. "/Pictures/Wallpapers/05-kanagawa.jpg\n")
         assert_contains(manifest, tmp .. "/Pictures/Wallpapers/10-swiss-light.jpg\n")
         assert_contains(manifest, cfg .. "/Thunar/uca.xml\n")
         assert_contains(manifest, cfg .. "/Thunar/accels.scm\n")
@@ -413,7 +413,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
             cfg .. "/noctalia/palettes/Kaze-Everforest.json",
             cfg .. "/noctalia/palettes/Kaze-Monochrome.json",
             cfg .. "/noctalia/palettes/Kaze-Sakura.json",
-            tmp .. "/Pictures/Wallpapers/01-tokyo-night-waves.jpg",
+            tmp .. "/Pictures/Wallpapers/05-kanagawa.jpg",
             tmp .. "/Pictures/Wallpapers/10-swiss-light.jpg",
             cfg .. "/Thunar/uca.xml",
             cfg .. "/Thunar/accels.scm",
@@ -977,12 +977,12 @@ enabled = false
         assert_true(fs.file_exists(tmp .. "/cfg/kaze/saved-theme.json"), "saves pre-palette theme")
         assert(os.execute(run("kaze-style", "tui-hacker", env_base)))
         local saved_json = json.decode(assert(fs.read_file(tmp .. "/cfg/kaze/saved-theme.json")))
-        assert_eq(saved_json.builtin, "Tokyo-Night", "switching between palette-locked presets keeps original saved theme")
+        assert_eq(saved_json.builtin, "Kanagawa", "switching between palette-locked presets keeps original saved theme")
         assert(os.execute(run("kaze-style", "omarchy-rail", env_base)))
         assert_true(not fs.file_exists(tmp .. "/cfg/kaze/saved-theme.json"), "restoring theme removes saved-theme.json")
         local restored_cfg = assert(fs.read_file(tmp .. "/cfg/noctalia/config.toml"))
         assert_contains(restored_cfg, 'mode = "dark"\n')
-        assert_contains(restored_cfg, 'builtin = "Tokyo-Night"\n')
+        assert_contains(restored_cfg, 'builtin = "Kanagawa"\n')
 
         local noc_calls = assert(fs.read_file(tmp .. "/noc-calls"))
         assert_contains(noc_calls, "config\nvalidate\n")

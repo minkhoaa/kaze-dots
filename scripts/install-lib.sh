@@ -557,7 +557,7 @@ EOF
             fi
 
             local greeter_wall="/usr/share/noctalia/assets/noctalia-wallpaper.png"
-            local wall_src="${REPO_DIR:-}/assets/wallpapers/01-tokyo-night-waves.jpg"
+            local wall_src="${REPO_DIR:-}/assets/wallpapers/05-kanagawa.jpg"
             if [[ -n "${REPO_DIR:-}" && -f "$wall_src" ]]; then
                 greeter_wall="$greeter_dir/wallpaper.jpg"
                 sudo install -m 0644 -- "$wall_src" "$greeter_wall"
@@ -568,9 +568,9 @@ EOF
                 local tmp_st
                 tmp_st="$(mktemp "${TMPDIR:-/tmp}/kaze-sync.XXXXXX")"
                 cat > "$tmp_st" <<EOF
-# Seeded Kaze appearance (Tokyo-Night + bundled 4K wallpaper; freely updated by UI & Noctalia Sync)
+# Seeded Kaze appearance (Kanagawa + bundled 4K wallpaper; freely updated by UI & Noctalia Sync)
 [appearance]
-scheme = "Tokyo-Night"
+scheme = "Kanagawa"
 theme_mode = "dark"
 font_family = "JetBrainsMono Nerd Font"
 corner_radius_scale = 1.0
@@ -624,7 +624,7 @@ EOF
             if ! systemctl is-enabled --quiet greetd.service 2>/dev/null; then
                 sudo systemctl enable greetd.service
             fi
-            _kaze_msg_ok "Configured $greetd_cfg and enabled greetd.service (noctalia-greeter, Tokyo-Night)"
+            _kaze_msg_ok "Configured $greetd_cfg and enabled greetd.service (noctalia-greeter, Kanagawa)"
             ;;
         ly)
             if _kaze_unit_exists "ly@.service"; then

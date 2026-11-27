@@ -68,7 +68,7 @@ Preview first without touching anything:
 ./scripts/install.sh --profile minimal --dry-run
 ```
 
-Install packages (`pacman -Syu --needed`), configure system services (NetworkManager if no other stack is active, Bluetooth, PipeWire user sockets, `video` group, font cache), enable **`noctalia-greeter` (via `greetd`)** styled with Tokyo-Night + bundled 4K wallpaper by default (0 AUR, 0 Qt/GTK, preserves any existing DM such as SDDM/GDM; pass `--dm ly`, `--dm greetd` for `tuigreet`, or `--dm none` for TTY1), set Zsh as default login shell, choose a visual preset (11 presets across Angular, Dynamic, and Retro groups; default `dynamic-island`), and apply configs (backs up existing dotfiles automatically and logs to `~/.local/state/kaze/install-*.log`):
+Install packages (`pacman -Syu --needed`), configure system services (NetworkManager if no other stack is active, Bluetooth, PipeWire user sockets, `video` group, font cache), enable **`noctalia-greeter` (via `greetd`)** styled with Kanagawa theme + bundled 4K Kanagawa wallpaper by default (0 AUR, 0 Qt/GTK, preserves any existing DM such as SDDM/GDM; pass `--dm ly`, `--dm greetd` for `tuigreet`, or `--dm none` for TTY1), set Zsh as default login shell, choose a visual preset (11 presets across Angular, Dynamic, and Retro groups; default `dynamic-island`), and apply configs (backs up existing dotfiles automatically and logs to `~/.local/state/kaze/install-*.log`):
 
 ```sh
 ./scripts/install.sh --profile minimal --style dynamic-island   # default 3-island top bar + Noctalia Greeter

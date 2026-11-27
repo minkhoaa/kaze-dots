@@ -1357,7 +1357,7 @@ fi
         -- Modified values (user GUI edits + full profile polkit_agent) must produce zero drift
         local edited = tpl
             :gsub('mode = "dark"', 'mode = "light"')
-            :gsub('builtin = "Tokyo%-Night"', 'builtin = "Catppuccin"')
+            :gsub('builtin = "Kanagawa"', 'builtin = "Catppuccin"')
             :gsub('polkit_agent = false', 'polkit_agent = true')
             :gsub('directory = "~/Pictures/Wallpapers"', 'directory = "/home/tester/Pictures/Wallpapers"')
         local clean = toml_diff.diff(tpl, edited)
