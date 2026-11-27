@@ -151,6 +151,10 @@ do
             end
         elseif a:sub(1, 14) == "--pacman-conf=" then
             opts.pacman_conf = a:sub(15)
+            if opts.pacman_conf == "" then
+                io.stderr:write("kaze-mirror: --pacman-conf requires a path\n")
+                os.exit(2)
+            end
         elseif a == "--commit-plan" then
             i = i + 1
             opts.commit_plan = arg[i]
@@ -160,6 +164,10 @@ do
             end
         elseif a:sub(1, 14) == "--commit-plan=" then
             opts.commit_plan = a:sub(15)
+            if opts.commit_plan == "" then
+                io.stderr:write("kaze-mirror: --commit-plan requires a path\n")
+                os.exit(2)
+            end
         elseif a == "--commit-rollback" then
             opts.commit_rollback = true
         elseif a == "--test-root" then
@@ -171,6 +179,10 @@ do
             end
         elseif a:sub(1, 12) == "--test-root=" then
             opts.test_root = a:sub(13)
+            if opts.test_root == "" then
+                io.stderr:write("kaze-mirror: --test-root requires a directory\n")
+                os.exit(2)
+            end
         elseif a == "-h" or a == "--help" then
             usage(io.stdout)
             os.exit(0)

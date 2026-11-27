@@ -94,10 +94,13 @@ if cli_profile and cli_profile ~= "minimal" and cli_profile ~= "full" then
 end
 
 local function resolve_noctalia_template()
-    local candidates = {}
     if cli_template and cli_template ~= "" then
-        candidates[#candidates + 1] = cli_template
+        if fs.file_exists(cli_template) then
+            return cli_template
+        end
+        return nil, "template file not found: " .. cli_template
     end
+    local candidates = {}
     local env_tpl = os.getenv("KAZE_NOCTALIA_TEMPLATE")
     if env_tpl and env_tpl ~= "" then
         candidates[#candidates + 1] = env_tpl
@@ -115,9 +118,9 @@ end
 
 if diff_mode then
     local noc_cfg = fs.config_dir() .. "/noctalia/config.toml"
-    local tpl_path = resolve_noctalia_template()
+    local tpl_path, tpl_err = resolve_noctalia_template()
     if not tpl_path then
-        io.stderr:write("kaze-doctor: could not locate repo config/noctalia/config.toml template (pass --template PATH)\n")
+        io.stderr:write("kaze-doctor: " .. (tpl_err or "could not locate repo config/noctalia/config.toml template (pass --template PATH)") .. "\n")
         os.exit(1)
     end
     if not fs.file_exists(noc_cfg) then
@@ -526,8 +529,13 @@ else
             missing_audio[#missing_audio + 1] = unit
         end
     end
+    local ok_pulse_sock = os.execute("systemctl --user is-active --quiet 'pipewire-pulse.socket' >/dev/null 2>&1")
+    local ok_pulse_svc = os.execute("systemctl --user is-active --quiet 'pipewire-pulse.service' >/dev/null 2>&1")
+    if not ((ok_pulse_sock == true or ok_pulse_sock == 0) or (ok_pulse_svc == true or ok_pulse_svc == 0)) then
+        missing_audio[#missing_audio + 1] = "pipewire-pulse.socket"
+    end
     if #missing_audio == 0 then
-        report_ok("audio: pipewire.service and wireplumber.service active")
+        report_ok("audio: pipewire.service, pipewire-pulse.socket, and wireplumber.service active")
     else
         report_fail("audio: inactive user service(s): " .. table.concat(missing_audio, ", "))
     end

@@ -118,7 +118,8 @@ function M.run_dmenu(entries, opts)
         return nil, "failed to launch noctalia dmenu"
     end
     local out = proc:read("*a") or ""
-    proc:close()
+    local ok, why, code = proc:close()
+    local rc = fs.exit_status(ok, why, code)
     os.remove(tmp_path)
     local timed_out = false
     if flag_path then
@@ -128,7 +129,11 @@ function M.run_dmenu(entries, opts)
     if timed_out then
         return "", nil, true
     end
-    return (out:gsub("[\r\n]+$", "")), nil, false
+    local trimmed = (out:gsub("[\r\n]+$", ""))
+    if rc ~= 0 and not (rc == 1 and trimmed == "") then
+        return nil, string.format("noctalia dmenu failed (exit %d)", rc), false
+    end
+    return trimmed, nil, false
 end
 
 return M

@@ -43,18 +43,23 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
     test("install.sh: --dry-run includes noctalia, omits replaced legacy packages, and writes zero files", function()
         local tmp = make_tmp_dir()
         local ok_test, err_test = pcall(function()
-            local home, cfg, data = tmp .. "/home", tmp .. "/cfg", tmp .. "/data"
-            local env = string.format("HOME=%s XDG_CONFIG_HOME=%s XDG_DATA_HOME=%s", q(home), q(cfg), q(data))
+            local home, cfg, data, state = tmp .. "/home", tmp .. "/cfg", tmp .. "/data", tmp .. "/state"
+            local env = string.format("HOME=%s XDG_CONFIG_HOME=%s XDG_DATA_HOME=%s XDG_STATE_HOME=%s", q(home), q(cfg), q(data), q(state))
             local installer = q(repo_dir .. "/scripts/install.sh")
 
             local min_out, min_ok = read_all(env .. " " .. installer .. " --profile minimal --dry-run 2>&1")
             assert_true(min_ok, "minimal --dry-run exit 0")
             assert_contains(min_out, "  noctalia\n", "minimal includes noctalia")
             assert_contains(min_out, "  hyprland\n", "minimal includes hyprland")
+            assert_contains(min_out, "  pipewire\n", "minimal includes pipewire")
+            assert_contains(min_out, "  pipewire-pulse\n", "minimal includes pipewire-pulse")
+            assert_contains(min_out, "  pipewire-alsa\n", "minimal includes pipewire-alsa")
+            assert_contains(min_out, "  wireplumber\n", "minimal includes wireplumber")
             assert_contains(min_out, "  foot\n", "minimal includes foot")
             assert_contains(min_out, "  zsh\n", "minimal includes zsh")
             assert_contains(min_out, "  zsh-autosuggestions\n", "minimal includes zsh-autosuggestions")
             assert_contains(min_out, "  zsh-syntax-highlighting\n", "minimal includes zsh-syntax-highlighting")
+            assert_contains(min_out, "sudo pacman -Syu --needed", "uses pacman -Syu")
             assert_contains(min_out, "0 AUR", "zero AUR")
 
             local function has_word(text, word)
@@ -78,11 +83,27 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
                 assert_true(not has_word(full_out, removed), "removed package leaked into full: " .. removed)
             end
 
-            for _, untouched in ipairs({ home, cfg, data }) do
+            local dm_out, dm_ok = read_all(env .. " " .. installer .. " --dm ly --aur yay-bin --dry-run 2>&1")
+            assert_true(dm_ok, "--dm ly --aur yay-bin --dry-run exit 0")
+            assert_contains(dm_out, "Display manager: ly\n")
+            assert_contains(dm_out, "AUR helper: yay-bin\n")
+            assert_contains(dm_out, "ly base-devel git")
+
+            local gr_out, gr_ok = read_all(env .. " " .. installer .. " --dm greetd --aur paru-bin --dry-run 2>&1")
+            assert_true(gr_ok, "--dm greetd --aur paru-bin --dry-run exit 0")
+            assert_contains(gr_out, "Display manager: greetd\n")
+            assert_contains(gr_out, "AUR helper: paru-bin\n")
+            assert_contains(gr_out, "greetd greetd-tuigreet base-devel git")
+
+            for _, untouched in ipairs({ home, cfg, data, state }) do
                 assert_true(os.execute("[ ! -e " .. q(untouched) .. " ] && [ ! -L " .. q(untouched) .. " ]"))
             end
             local _, bad_ok = read_all(env .. " " .. installer .. " --profile bogus --dry-run 2>&1")
             assert_true(not bad_ok)
+            local _, bad_dm_ok = read_all(env .. " " .. installer .. " --dm bogus --dry-run 2>&1")
+            assert_true(not bad_dm_ok)
+            local _, bad_aur_ok = read_all(env .. " " .. installer .. " --aur bogus --dry-run 2>&1")
+            assert_true(not bad_aur_ok)
 
             -- Invoking via POSIX `sh scripts/install.sh` re-execs cleanly under bash and resolves style alias
             local sh_out, sh_ok = read_all(env .. " sh " .. installer .. " --profile minimal --style floating-islands --dry-run 2>&1")
@@ -115,8 +136,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             fs.write_atomic(cfg .. "/noctalia/config.toml", "# pre-existing user noctalia\n")
 
             local env = string.format(
-                "HOME=%s XDG_CONFIG_HOME=%s XDG_DATA_HOME=%s XDG_CACHE_HOME=%s XDG_RUNTIME_DIR=%s HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY=''",
-                q(home), q(cfg), q(data), q(cache), q(runtime)
+                "HOME=%s XDG_CONFIG_HOME=%s XDG_DATA_HOME=%s XDG_CACHE_HOME=%s XDG_STATE_HOME=%s XDG_RUNTIME_DIR=%s HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY=''",
+                q(home), q(cfg), q(data), q(cache), q(tmp .. "/state"), q(runtime)
             )
             local installer = q(repo_dir .. "/scripts/install.sh")
 
@@ -262,8 +283,8 @@ exit 0
             assert_contains(min_out, "[OK]   binaries (minimal):")
 
             local sys_env = string.format(
-                "HOME=%s XDG_CONFIG_HOME=%s XDG_DATA_HOME=%s XDG_CACHE_HOME=%s XDG_RUNTIME_DIR=%s HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY=''",
-                q(home), q(cfg), q(data), q(cache), q(runtime)
+                "HOME=%s XDG_CONFIG_HOME=%s XDG_DATA_HOME=%s XDG_CACHE_HOME=%s XDG_STATE_HOME=%s XDG_RUNTIME_DIR=%s HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY=''",
+                q(home), q(cfg), q(data), q(cache), q(tmp .. "/state"), q(runtime)
             )
             assert_true(os.execute(sys_env .. " " .. q(repo_dir .. "/scripts/install.sh") .. " --profile minimal --skip-packages --yes >/dev/null 2>&1"))
 
@@ -274,6 +295,10 @@ case "$*" in
   '--user show-environment')
     printf 'WAYLAND_DISPLAY=wayland-1\nHYPRLAND_INSTANCE_SIGNATURE=sig-live\nXDG_CURRENT_DESKTOP=Hyprland\n' ;;
   '--user is-active --quiet pipewire.service'|'--user is-active --quiet wireplumber.service') exit 0 ;;
+  '--user is-active --quiet pipewire-pulse.socket')
+    [ "${TEST_PULSE_MODE:-socket}" = "socket" ] && exit 0 || exit 1 ;;
+  '--user is-active --quiet pipewire-pulse.service')
+    [ "${TEST_PULSE_MODE:-socket}" = "service" ] && exit 0 || exit 1 ;;
   *) exit 2 ;;
 esac
 ]])
@@ -320,6 +345,13 @@ if [ "${DUP_NOC:-0}" = 1 ]; then printf '  199 noctalia /usr/bin/noctalia\n'; fi
             local dup_out, dup_ok = read_all(live_env .. " DUP_NOC=1 " .. doctor .. " 2>&1")
             assert_true(not dup_ok, "duplicate noctalia PID must fail doctor")
             assert_contains(dup_out, "noctalia (expected 1, got 2)")
+
+            -- pipewire-pulse.service active (even if socket inactive) passes; both inactive fails
+            local psvc_out, psvc_ok = read_all(live_env .. " TEST_PULSE_MODE=service " .. doctor .. " 2>&1")
+            assert_true(psvc_ok, "pipewire-pulse.service active should pass doctor:\n" .. psvc_out)
+            local pnone_out, pnone_ok = read_all(live_env .. " TEST_PULSE_MODE=none " .. doctor .. " 2>&1")
+            assert_true(not pnone_ok, "inactive pipewire-pulse socket and service must fail doctor")
+            assert_contains(pnone_out, "pipewire-pulse.socket")
         end)
         rm_rf(tmp)
         if not ok_test then error(err_test, 0) end
@@ -1298,16 +1330,18 @@ fi
             return table.concat(list, "\n"), #list
         end
 
-        for _, prof in ipairs({ "minimal", "full" }) do
-            local p_out, p_ok = read_all(pkg_script .. " --profile " .. prof .. " --dry-run 2>&1")
-            local i_out, i_ok = read_all(inst_script .. " --profile " .. prof .. " --dry-run 2>&1")
-            assert_true(p_ok, "install-packages.sh --dry-run failed for " .. prof .. ": " .. p_out)
-            assert_true(i_ok, "install.sh --dry-run failed for " .. prof .. ": " .. i_out)
+        for _, prof in ipairs({ { name = "minimal", count = 27 }, { name = "full", count = 51 } }) do
+            local p_out, p_ok = read_all(pkg_script .. " --profile " .. prof.name .. " --dry-run 2>&1")
+            local i_out, i_ok = read_all(inst_script .. " --profile " .. prof.name .. " --dry-run 2>&1")
+            assert_true(p_ok, "install-packages.sh --dry-run failed for " .. prof.name .. ": " .. p_out)
+            assert_true(i_ok, "install.sh --dry-run failed for " .. prof.name .. ": " .. i_out)
             local p_list, p_n = extract_pkgs(p_out)
             local i_list, i_n = extract_pkgs(i_out)
-            assert_eq(p_n, i_n, "package count mismatch for " .. prof)
-            assert_eq(p_list, i_list, "package list mismatch for " .. prof)
+            assert_eq(p_n, prof.count, "expected exact package count for " .. prof.name)
+            assert_eq(p_n, i_n, "package count mismatch for " .. prof.name)
+            assert_eq(p_list, i_list, "package list mismatch for " .. prof.name)
             assert_contains(p_out, "0 AUR", "install-packages.sh reports 0 AUR")
+            assert_contains(p_out, "sudo pacman -Syu", "install-packages.sh uses pacman -Syu")
         end
 
         local _, bad_ok = read_all(pkg_script .. " --profile bogus --dry-run 2>&1")
@@ -1779,6 +1813,332 @@ elif [ "$1" = "-j" ] && [ "$2" = "activewindow" ]; then printf '{}\n'; fi
         end)
         rm_rf(tmp)
         if not ok_cli then error(err_cli, 0) end
+    end)
+
+    test("install-lib.sh: GPU detection across 5 sysfs fixtures and safe hybrid user.lua seeding", function()
+        local tmp = make_tmp_dir()
+        local ok_test, err_test = pcall(function()
+            local lib = q(repo_dir .. "/scripts/install-lib.sh")
+            local hypr_user = require("kaze.hypr_user")
+
+            local function run_gpu_probe(drm_dir)
+                local cmd = string.format(
+                    "KAZE_SYS_DRM_DIR=%s bash -c %s 2>&1",
+                    q(drm_dir),
+                    q("source " .. lib .. " && kaze_detect_gpu && printf 'MODE=%s\\nLABEL=%s\\nIGPU=%s\\nNVIDIA=%s\\n' \"$GPU_MODE\" \"$GPU_LABEL\" \"$GPU_IGPU_CARD\" \"$GPU_NVIDIA_CARD\"")
+                )
+                local out, ok = read_all(cmd)
+                assert_true(ok, "kaze_detect_gpu failed: " .. out)
+                return out
+            end
+
+            -- 1. Hybrid Laptop: Intel iGPU (card1 + eDP-1) + NVIDIA dGPU (card0)
+            local drm_hybrid = tmp .. "/drm-hybrid"
+            fs.mkdir_p(drm_hybrid .. "/card0/device")
+            fs.mkdir_p(drm_hybrid .. "/card1/device")
+            fs.mkdir_p(drm_hybrid .. "/card1-eDP-1")
+            fs.write_atomic(drm_hybrid .. "/card0/device/vendor", "0x10de\n")
+            fs.write_atomic(drm_hybrid .. "/card1/device/vendor", "0x8086\n")
+            fs.write_atomic(drm_hybrid .. "/card1-eDP-1/status", "connected\n")
+            local hyb_out = run_gpu_probe(drm_hybrid)
+            assert_contains(hyb_out, "MODE=hybrid-laptop\n")
+            assert_contains(hyb_out, "LABEL=Hybrid Intel+NVIDIA\n")
+            assert_contains(hyb_out, "IGPU=/dev/dri/card1\n")
+            assert_contains(hyb_out, "NVIDIA=/dev/dri/card0\n")
+
+            -- 2. Multi-GPU Desktop: AMD iGPU (card0 + DP-1, NO eDP) + NVIDIA (card1)
+            local drm_desk = tmp .. "/drm-desk"
+            fs.mkdir_p(drm_desk .. "/card0/device")
+            fs.mkdir_p(drm_desk .. "/card0-DP-1")
+            fs.mkdir_p(drm_desk .. "/card1/device")
+            fs.write_atomic(drm_desk .. "/card0/device/vendor", "0x1002\n")
+            fs.write_atomic(drm_desk .. "/card1/device/vendor", "0x10de\n")
+            local desk_out = run_gpu_probe(drm_desk)
+            assert_contains(desk_out, "MODE=multi-gpu-desktop\n")
+            assert_contains(desk_out, "LABEL=Desktop AMD+NVIDIA\n")
+
+            -- 3. Single NVIDIA
+            local drm_nv = tmp .. "/drm-nv"
+            fs.mkdir_p(drm_nv .. "/card0/device")
+            fs.write_atomic(drm_nv .. "/card0/device/vendor", "0x10de\n")
+            local nv_out = run_gpu_probe(drm_nv)
+            assert_contains(nv_out, "MODE=single-nvidia\n")
+            assert_contains(nv_out, "LABEL=NVIDIA\n")
+
+            -- 4. Single Intel
+            local drm_intel = tmp .. "/drm-intel"
+            fs.mkdir_p(drm_intel .. "/card0/device")
+            fs.mkdir_p(drm_intel .. "/card0-eDP-1")
+            fs.write_atomic(drm_intel .. "/card0/device/vendor", "0x8086\n")
+            local int_out = run_gpu_probe(drm_intel)
+            assert_contains(int_out, "MODE=single-igpu\n")
+            assert_contains(int_out, "LABEL=Intel\n")
+
+            -- 5. VirtIO VM
+            local drm_vm = tmp .. "/drm-vm"
+            fs.mkdir_p(drm_vm .. "/card0/device")
+            fs.write_atomic(drm_vm .. "/card0/device/vendor", "0x1af4\n")
+            local vm_out = run_gpu_probe(drm_vm)
+            assert_contains(vm_out, "MODE=vm\n")
+            assert_contains(vm_out, "LABEL=VM (VirtIO)\n")
+
+            -- End-to-end hybrid GPU seeding via install.sh --skip-packages --yes
+            local home, cfg, data, cache, state, runtime = tmp .. "/h1", tmp .. "/c1", tmp .. "/d1", tmp .. "/ca1", tmp .. "/st1", tmp .. "/rt1"
+            fs.mkdir_p(home)
+            fs.mkdir_p(runtime)
+            local base_env = string.format(
+                "HOME=%s XDG_CONFIG_HOME=%s XDG_DATA_HOME=%s XDG_CACHE_HOME=%s XDG_STATE_HOME=%s XDG_RUNTIME_DIR=%s HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY=''",
+                q(home), q(cfg), q(data), q(cache), q(state), q(runtime)
+            )
+            local installer = q(repo_dir .. "/scripts/install.sh")
+
+            -- Desktop AMD+NVIDIA must NOT seed drm_devices
+            local desk_ins, desk_ok = read_all(base_env .. " KAZE_SYS_DRM_DIR=" .. q(drm_desk) .. " " .. installer .. " --profile minimal --skip-packages --yes 2>&1")
+            assert_true(desk_ok, "desktop install failed: " .. desk_ins)
+            local desk_ulua = assert(fs.read_file(cfg .. "/hypr/user.lua"))
+            assert_true(not desk_ulua:match("\n%s*drm_devices%s*="), "desktop AMD+NVIDIA must not uncomment drm_devices")
+            local rb_desk = assert(fs.read_file(cfg .. "/kaze/last-backup")):gsub("\n$", "")
+            assert_true(os.execute(base_env .. " " .. q(rb_desk .. "/rollback.sh") .. " --yes >/dev/null 2>&1"))
+            os.remove(cfg .. "/hypr/user.lua")
+
+            -- Hybrid Laptop + --no-hybrid-gpu must NOT seed drm_devices
+            local noh_out, noh_ok = read_all(base_env .. " KAZE_SYS_DRM_DIR=" .. q(drm_hybrid) .. " " .. installer .. " --profile minimal --skip-packages --no-hybrid-gpu --yes 2>&1")
+            assert_true(noh_ok, "--no-hybrid-gpu failed: " .. noh_out)
+            local noh_ulua = assert(fs.read_file(cfg .. "/hypr/user.lua"))
+            assert_true(not noh_ulua:match("\n%s*drm_devices%s*="), "--no-hybrid-gpu must keep drm_devices commented")
+            local rb_noh = assert(fs.read_file(cfg .. "/kaze/last-backup")):gsub("\n$", "")
+            assert_true(os.execute(base_env .. " " .. q(rb_noh .. "/rollback.sh") .. " --yes >/dev/null 2>&1"))
+            os.remove(cfg .. "/hypr/user.lua")
+
+            -- Hybrid Laptop with absent user.lua seeds drm_devices + prefer_mesa_egl cleanly and survives rollback
+            local hyb_ins, hyb_ins_ok = read_all(base_env .. " KAZE_SYS_DRM_DIR=" .. q(drm_hybrid) .. " " .. installer .. " --profile minimal --skip-packages --yes 2>&1")
+            assert_true(hyb_ins_ok, "hybrid install failed: " .. hyb_ins)
+            local seeded_ulua = assert(fs.read_file(cfg .. "/hypr/user.lua"))
+            assert_contains(seeded_ulua, 'drm_devices = "/dev/dri/card1",')
+            assert_contains(seeded_ulua, "prefer_mesa_egl = true,")
+            assert_true(os.execute("luac -p -- " .. q(cfg .. "/hypr/user.lua") .. " >/dev/null 2>&1"), "seeded user.lua must pass luac -p")
+            local loaded_cfg = hypr_user.load({ home = home, user_path = cfg .. "/hypr/user.lua", style_path = cfg .. "/hypr/kaze-style.lua", profile_path = cfg .. "/kaze/profile" })
+            assert_eq(loaded_cfg.drm_devices, "/dev/dri/card1")
+            assert_eq(loaded_cfg.prefer_mesa_egl, true)
+
+            -- Rollback preserves seeded user.lua
+            local rb_hyb = assert(fs.read_file(cfg .. "/kaze/last-backup")):gsub("\n$", "")
+            assert_true(os.execute(base_env .. " " .. q(rb_hyb .. "/rollback.sh") .. " --yes >/dev/null 2>&1"))
+            assert_eq(fs.read_file(cfg .. "/hypr/user.lua"), seeded_ulua)
+
+            -- Pre-existing user.lua must NEVER be overwritten on hybrid laptop
+            fs.write_atomic(cfg .. "/hypr/user.lua", "return { browser = 'vivaldi' } -- keep-me\n")
+            local keep_out, keep_ok = read_all(base_env .. " KAZE_SYS_DRM_DIR=" .. q(drm_hybrid) .. " " .. installer .. " --profile minimal --skip-packages --yes 2>&1")
+            assert_true(keep_ok, "pre-existing user.lua install failed: " .. keep_out)
+            assert_eq(fs.read_file(cfg .. "/hypr/user.lua"), "return { browser = 'vivaldi' } -- keep-me\n")
+        end)
+        rm_rf(tmp)
+        if not ok_test then error(err_test, 0) end
+    end)
+
+    test("install.sh: conflict detection, system setup, DM (ly/greetd), opt-in AUR, ANSI-clean logging & kaze-doctor", function()
+        local tmp = make_tmp_dir()
+        local ok_test, err_test = pcall(function()
+            local stub_bin = tmp .. "/bin"
+            local home, cfg, data, cache, state, runtime = tmp .. "/home", tmp .. "/cfg", tmp .. "/data", tmp .. "/cache", tmp .. "/state", tmp .. "/rt"
+            local etc_greetd = tmp .. "/etc/greetd"
+            for _, d in ipairs({ stub_bin, home, cfg, data, cache, state, runtime, etc_greetd }) do
+                fs.mkdir_p(d)
+            end
+            fs.write_atomic(tmp .. "/arch-release", "Arch Linux\n")
+            fs.write_atomic(etc_greetd .. "/config.toml", "# previous greetd\n")
+
+            -- Create a real UNIX socket at $XDG_RUNTIME_DIR/bus so [ -S "$runtime/bus" ] succeeds
+            local sock_ok = os.execute("python3 -c " .. q("import socket; s=socket.socket(socket.AF_UNIX); s.bind('" .. runtime .. "/bus')") .. " >/dev/null 2>&1")
+            assert_true(sock_ok, "create mock dbus unix socket")
+
+            for _, b in ipairs({ "bash", "sh", "env", "lua", "luac", "realpath", "readlink", "find", "ln", "ls", "wc", "mktemp", "mkfifo", "tee", "sed", "grep", "cat", "cp", "mv", "rm", "mkdir", "install", "date", "sleep", "kill", "tr", "head", "paste", "cut", "basename", "dirname", "chmod", "touch" }) do
+                link_host_bin(stub_bin, b)
+            end
+
+            write_stub(stub_bin, "sudo", [[
+if [ "${1:-}" = "-v" ] || { [ "${1:-}" = "-n" ] && [ "${2:-}" = "-v" ]; } || { [ "${1:-}" = "-n" ] && [ "${2:-}" = "true" ]; }; then
+    exit 0
+fi
+printf '%s\n' "$*" >> "$HOME/sudo-calls"
+exec "$@"
+]])
+            write_stub(stub_bin, "pacman", [[
+if [ "${1:-}" = "-Qq" ]; then
+    printf '%s\n' "${TEST_PACMAN_QQ:-}"
+    exit 0
+fi
+printf 'pacman %s\n' "$*" >> "$HOME/pacman-calls"
+exit 0
+]])
+            write_stub(stub_bin, "systemctl", [[
+printf 'systemctl %s\n' "$*" >> "$HOME/systemctl-calls"
+case "$*" in
+  'is-enabled --quiet systemd-networkd.service'|'is-active --quiet systemd-networkd.service')
+    [ "${TEST_OTHER_NET:-}" = "systemd-networkd" ] && exit 0 || exit 1 ;;
+  'is-enabled --quiet iwd.service'|'is-active --quiet iwd.service')
+    [ "${TEST_OTHER_NET:-}" = "iwd" ] && exit 0 || exit 1 ;;
+  'is-enabled --quiet sddm.service'|'is-active --quiet sddm.service')
+    [ "${TEST_EXISTING_DM:-}" = "sddm" ] && exit 0 || exit 1 ;;
+  'is-enabled --quiet getty@tty1.service')
+    exit 0 ;;
+  'is-enabled --quiet '*)
+    exit 1 ;;
+  'is-active --quiet '*)
+    exit 1 ;;
+  'list-unit-files '*)
+    exit 0 ;;
+  'list-units '*)
+    exit 0 ;;
+  'cat NetworkManager.service'|'cat bluetooth.service'|'cat ly@.service'|'cat greetd.service')
+    exit 0 ;;
+  'cat '*)
+    exit 1 ;;
+  *)
+    exit 0 ;;
+esac
+]])
+            write_stub(stub_bin, "getent", [[
+if [ "${1:-}" = "group" ] && [ "${2:-}" = "video" ]; then
+    printf 'video:x:985:\n'
+    exit 0
+fi
+if [ "${1:-}" = "passwd" ]; then
+    printf '%s:x:1000:1000::%s:/bin/bash\n' "$2" "$HOME"
+    exit 0
+fi
+exit 2
+]])
+            write_stub(stub_bin, "id", [[
+case "${1:-}" in
+  -u)  printf '1000\n' ;;
+  -un) printf 'tester\n' ;;
+  -nG) printf 'tester wheel\n' ;;
+  *)   /usr/bin/id "$@" ;;
+esac
+]])
+            write_stub(stub_bin, "usermod", [[printf 'usermod %s\n' "$*" >> "$HOME/usermod-calls"]])
+            write_stub(stub_bin, "fc-cache", [[printf 'fc-cache %s\n' "$*" >> "$HOME/fccache-calls"]])
+            write_stub(stub_bin, "chsh", [[printf 'chsh %s\n' "$*" >> "$HOME/chsh-calls"]])
+            write_stub(stub_bin, "zsh", [[exit 0]])
+            write_stub(stub_bin, "git", [[
+if [ "${1:-}" = "clone" ]; then
+    dest="${@: -1}"
+    mkdir -p "$dest"
+    printf 'clone %s\n' "$*" >> "$HOME/git-calls"
+    exit 0
+fi
+exit 0
+]])
+            write_stub(stub_bin, "makepkg", [[printf 'makepkg %s\n' "$*" >> "$HOME/makepkg-calls"]])
+
+            for _, b in ipairs({ "hyprland", "hyprctl", "noctalia", "notify-send", "foot", "footclient", "wl-copy", "wl-paste", "wpctl", "brightnessctl", "playerctl", "busctl", "flock" }) do
+                write_stub(stub_bin, b, "exit 0")
+            end
+
+            local installer = q(repo_dir .. "/scripts/install.sh")
+            local env = string.format(
+                "HOME=%s USER=tester XDG_CONFIG_HOME=%s XDG_DATA_HOME=%s XDG_CACHE_HOME=%s XDG_STATE_HOME=%s XDG_RUNTIME_DIR=%s LANG=en_US.UTF-8 LC_ALL='' HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY='' KAZE_ARCH_RELEASE_FILE=%s KAZE_GREETD_CONFIG=%s KAZE_SYSTEMD_ETC_DIR=%s PATH=%s",
+                q(home), q(cfg), q(data), q(cache), q(state), q(runtime), q(tmp .. "/arch-release"), q(etc_greetd .. "/config.toml"), q(tmp .. "/etc/systemd/system"), q(stub_bin)
+            )
+
+            -- 1. Hard conflict in --yes mode without --replace-conflicts MUST abort before pacman -Syu
+            local conf_fail_out, conf_fail_ok = read_all(env .. " TEST_PACMAN_QQ='pulseaudio\nxdg-desktop-portal-wlr\ndunst' " .. installer .. " --profile minimal --yes 2>&1")
+            assert_true(not conf_fail_ok, "hard conflict without --replace-conflicts must fail in --yes mode")
+            assert_contains(conf_fail_out, "--replace-conflicts")
+            assert_true(not fs.file_exists(home .. "/pacman-calls"), "aborted conflict check must not run pacman -Syu")
+
+            -- 2. --yes --replace-conflicts + --dm ly + --aur yay-bin runs full pipeline, removes ONLY hard conflict, logs cleanly
+            local ok_out, ok_st = read_all(env .. " TEST_PACMAN_QQ='pulseaudio\nxdg-desktop-portal-wlr\ndunst' " .. installer .. " --profile minimal --dm ly --aur yay-bin --replace-conflicts --yes 2>&1")
+            assert_true(ok_st, "full stubbed install failed:\n" .. ok_out)
+
+            local pac_log = assert(fs.read_file(home .. "/pacman-calls"))
+            local p_rdd = assert(pac_log:find("pacman -Rdd --noconfirm pulseaudio\n", 1, true), "must remove hard conflict pulseaudio")
+            local p_syu = assert(pac_log:find("pacman -Syu --needed --noconfirm", 1, true), "must run pacman -Syu")
+            assert_true(p_rdd < p_syu, "pacman -Rdd must run before pacman -Syu")
+            assert_true(not pac_log:find("xdg-desktop-portal-wlr", 1, true), "must never remove soft conflict portal-wlr")
+            assert_true(not pac_log:find("dunst", 1, true), "must never remove soft conflict dunst")
+            assert_contains(pac_log, "ly base-devel git")
+
+            local sys_log = assert(fs.read_file(home .. "/systemctl-calls"))
+            assert_contains(sys_log, "systemctl enable NetworkManager.service\n")
+            assert_contains(sys_log, "systemctl enable bluetooth.service\n")
+            assert_contains(sys_log, "systemctl --user enable pipewire.socket pipewire-pulse.socket wireplumber.service\n")
+            assert_contains(sys_log, "systemctl disable getty@tty1.service\n")
+            assert_contains(sys_log, "systemctl enable ly@tty1.service\n")
+
+            assert_contains(assert(fs.read_file(home .. "/usermod-calls")), "usermod -aG video tester\n")
+            assert_contains(assert(fs.read_file(home .. "/fccache-calls")), "fc-cache -f\n")
+            assert_contains(assert(fs.read_file(home .. "/chsh-calls")), "chsh -s " .. stub_bin .. "/zsh tester\n")
+            assert_contains(assert(fs.read_file(home .. "/git-calls")), "https://aur.archlinux.org/yay-bin.git")
+            assert_contains(assert(fs.read_file(home .. "/makepkg-calls")), "makepkg -si --needed --noconfirm\n")
+
+            -- Log file exists, is ANSI-free, and includes kaze-doctor --offline output
+            local log_path = assert(fs.capture("ls -1 " .. q(state .. "/kaze") .. "/install-*.log 2>/dev/null | head -n1")):gsub("\n$", "")
+            assert_true(log_path ~= "", "install log file must be created")
+            local log_txt = assert(fs.read_file(log_path))
+            assert_true(not log_txt:find("\27%["), "install log must have zero ANSI CSI escapes")
+            assert_contains(log_txt, "Doctor summary:")
+            assert_contains(log_txt, "sudo pacman -Rns xdg-desktop-portal-wlr dunst")
+
+            -- 3. Existing network stack (systemd-networkd) skips NetworkManager.service; existing DM (sddm) refuses overwrite
+            fs.write_atomic(home .. "/systemctl-calls", "")
+            local keep_out, keep_ok = read_all(env .. " TEST_OTHER_NET=systemd-networkd TEST_EXISTING_DM=sddm " .. installer .. " --profile minimal --dm greetd --skip-packages --system-setup --no-log --yes 2>&1")
+            assert_true(keep_ok, "skip-NM & refuse-DM install failed:\n" .. keep_out)
+            local sys_keep = assert(fs.read_file(home .. "/systemctl-calls"))
+            assert_true(not sys_keep:find("enable NetworkManager.service", 1, true), "must skip NetworkManager when systemd-networkd is active")
+            assert_true(not sys_keep:find("enable greetd.service", 1, true), "must refuse to overwrite active sddm.service")
+            assert_contains(keep_out, "Existing Display Manager detected (sddm.service)")
+
+            -- 4. --dm greetd with no existing DM backs up /etc/greetd/config.toml and writes new config
+            fs.write_atomic(home .. "/systemctl-calls", "")
+            local gr_out, gr_ok = read_all(env .. " " .. installer .. " --profile minimal --dm greetd --skip-packages --no-log --yes 2>&1")
+            assert_true(gr_ok, "--dm greetd install failed:\n" .. gr_out)
+            local gr_cfg = assert(fs.read_file(etc_greetd .. "/config.toml"))
+            assert_contains(gr_cfg, "tuigreet --time --remember --remember-session --asterisks --sessions /usr/share/wayland-sessions --cmd start-hyprland")
+            assert_contains(gr_cfg, 'user = "greeter"')
+            assert_contains(assert(fs.read_file(home .. "/systemctl-calls")), "systemctl enable greetd.service\n")
+            local bak_cnt = assert(fs.capture("ls -1 " .. q(etc_greetd) .. "/config.toml.kaze-bak-* 2>/dev/null | wc -l")):gsub("%s+", "")
+            assert_eq(bak_cnt, "1", "greetd backup file must be created")
+        end)
+        rm_rf(tmp)
+        if not ok_test then error(err_test, 0) end
+    end)
+
+    test("bootstrap.sh: --dry-run flag forwarding and target directory safety validation", function()
+        local tmp = make_tmp_dir()
+        local ok_test, err_test = pcall(function()
+            local boot = q(repo_dir .. "/scripts/bootstrap.sh")
+            local non_git = tmp .. "/existing-non-git"
+            fs.mkdir_p(non_git)
+            fs.write_atomic(non_git .. "/keep.txt", "important\n")
+
+            -- Refuses non-git directory
+            local ng_out, ng_ok = read_all(boot .. " --dry-run --dir " .. q(non_git) .. " 2>&1")
+            assert_true(not ng_ok, "bootstrap.sh must refuse existing non-git directory")
+            assert_contains(ng_out, "not a kaze-dots git repository")
+
+            -- Refuses dirty kaze-dots git checkout
+            local dirty_dir = tmp .. "/dirty-repo"
+            assert_true(os.execute("git init -q " .. q(dirty_dir) .. " && git -C " .. q(dirty_dir) .. " remote add origin https://github.com/minkhoaa/kaze-dots.git"))
+            fs.write_atomic(dirty_dir .. "/untracked.txt", "dirty\n")
+            local dirty_out, dirty_ok = read_all(boot .. " --dry-run --dir " .. q(dirty_dir) .. " 2>&1")
+            assert_true(not dirty_ok, "bootstrap.sh must refuse dirty git checkout")
+            assert_contains(dirty_out, "uncommitted local changes")
+
+            -- Clean --dry-run forwards flags to install.sh
+            local target = tmp .. "/fresh-kaze"
+            local dry_out, dry_ok = read_all(boot .. " --dir " .. q(target) .. " --branch dev --repo https://example.com/kaze-dots.git --dry-run --profile full --dm ly 2>&1")
+            assert_true(dry_ok, "bootstrap.sh --dry-run failed: " .. dry_out)
+            assert_contains(dry_out, "Repo:       https://example.com/kaze-dots.git\n")
+            assert_contains(dry_out, "Branch:     dev\n")
+            assert_contains(dry_out, "Target dir: " .. target .. "\n")
+            assert_contains(dry_out, "git clone --branch dev https://example.com/kaze-dots.git " .. target)
+            assert_contains(dry_out, target .. "/scripts/install.sh --dry-run --profile full --dm ly")
+            assert_true(not fs.file_exists(target), "bootstrap.sh --dry-run must not create target dir")
+        end)
+        rm_rf(tmp)
+        if not ok_test then error(err_test, 0) end
     end)
 end
 

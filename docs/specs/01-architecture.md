@@ -91,7 +91,7 @@ lua/kaze/
 | `$XDG_DATA_HOME/applications/yazi.desktop` | Symlink → `<repo>/config/applications/yazi.desktop` |
 | `$XDG_CONFIG_HOME/hypr/{hyprland,env,core,rules,execs,keybinds}.lua` | Symlink → `<repo>/hypr/*.lua` |
 | `$XDG_CONFIG_HOME/hypr/xdph.conf` | Symlink → `<repo>/config/hypr/xdph.conf` |
-| `$XDG_CONFIG_HOME/hypr/user.lua` | Seeded once from `templates/hypr-user.lua.example`; never overwritten or deleted on rollback |
+| `$XDG_CONFIG_HOME/hypr/user.lua` | Seeded once from `templates/hypr-user.lua.example` (auto-seeding `drm_devices` + `prefer_mesa_egl` on hybrid laptops when absent); never overwritten or deleted on rollback |
 | `$XDG_CONFIG_HOME/noctalia/config.toml` | Seeded editable file from `config/noctalia/config.toml`; preserved across re-applies |
 | `$XDG_CONFIG_HOME/foot/foot.ini` | Symlink → `<repo>/config/foot/foot.ini` |
 | `$XDG_CONFIG_HOME/foot/themes/noctalia` | Empty placeholder created on first apply; populated live by Noctalia's `foot` template |

@@ -66,7 +66,7 @@ fi
 if [ "$DRY_RUN" = true ]; then
     echo "kaze-dots official Arch packages (${PROFILE}: ${#PACKAGES[@]} total, 0 AUR):"
     printf '  %s\n' "${PACKAGES[@]}"
-    echo "Command: sudo pacman -S ${PACMAN_FLAGS[*]} ${PACKAGES[*]}"
+    echo "Command: sudo pacman -Syu ${PACMAN_FLAGS[*]} ${PACKAGES[*]}"
     exit 0
 fi
 
@@ -75,4 +75,4 @@ if [ ! -f /etc/arch-release ] || ! command -v pacman >/dev/null 2>&1; then
     exit 1
 fi
 
-exec sudo pacman -S "${PACMAN_FLAGS[@]}" "${PACKAGES[@]}"
+exec sudo pacman -Syu "${PACMAN_FLAGS[@]}" "${PACKAGES[@]}"

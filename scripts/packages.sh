@@ -6,16 +6,23 @@
 PKG_MIN_DESKTOP=(hyprland noctalia)
 PKG_MIN_PORTALS=(xdg-desktop-portal xdg-desktop-portal-hyprland xdg-desktop-portal-gtk dconf libnotify)
 PKG_MIN_TERM=(foot zsh zsh-autosuggestions zsh-syntax-highlighting zsh-completions)
-PKG_MIN_SYS=(wl-clipboard xdg-utils wireplumber brightnessctl playerctl networkmanager bluez bluez-utils btop)
+PKG_MIN_AUDIO=(pipewire pipewire-pulse pipewire-alsa wireplumber)
+PKG_MIN_SYS=(wl-clipboard xdg-utils brightnessctl playerctl networkmanager bluez bluez-utils btop)
 PKG_MIN_FONTS=(ttf-jetbrains-mono-nerd adwaita-cursors lua)
 
 MINIMAL_PACKAGES=(
     "${PKG_MIN_DESKTOP[@]}"
     "${PKG_MIN_PORTALS[@]}"
     "${PKG_MIN_TERM[@]}"
+    "${PKG_MIN_AUDIO[@]}"
     "${PKG_MIN_SYS[@]}"
     "${PKG_MIN_FONTS[@]}"
 )
+
+# Optional official Arch [extra] groups (enabled only via --dm / --aur).
+PKG_DM_LY=(ly)
+PKG_DM_GREETD=(greetd greetd-tuigreet)
+PKG_AUR_PREREQS=(base-devel git)
 
 PKG_FULL_CAPTURE=(slurp wf-recorder ffmpeg hyprpicker wl-mirror)
 PKG_FULL_APPS=(thunar adw-gtk-theme yazi imv zathura zathura-pdf-poppler)

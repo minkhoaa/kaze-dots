@@ -24,7 +24,7 @@ if [[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/zprofile.local" ]]; then
 fi
 
 # Auto-start Hyprland on TTY1 via start-hyprland watchdog when no display manager is used
-if [[ -z "${WAYLAND_DISPLAY:-}" && "${XDG_VTNR:-}" == "1" ]] && (( $+commands[start-hyprland] )); then
+if [[ -z "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" && "${XDG_VTNR:-}" == "1" ]] && (( $+commands[start-hyprland] )); then
     export XDG_CURRENT_DESKTOP=Hyprland
     exec start-hyprland -- -c "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua"
 fi

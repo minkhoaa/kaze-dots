@@ -948,9 +948,17 @@ do
         elseif a:sub(1, 10) == "--hotplug=" then
             cmd = "--hotplug"
             sub_arg = a:sub(11)
+            if sub_arg == "" then
+                io.stderr:write("kaze-display: --hotplug requires a monitor name\n")
+                os.exit(2)
+            end
         elseif a:sub(1, 16) == "--on-disconnect=" then
             cmd = "--on-disconnect"
             sub_arg = a:sub(17)
+            if sub_arg == "" then
+                io.stderr:write("kaze-display: --on-disconnect requires a monitor name\n")
+                os.exit(2)
+            end
         elseif not cmd then
             cmd = a
         elseif not sub_arg and (cmd == "present" or cmd == "virtual-share" or cmd == "switch-share") then
@@ -964,6 +972,22 @@ do
     end
     if not confirm_external and not revert_external then
         cmd = cmd or "--menu"
+        local VALID_CMDS = {
+            ["--menu"] = true, ["--hotplug"] = true, ["--on-disconnect"] = true, ["--list"] = true,
+            ["extend-right"] = true, ["extend-left"] = true, ["extend-up"] = true,
+            mirror = true, ["mirror-scaled"] = true, ["stop-mirror"] = true,
+            external = true, internal = true, auto = true,
+            present = true, ["switch-present"] = true, ["present-current"] = true,
+            ["toggle-control"] = true, ["toggle-virtual-control"] = true, ["stop-present"] = true,
+            ["virtual-share"] = true, ["virtual-share-current"] = true, ["virtual-share-pick"] = true,
+            ["switch-share"] = true, ["toggle-preview"] = true, ["toggle-window-share"] = true,
+            ["stop-virtual"] = true, cleanup = true,
+        }
+        if not VALID_CMDS[cmd] then
+            io.stderr:write(string.format("kaze-display: unknown command '%s'\n", tostring(cmd)))
+            usage(io.stderr)
+            os.exit(2)
+        end
     end
 end
 

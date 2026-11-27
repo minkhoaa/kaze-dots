@@ -34,6 +34,14 @@ SKIP_PACKAGES_EXPLICIT=false
 AUTO_YES=false
 REBOOT="auto"
 SET_ZSH="auto"
+SET_ZSH_EXPLICIT=false
+SYSTEM_SETUP="auto"
+SYSTEM_SETUP_EXPLICIT=false
+DM_CHOICE="none"
+AUR_HELPER="none"
+AUTO_HYBRID_GPU=true
+REPLACE_CONFLICTS=false
+NO_LOG=false
 PACMAN_NOCONFIRM=false
 USE_TUI="auto"
 
@@ -42,24 +50,32 @@ usage() {
 Usage: $0 [OPTIONS]
 
 Installs official Arch Linux [core]/[extra] packages for the chosen Kaze + Noctalia profile
-(zero AUR dependencies), applies symlinks and default Noctalia/Foot configs via scripts/apply.sh,
-and records the active profile and visual style under ~/.config/kaze without overwriting hypr/user.lua.
+(zero AUR dependencies at core), applies symlinks and default Noctalia/Foot configs via
+scripts/apply.sh, configures system services, and records the active profile and visual style
+under ~/.config/kaze without overwriting existing hypr/user.lua.
 
 Options:
-  --profile <minimal|full>  Select installation profile (default: minimal)
-  --style <preset>          Select visual preset (default: dynamic-island)
-                              Angular: omarchy-rail, swiss-grid, corner-hud, ghost-zero
-                              Dynamic: dynamic-island, hardware-notch, glass-studio, floating-rail
-                              Retro:   tui-hacker, retro-90s, cinema-frame
-  --dry-run, --check        Print installation plan without writing any files
-  --skip-packages           Skip pacman package installation and apply dotfiles only
-  --no-zsh                  Do not change the default login shell to Zsh
-  --yes, -y                 Non-interactive mode (--noconfirm for pacman, --yes for apply.sh)
-  --tui                     Launch the interactive Omarchy-inspired TUI installer
-  --no-tui                  Use plain CLI prompts instead of the TUI installer
-  --reboot                  Reboot automatically after installation completes
-  --no-reboot               Do not prompt to reboot after installation completes
-  -h, --help                Show this help message
+  --profile <minimal|full>      Select installation profile (default: minimal)
+  --style <preset>              Select visual preset (default: dynamic-island)
+                                  Angular: omarchy-rail, swiss-grid, corner-hud, ghost-zero
+                                  Dynamic: dynamic-island, hardware-notch, glass-studio, floating-rail
+                                  Retro:   tui-hacker, retro-90s, cinema-frame
+  --dm <none|ly|greetd>         Optional official display manager (default: none / TTY1)
+  --aur <none|yay-bin|paru-bin> Opt-in AUR helper built after core install (default: none)
+  --system-setup                Enable systemd/audio/group/font setup explicitly
+  --skip-system-setup           Skip systemd/audio/group/font setup
+  --no-hybrid-gpu               Do not seed drm_devices / prefer_mesa_egl in new user.lua
+  --replace-conflicts           In --yes mode, remove hard conflicts (pulseaudio) with pacman -Rdd
+  --no-log                      Do not write \$XDG_STATE_HOME/kaze/install-*.log
+  --dry-run, --check            Print installation plan without writing any files
+  --skip-packages               Skip pacman package installation and apply dotfiles only
+  --no-zsh                      Do not change the default login shell to Zsh
+  --yes, -y                     Non-interactive mode (--noconfirm for pacman, --yes for apply.sh)
+  --tui                         Launch the interactive Omarchy-inspired TUI installer
+  --no-tui                      Use plain CLI prompts instead of the TUI installer
+  --reboot                      Reboot automatically after installation completes
+  --no-reboot                   Do not prompt to reboot after installation completes
+  -h, --help                    Show this help message
 EOF
 }
 
@@ -93,6 +109,52 @@ while (( $# > 0 )); do
             STYLE_EXPLICIT=true
             shift
             ;;
+        --dm)
+            if (( $# < 2 )) || [[ -z "${2:-}" ]]; then
+                echo "install.sh: --dm requires an argument (none, ly, or greetd)" >&2
+                exit 2
+            fi
+            DM_CHOICE="$2"
+            shift 2
+            ;;
+        --dm=*)
+            DM_CHOICE="${1#--dm=}"
+            shift
+            ;;
+        --aur)
+            if (( $# < 2 )) || [[ -z "${2:-}" ]]; then
+                echo "install.sh: --aur requires an argument (none, yay-bin, or paru-bin)" >&2
+                exit 2
+            fi
+            AUR_HELPER="$2"
+            shift 2
+            ;;
+        --aur=*)
+            AUR_HELPER="${1#--aur=}"
+            shift
+            ;;
+        --system-setup)
+            SYSTEM_SETUP="true"
+            SYSTEM_SETUP_EXPLICIT=true
+            shift
+            ;;
+        --skip-system-setup)
+            SYSTEM_SETUP="false"
+            SYSTEM_SETUP_EXPLICIT=true
+            shift
+            ;;
+        --no-hybrid-gpu)
+            AUTO_HYBRID_GPU=false
+            shift
+            ;;
+        --replace-conflicts)
+            REPLACE_CONFLICTS=true
+            shift
+            ;;
+        --no-log)
+            NO_LOG=true
+            shift
+            ;;
         --dry-run|--check)
             DRY_RUN=true
             shift
@@ -104,6 +166,7 @@ while (( $# > 0 )); do
             ;;
         --no-zsh)
             SET_ZSH="false"
+            SET_ZSH_EXPLICIT=true
             shift
             ;;
         --yes|-y)
@@ -145,6 +208,22 @@ case "$PROFILE" in
         ;;
 esac
 
+case "$DM_CHOICE" in
+    none|ly|greetd) ;;
+    *)
+        echo "install.sh: invalid --dm '$DM_CHOICE' (expected: none, ly, or greetd)" >&2
+        exit 2
+        ;;
+esac
+
+case "$AUR_HELPER" in
+    none|yay-bin|paru-bin) ;;
+    *)
+        echo "install.sh: invalid --aur '$AUR_HELPER' (expected: none, yay-bin, or paru-bin)" >&2
+        exit 2
+        ;;
+esac
+
 case "$STYLE" in
     omarchy-rail|swiss-grid|corner-hud|ghost-zero|dynamic-island|hardware-notch|glass-studio|floating-rail|tui-hacker|retro-90s|cinema-frame) ;;
     brutalist|omarchy) STYLE="omarchy-rail" ;;
@@ -164,9 +243,51 @@ esac
 
 # shellcheck source=scripts/packages.sh
 source "$REPO_DIR/scripts/packages.sh"
+# shellcheck source=scripts/install-lib.sh
+source "$REPO_DIR/scripts/install-lib.sh"
 
 PACKAGES=()
-get_packages_for_profile "$PROFILE"
+ADDON_PACKAGES=()
+ALL_PACMAN_PACKAGES=()
+
+compute_pacman_packages() {
+    get_packages_for_profile "$PROFILE"
+    ADDON_PACKAGES=()
+    if [[ "$DM_CHOICE" == "ly" ]]; then
+        ADDON_PACKAGES+=("${PKG_DM_LY[@]}")
+    elif [[ "$DM_CHOICE" == "greetd" ]]; then
+        ADDON_PACKAGES+=("${PKG_DM_GREETD[@]}")
+    fi
+    if [[ "$AUR_HELPER" != "none" ]]; then
+        ADDON_PACKAGES+=("${PKG_AUR_PREREQS[@]}")
+    fi
+    ALL_PACMAN_PACKAGES=("${PACKAGES[@]}" "${ADDON_PACKAGES[@]}")
+}
+
+resolve_effective_defaults() {
+    if [[ "$SKIP_PACKAGES_EXPLICIT" == false ]] && [[ "$HAS_ARCH" == false || "$HAS_PACMAN" == false ]]; then
+        if [[ "$DRY_RUN" == false ]]; then
+            SKIP_PACKAGES=true
+        fi
+    fi
+    if [[ "$SET_ZSH" == "auto" ]]; then
+        if [[ "$SKIP_PACKAGES" == true ]]; then
+            SET_ZSH="false"
+        else
+            SET_ZSH="true"
+        fi
+    fi
+    if [[ "$SYSTEM_SETUP" == "auto" ]]; then
+        if [[ "$SKIP_PACKAGES" == true ]]; then
+            SYSTEM_SETUP="false"
+        else
+            SYSTEM_SETUP="true"
+        fi
+    fi
+    if [[ "$REBOOT" == "auto" ]] && [[ "$SKIP_PACKAGES" == true ]]; then
+        REBOOT="no"
+    fi
+}
 
 DATA_HOME=$(realpath -ms -- "${XDG_DATA_HOME:-$HOME/.local/share}")
 CONFIG_HOME=$(realpath -ms -- "${XDG_CONFIG_HOME:-$HOME/.config}")
@@ -174,8 +295,20 @@ BIN_HOME="$HOME/.local/bin"
 PROFILE_FILE="$CONFIG_HOME/kaze/profile"
 STYLE_FILE="$CONFIG_HOME/kaze/style"
 LAST_BACKUP="$CONFIG_HOME/kaze/last-backup"
+LOG_FILE=""
+if [[ "$NO_LOG" == false ]]; then
+    LOG_FILE="$(kaze_default_log_path)"
+fi
 
 if [[ "$DRY_RUN" == true ]]; then
+    HAS_ARCH=false
+    HAS_PACMAN=false
+    [[ -f "${KAZE_ARCH_RELEASE_FILE:-/etc/arch-release}" ]] && HAS_ARCH=true
+    command -v pacman >/dev/null 2>&1 && HAS_PACMAN=true
+    kaze_detect_gpu
+    kaze_detect_conflicts
+    resolve_effective_defaults
+    compute_pacman_packages
     PACMAN_FLAGS=(--needed)
     APPLY_FLAGS=()
     if [[ "$AUTO_YES" == true ]]; then
@@ -184,12 +317,35 @@ if [[ "$DRY_RUN" == true ]]; then
     fi
     echo "Kaze profile: $PROFILE"
     echo "Kaze style: $STYLE"
+    echo "GPU detected: $GPU_LABEL ($GPU_MODE)"
+    if (( ${#CONFLICT_HARD[@]} > 0 )); then
+        echo "Hard conflicts: ${CONFLICT_HARD[*]}"
+    fi
+    if (( ${#CONFLICT_SOFT[@]} > 0 )); then
+        echo "Soft conflicts: ${CONFLICT_SOFT[*]}"
+    fi
     echo "kaze-dots official Arch packages (${#PACKAGES[@]} total, 0 AUR):"
     printf '  %s\n' "${PACKAGES[@]}"
+    if (( ${#ADDON_PACKAGES[@]} > 0 )); then
+        echo "Optional add-on packages (${#ADDON_PACKAGES[@]} official): ${ADDON_PACKAGES[*]}"
+    fi
     if [[ "$SKIP_PACKAGES" == true ]]; then
         echo "Pacman command: (skipped via --skip-packages)"
     else
-        echo "Pacman command: sudo pacman -S ${PACMAN_FLAGS[*]} ${PACKAGES[*]}"
+        echo "Pacman command: sudo pacman -Syu ${PACMAN_FLAGS[*]} ${ALL_PACMAN_PACKAGES[*]}"
+    fi
+    echo "System setup: $SYSTEM_SETUP"
+    echo "Display manager: $DM_CHOICE"
+    echo "AUR helper: $AUR_HELPER"
+    if [[ "$GPU_MODE" == "hybrid-laptop" && "$AUTO_HYBRID_GPU" == true ]] && [[ ! -e "$CONFIG_HOME/hypr/user.lua" && ! -L "$CONFIG_HOME/hypr/user.lua" ]]; then
+        echo "Hybrid GPU seed: enabled ($GPU_IGPU_CARD, prefer_mesa_egl=true in new user.lua)"
+    else
+        echo "Hybrid GPU seed: inactive (mode=$GPU_MODE, auto=$AUTO_HYBRID_GPU)"
+    fi
+    if [[ "$NO_LOG" == true ]]; then
+        echo "Install log: (disabled via --no-log)"
+    else
+        echo "Install log: $LOG_FILE (skipped in --dry-run)"
     fi
     echo "Apply plan: $REPO_DIR/scripts/apply.sh${APPLY_FLAGS[*]:+ ${APPLY_FLAGS[*]}}"
     echo "  CONFIG_HOME=$CONFIG_HOME"
@@ -351,14 +507,21 @@ tui_cleanup() {
     fi
 }
 
+cleanup() {
+    tui_cleanup
+    kaze_stop_sudo_keepalive
+    kaze_cleanup_aur_tmp
+    kaze_stop_logging
+}
+
 on_signal_exit() {
     local code="$1"
-    tui_cleanup
+    cleanup
     printf '\n%s\n' "Aborted." >&2
     exit "$code"
 }
 
-trap 'tui_cleanup' EXIT
+trap 'cleanup' EXIT
 trap 'on_signal_exit 130' INT
 trap 'on_signal_exit 143' TERM
 
@@ -504,7 +667,8 @@ frame_flush() {
     for (( i=0; i<top_pad; i++ )); do
         pre+=$'\033[K\n'
     done
-    printf '\033[?2026h\033[H%s%s\033[J\033[?2026l' "$pre" "$FRAME_BUF" >&1
+    local body="${FRAME_BUF%$'\n'}"
+    printf '\033[?2026h\033[H%s%s\033[J\033[?2026l' "$pre" "$body" >&1
 }
 
 frame_center() {
@@ -566,7 +730,8 @@ tui_box_kv() {
 
 tui_render_header() {
     local active_step="$1"
-    if (( TERM_ROWS >= 23 )) && (( TERM_COLS >= 40 )); then
+    local min_logo_rows="${2:-23}"
+    if (( TERM_ROWS >= min_logo_rows )) && (( TERM_COLS >= 40 )); then
         if [[ "$HAS_UTF8" == true ]]; then
             frame_center "██  ██   █████   ███████  ██████" "${C_LOGO_1}"
             frame_center "██ ██   ██   ██      ██   ██    " "${C_LOGO_2}"
@@ -633,13 +798,16 @@ CURRENT_SHELL_BIN=""
 TARGET_USER="${USER:-$(id -un)}"
 
 detect_host() {
-    [[ -f /etc/arch-release ]] && HAS_ARCH=true
+    [[ -f "${KAZE_ARCH_RELEASE_FILE:-/etc/arch-release}" ]] && HAS_ARCH=true
     command -v pacman >/dev/null 2>&1 && HAS_PACMAN=true
     [[ -f "$LAST_BACKUP" ]] && HAS_EXISTING_BACKUP=true
     if [[ -e "$CONFIG_HOME/hypr/user.lua" || -L "$CONFIG_HOME/hypr/user.lua" ]]; then
         HAS_USER_LUA=true
     fi
     CURRENT_SHELL_BIN="$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f7 || true)"
+    kaze_detect_gpu
+    kaze_detect_conflicts
+    kaze_detect_existing_dm
 }
 
 tui_host_summary_line() {
@@ -667,16 +835,49 @@ tui_host_summary_line() {
     if (( ${#plain} > TUI_BOX_W )); then
         tui_clip "Host: ${os_label} ${G_BULLET} ${state_label}" "$TUI_BOX_W"
         tui_box_row "${#REPLY}" "${C_MUTED}${REPLY}${C_RESET}"
-        return 0
+    else
+        local fmt="${C_MUTED}Host: ${os_style}${os_label} ${C_BORDER}${G_BULLET} ${state_style}${state_label} ${C_BORDER}${G_BULLET} ${C_MUTED}user.lua: ${C_FG}${ulua_label}${C_RESET}"
+        tui_box_row "${#plain}" "$fmt"
     fi
-    local fmt="${C_MUTED}Host: ${os_style}${os_label} ${C_BORDER}${G_BULLET} ${state_style}${state_label} ${C_BORDER}${G_BULLET} ${C_MUTED}user.lua: ${C_FG}${ulua_label}${C_RESET}"
-    tui_box_row "${#plain}" "$fmt"
+
+    local gpu_col="$C_CYAN"
+    [[ "$GPU_MODE" == "single-nvidia" ]] && gpu_col="$C_YELLOW"
+    [[ "$GPU_MODE" == "hybrid-laptop" ]] && gpu_col="$C_GREEN"
+
+    local conf_label="0 conflicts" conf_col="$C_GREEN"
+    local hc="${#CONFLICT_HARD[@]}" sc="${#CONFLICT_SOFT[@]}"
+    if (( hc > 0 && sc > 0 )); then
+        conf_label="${hc} hard, ${sc} soft conflict(s)"
+        conf_col="$C_RED"
+    elif (( hc > 0 )); then
+        conf_label="${hc} hard conflict(s)"
+        conf_col="$C_RED"
+    elif (( sc > 0 )); then
+        conf_label="${sc} soft conflict(s)"
+        conf_col="$C_YELLOW"
+    fi
+
+    local hw_plain="GPU:  ${GPU_LABEL} ${G_BULLET} ${conf_label}"
+    if [[ -n "$EXISTING_DM" ]]; then
+        hw_plain+=" ${G_BULLET} DM: ${EXISTING_DM%.service}"
+    fi
+    if (( ${#hw_plain} > TUI_BOX_W )); then
+        tui_clip "$hw_plain" "$TUI_BOX_W"
+        tui_box_row "${#REPLY}" "${C_MUTED}${REPLY}${C_RESET}"
+    else
+        local hw_fmt="${C_MUTED}GPU:  ${gpu_col}${GPU_LABEL} ${C_BORDER}${G_BULLET} ${conf_col}${conf_label}"
+        if [[ -n "$EXISTING_DM" ]]; then
+            hw_fmt+=" ${C_BORDER}${G_BULLET} ${C_MUTED}DM: ${C_FG}${EXISTING_DM%.service}"
+        fi
+        hw_fmt+="${C_RESET}"
+        tui_box_row "${#hw_plain}" "$hw_fmt"
+    fi
 }
 
 # ── TUI Screens ──────────────────────────────────────────────────────────────
 draw_screen_profile() {
     frame_reset
-    tui_render_header 1
+    tui_render_header 1 25
     tui_box_top
     tui_host_summary_line
     tui_box_mid
@@ -936,84 +1137,175 @@ draw_opt_row() {
     fi
 }
 
+OPT_KEYS=()
+OPT_SCROLL=0
+
+build_options_list() {
+    OPT_KEYS=(pkg noconfirm syssetup zsh dm aur)
+    if [[ "$GPU_MODE" == "hybrid-laptop" && "$HAS_USER_LUA" == false ]]; then
+        OPT_KEYS+=(hybrid_gpu)
+    fi
+    OPT_KEYS+=(reboot buttons)
+}
+
+draw_opt_cycle_row() {
+    local idx="$1" label="$2" val="$3" val_col="${4:-$C_CYAN}"
+    local focused=false
+    (( OPT_IDX == idx )) && focused=true
+    local rbg="" rbar=" "
+    [[ "$focused" == true ]] && { rbg="$C_BG_SEL"; rbar="$G_BAR"; }
+    local pad_spaces=""
+    local key_w=20
+    local pad_n=$(( key_w - ${#label} ))
+    (( pad_n < 1 )) && pad_n=1
+    tui_spaces "$pad_n"
+    pad_spaces="$REPLY"
+    local rplain="${rbar} [${G_DOT_ON}] ${label}${pad_spaces}< ${val} >"
+    tui_clip "$rplain" "$TUI_BOX_W"
+    local rc="$REPLY"
+    if (( ${#rc} == ${#rplain} )); then
+        local rfmt=""
+        if [[ "$focused" == true ]]; then
+            rfmt="${C_ACTIVE_BORDER}${rbg}${rbar} ${C_BORDER}${rbg}[${C_CYAN}${rbg}${G_DOT_ON}${C_BORDER}${rbg}] ${C_BOLD}${C_FG}${rbg}${label}${pad_spaces}${C_MUTED}${rbg}< ${val_col}${rbg}${val} ${C_MUTED}${rbg}>${C_RESET}"
+        else
+            rfmt="${rbar} ${C_BORDER}[${C_CYAN}${G_DOT_ON}${C_BORDER}] ${C_FG}${label}${pad_spaces}${C_MUTED}< ${val_col}${val} ${C_MUTED}>${C_RESET}"
+        fi
+        tui_box_row "${#rc}" "$rfmt" "$rbg"
+    else
+        tui_box_row "${#rc}" "${C_FG}${rbg}${rc}${C_RESET}" "$rbg"
+    fi
+}
+
 draw_screen_options() {
     frame_reset
     tui_render_header 3
     tui_box_top
 
-    get_packages_for_profile "$PROFILE"
+    build_options_list
+    compute_pacman_packages
     local prof_upper="MINIMAL"
     local prof_col="$C_CYAN"
     if [[ "$PROFILE" == "full" ]]; then
         prof_upper="FULL"
         prof_col="$C_PURPLE"
     fi
-    local hdr_plain="Profile: ${prof_upper} (${#PACKAGES[@]} pkgs) ${G_BULLET} Style: ${STYLE}"
+    local pkg_total_lbl="${#ALL_PACMAN_PACKAGES[@]} pkgs"
+    local hdr_plain="Profile: ${prof_upper} (${pkg_total_lbl}) ${G_BULLET} Style: ${STYLE}"
     tui_clip "$hdr_plain" "$TUI_BOX_W"
     local hc="$REPLY"
     if (( ${#hc} == ${#hdr_plain} )); then
-        tui_box_row "${#hc}" "${C_MUTED}Profile: ${C_BOLD}${prof_col}${prof_upper} ${C_MUTED}(${#PACKAGES[@]} pkgs) ${G_BULLET} Style: ${C_CYAN}${STYLE}${C_RESET}"
+        tui_box_row "${#hc}" "${C_MUTED}Profile: ${C_BOLD}${prof_col}${prof_upper} ${C_MUTED}(${pkg_total_lbl}) ${G_BULLET} Style: ${C_CYAN}${STYLE}${C_RESET}"
     else
         tui_box_row "${#hc}" "${prof_col}${hc}${C_RESET}"
     fi
     tui_box_mid
 
-    local pkg_mark="$G_CHECK" pkg_note="Runs sudo pacman -S --needed (uncheck for dotfiles only)"
-    if [[ "$SKIP_PACKAGES" == true ]]; then
-        pkg_mark=" "
-        if [[ "$HAS_ARCH" == false || "$HAS_PACMAN" == false ]]; then
-            pkg_note="Skipped (pacman unavailable — dotfiles-only mode)"
-        else
-            pkg_note="Skipped (--skip-packages, deploying dotfiles only)"
-        fi
+    local total_keys="${#OPT_KEYS[@]}"
+    local opt_count=$(( total_keys - 1 ))
+    local btn_idx="$opt_count"
+
+    local max_vis=$(( TERM_ROWS - 18 ))
+    (( TERM_ROWS < 23 )) && max_vis=$(( TERM_ROWS - 12 ))
+    (( max_vis < 4 )) && max_vis=4
+    local cur_item="$OPT_IDX"
+    (( cur_item >= opt_count )) && cur_item=$(( opt_count - 1 ))
+    if (( cur_item < OPT_SCROLL )); then
+        OPT_SCROLL=$cur_item
+    elif (( cur_item >= OPT_SCROLL + max_vis )); then
+        OPT_SCROLL=$(( cur_item - max_vis + 1 ))
     fi
-    draw_opt_row 0 "$pkg_mark" "Install official Arch packages via pacman" "$pkg_note" "true"
+    local max_scroll=$(( opt_count - max_vis ))
+    (( max_scroll < 0 )) && max_scroll=0
+    (( OPT_SCROLL > max_scroll )) && OPT_SCROLL=$max_scroll
+    (( OPT_SCROLL < 0 )) && OPT_SCROLL=0
 
-    local nc_mark=" " nc_enabled="true"
-    [[ "$PACMAN_NOCONFIRM" == true ]] && nc_mark="$G_CHECK"
-    [[ "$SKIP_PACKAGES" == true ]] && nc_enabled="false"
-    draw_opt_row 1 "$nc_mark" "Auto-confirm pacman prompts (--noconfirm)" "" "$nc_enabled"
+    local end=$(( OPT_SCROLL + max_vis ))
+    (( end > opt_count )) && end=$opt_count
 
-    local zsh_mark=" "
-    [[ "$SET_ZSH" == "true" ]] && zsh_mark="$G_CHECK"
-    local zsh_label="Set Zsh as default login shell (chsh)"
-    if [[ "$CURRENT_SHELL_BIN" == */zsh ]]; then
-        zsh_label="Set Zsh as default login shell (already zsh)"
-    fi
-    draw_opt_row 2 "$zsh_mark" "$zsh_label" "" "true"
+    local i opt_key
+    for (( i=OPT_SCROLL; i<end; i++ )); do
+        opt_key="${OPT_KEYS[$i]}"
+        case "$opt_key" in
+            pkg)
+                local pkg_mark="$G_CHECK" pkg_note=""
+                if (( TERM_ROWS >= 26 )); then
+                    pkg_note="Runs sudo pacman -Syu --needed (uncheck for dotfiles only)"
+                fi
+                if [[ "$SKIP_PACKAGES" == true ]]; then
+                    pkg_mark=" "
+                    if (( TERM_ROWS >= 26 )); then
+                        if [[ "$HAS_ARCH" == false || "$HAS_PACMAN" == false ]]; then
+                            pkg_note="Skipped (pacman unavailable — dotfiles-only mode)"
+                        else
+                            pkg_note="Skipped (--skip-packages, deploying dotfiles only)"
+                        fi
+                    fi
+                fi
+                draw_opt_row "$i" "$pkg_mark" "Install & sync official Arch packages (pacman -Syu)" "$pkg_note" "true"
+                ;;
+            noconfirm)
+                local nc_mark=" " nc_enabled="true"
+                [[ "$PACMAN_NOCONFIRM" == true ]] && nc_mark="$G_CHECK"
+                [[ "$SKIP_PACKAGES" == true ]] && nc_enabled="false"
+                draw_opt_row "$i" "$nc_mark" "Auto-confirm pacman prompts (--noconfirm)" "" "$nc_enabled"
+                ;;
+            syssetup)
+                local sys_mark=" "
+                [[ "$SYSTEM_SETUP" == "true" ]] && sys_mark="$G_CHECK"
+                draw_opt_row "$i" "$sys_mark" "System setup (NM, Bluetooth, PipeWire, video, fc-cache)" "" "true"
+                ;;
+            zsh)
+                local zsh_mark=" "
+                [[ "$SET_ZSH" == "true" ]] && zsh_mark="$G_CHECK"
+                local zsh_label="Set Zsh as default login shell (chsh)"
+                if [[ "$CURRENT_SHELL_BIN" == */zsh ]]; then
+                    zsh_label="Set Zsh as default login shell (already zsh)"
+                fi
+                draw_opt_row "$i" "$zsh_mark" "$zsh_label" "" "true"
+                ;;
+            dm)
+                local dm_label="None (TTY1)" dm_col="$C_MUTED"
+                case "$DM_CHOICE" in
+                    ly)     dm_label="ly";               dm_col="$C_CYAN" ;;
+                    greetd) dm_label="greetd + tuigreet"; dm_col="$C_CYAN" ;;
+                esac
+                draw_opt_cycle_row "$i" "Display Manager:" "$dm_label" "$dm_col"
+                ;;
+            aur)
+                local aur_label="None (0 AUR)" aur_col="$C_GREEN"
+                case "$AUR_HELPER" in
+                    yay-bin)  aur_label="yay-bin";  aur_col="$C_PURPLE" ;;
+                    paru-bin) aur_label="paru-bin"; aur_col="$C_PURPLE" ;;
+                esac
+                draw_opt_cycle_row "$i" "AUR Helper (opt-in):" "$aur_label" "$aur_col"
+                ;;
+            hybrid_gpu)
+                local hgpu_mark=" "
+                [[ "$AUTO_HYBRID_GPU" == true ]] && hgpu_mark="$G_CHECK"
+                draw_opt_row "$i" "$hgpu_mark" "Seed Hybrid GPU (${GPU_IGPU_CARD} + Mesa EGL) in user.lua" "" "true"
+                ;;
+            reboot)
+                local reb_label="Ask before rebooting" reb_col="$C_CYAN"
+                case "$REBOOT" in
+                    yes) reb_label="Reboot automatically"; reb_col="$C_YELLOW" ;;
+                    no)  reb_label="Stay in shell";        reb_col="$C_MUTED" ;;
+                esac
+                draw_opt_cycle_row "$i" "After install:" "$reb_label" "$reb_col"
+                ;;
+        esac
+    done
 
-    local reb_label="Ask before rebooting"
-    local reb_col="$C_CYAN"
-    case "$REBOOT" in
-        yes) reb_label="Reboot automatically"; reb_col="$C_YELLOW" ;;
-        no)  reb_label="Stay in shell";        reb_col="$C_MUTED" ;;
-    esac
-    local reb_focused=false
-    (( OPT_IDX == 3 )) && reb_focused=true
-    local rbg="" rbar=" "
-    [[ "$reb_focused" == true ]] && { rbg="$C_BG_SEL"; rbar="$G_BAR"; }
-    local rplain="${rbar} [${G_DOT_ON}] After install:  < ${reb_label} >"
-    tui_clip "$rplain" "$TUI_BOX_W"
-    local rc="$REPLY"
-    if (( ${#rc} == ${#rplain} )); then
-        local rfmt=""
-        if [[ "$reb_focused" == true ]]; then
-            rfmt="${C_ACTIVE_BORDER}${rbg}${rbar} ${C_BORDER}${rbg}[${C_CYAN}${rbg}${G_DOT_ON}${C_BORDER}${rbg}] ${C_BOLD}${C_FG}${rbg}After install:  ${C_MUTED}${rbg}< ${reb_col}${rbg}${reb_label} ${C_MUTED}${rbg}>${C_RESET}"
-        else
-            rfmt="${rbar} ${C_BORDER}[${C_CYAN}${G_DOT_ON}${C_BORDER}] ${C_FG}After install:  ${C_MUTED}< ${reb_col}${reb_label} ${C_MUTED}>${C_RESET}"
-        fi
-        tui_box_row "${#rc}" "$rfmt" "$rbg"
+    if (( max_scroll > 0 )); then
+        tui_box_text "Showing options $(( OPT_SCROLL + 1 ))-${end} of ${opt_count} (Up/Down to scroll)" "$C_MUTED"
     else
-        tui_box_row "${#rc}" "${C_FG}${rbg}${rc}${C_RESET}" "$rbg"
+        tui_box_empty
     fi
-
-    tui_box_empty
 
     local b1=" Continue to Review ${G_ARROW_R} "
     local b2=" ${G_ARROW_L} Back "
     local b_plain="  [${b1}]   [${b2}]"
     local b1_s="$C_BTN_IDLE" b2_s="$C_BTN_IDLE"
-    if (( OPT_IDX == 4 )); then
+    if (( OPT_IDX == btn_idx )); then
         if (( OPT_BTN == 0 )); then
             b1_s="$C_BTN_ACTIVE"
         else
@@ -1032,20 +1324,22 @@ draw_screen_options() {
 
 draw_screen_review() {
     frame_reset
-    tui_render_header 4
+    tui_render_header 4 31
     tui_box_top
     tui_box_text "Pre-flight review before writing changes" "${C_BOLD}${C_FG}"
     tui_box_mid
 
-    get_packages_for_profile "$PROFILE"
+    compute_pacman_packages
     local prof_col="$C_CYAN"
     [[ "$PROFILE" == "full" ]] && prof_col="$C_PURPLE"
-    tui_box_kv 14 "Profile" "${PROFILE} (${#PACKAGES[@]} official Arch packages, 0 AUR)" "$prof_col"
+    local prof_extra=""
+    (( ${#ADDON_PACKAGES[@]} > 0 )) && prof_extra=" + ${#ADDON_PACKAGES[@]} add-on"
+    tui_box_kv 14 "Profile" "${PROFILE} (${#PACKAGES[@]} core${prof_extra} official pkgs, 0 AUR)" "$prof_col"
     tui_box_kv 14 "Visual style" "${STYLE} (switch anytime via kaze-style / Super+Shift+I)" "$C_CYAN"
 
-    local pkg_desc="sudo pacman -S --needed"
+    local pkg_desc="sudo pacman -Syu --needed"
     [[ "$PACMAN_NOCONFIRM" == true ]] && pkg_desc+=" --noconfirm"
-    pkg_desc+=" (${#PACKAGES[@]} pkgs)"
+    pkg_desc+=" (${#ALL_PACMAN_PACKAGES[@]} pkgs)"
     if [[ "$SKIP_PACKAGES" == true ]]; then
         pkg_desc="Skipped (--skip-packages, dotfiles only)"
         tui_box_kv 14 "Packages" "$pkg_desc" "$C_YELLOW"
@@ -1053,8 +1347,26 @@ draw_screen_review() {
         tui_box_kv 14 "Packages" "$pkg_desc" "$C_FG"
     fi
 
-    tui_box_kv 14 "Config home" "$CONFIG_HOME" "$C_FG"
-    tui_box_kv 14 "Data & bins" "$DATA_HOME/kaze-dots + ~/.local/bin" "$C_FG"
+    local sys_desc="Skipped"
+    [[ "$SYSTEM_SETUP" == "true" ]] && sys_desc="Enable NM (if unused), BT, PipeWire, video, fc-cache"
+    tui_box_kv 14 "System setup" "$sys_desc" "$C_FG"
+
+    local dm_desc="None (TTY1 auto-start via ~/.zprofile)"
+    case "$DM_CHOICE" in
+        ly)     dm_desc="ly (ly@tty1.service)" ;;
+        greetd) dm_desc="greetd + tuigreet (/etc/greetd/config.toml)" ;;
+    esac
+    tui_box_kv 14 "Display mgr" "$dm_desc" "$C_FG"
+
+    local aur_desc="None (0 AUR)"
+    [[ "$AUR_HELPER" != "none" ]] && aur_desc="${AUR_HELPER} (opt-in after core install)"
+    tui_box_kv 14 "AUR helper" "$aur_desc" "$C_FG"
+
+    if [[ "$GPU_MODE" == "hybrid-laptop" && "$HAS_USER_LUA" == false ]]; then
+        local hgpu_desc="Disabled"
+        [[ "$AUTO_HYBRID_GPU" == true ]] && hgpu_desc="Seed ${GPU_IGPU_CARD} + prefer_mesa_egl in new user.lua"
+        tui_box_kv 14 "Hybrid GPU" "$hgpu_desc" "$C_GREEN"
+    fi
 
     local zsh_desc="Keep current (${CURRENT_SHELL_BIN:-unchanged})"
     [[ "$SET_ZSH" == "true" ]] && zsh_desc="Switch to /usr/bin/zsh (if not already)"
@@ -1067,13 +1379,31 @@ draw_screen_review() {
     esac
     tui_box_kv 14 "After install" "$reb_desc" "$C_FG"
 
+    local log_desc="${LOG_FILE:-Disabled (--no-log)}"
+    tui_box_kv 14 "Install log" "$log_desc" "$C_MUTED"
+
+    if (( ${#CONFLICT_HARD[@]} > 0 )) || (( ${#CONFLICT_SOFT[@]} > 0 )); then
+        tui_box_mid
+        local warn_max=$(( TUI_BOX_W - 2 ))
+        if (( ${#CONFLICT_HARD[@]} > 0 )); then
+            tui_clip "Hard conflict (prompts pacman -Rdd): ${CONFLICT_HARD[*]}" "$warn_max"
+            tui_box_row "$(( 2 + ${#REPLY} ))" "${C_RED}! ${REPLY}${C_RESET}"
+        fi
+        if (( ${#CONFLICT_SOFT[@]} > 0 )); then
+            tui_clip "Soft conflict (manual pacman -Rns): ${CONFLICT_SOFT[*]}" "$warn_max"
+            tui_box_row "$(( 2 + ${#REPLY} ))" "${C_YELLOW}! ${REPLY}${C_RESET}"
+        fi
+    fi
+
     tui_box_mid
     local chk_max=$(( TUI_BOX_W - 2 ))
     tui_clip "Automatic backup & reversible rollback.sh before replacing" "$chk_max"
     tui_box_row "$(( 2 + ${#REPLY} ))" "${C_GREEN}${G_CHECK} ${C_FG}${REPLY}${C_RESET}"
     tui_clip "Preserves hypr/user.lua, zsh/user.zsh & Noctalia GUI edits" "$chk_max"
     tui_box_row "$(( 2 + ${#REPLY} ))" "${C_GREEN}${G_CHECK} ${C_FG}${REPLY}${C_RESET}"
-    tui_box_empty
+    if (( TERM_ROWS > 25 )); then
+        tui_box_empty
+    fi
 
     local a1=" Install kaze-dots " a2=" ${G_ARROW_L} Back " a3=" Abort "
     local s1="$C_BTN_IDLE" s2="$C_BTN_IDLE" s3="$C_BTN_IDLE"
@@ -1146,7 +1476,8 @@ build_pkg_modal_lines() {
     add_pkg_group "Desktop" "$C_CYAN" "${PKG_MIN_DESKTOP[@]}"
     add_pkg_group "Portals" "$C_CYAN" "${PKG_MIN_PORTALS[@]}"
     add_pkg_group "Terminal/Zsh" "$C_CYAN" "${PKG_MIN_TERM[@]}"
-    add_pkg_group "System/Audio" "$C_CYAN" "${PKG_MIN_SYS[@]}"
+    add_pkg_group "Audio" "$C_CYAN" "${PKG_MIN_AUDIO[@]}"
+    add_pkg_group "System" "$C_CYAN" "${PKG_MIN_SYS[@]}"
     add_pkg_group "Fonts/Lua" "$C_CYAN" "${PKG_MIN_FONTS[@]}"
     if [[ "$PROFILE" == "full" ]]; then
         PKG_MODAL_LINES+=("  Full Extras (+${#FULL_EXTRA_PACKAGES[@]} official Arch packages)")
@@ -1155,6 +1486,18 @@ build_pkg_modal_lines() {
         add_pkg_group "Apps/Docs" "$C_PURPLE" "${PKG_FULL_APPS[@]}"
         add_pkg_group "IME/Keyring" "$C_PURPLE" "${PKG_FULL_IME[@]}"
         add_pkg_group "Modern CLI" "$C_PURPLE" "${PKG_FULL_CLI[@]}"
+    fi
+    if [[ "$DM_CHOICE" != "none" || "$AUR_HELPER" != "none" ]]; then
+        PKG_MODAL_LINES+=("  Optional Add-ons")
+        PKG_MODAL_STYLES+=("HDR")
+        if [[ "$DM_CHOICE" == "ly" ]]; then
+            add_pkg_group "Display Mgr" "$C_CYAN" "${PKG_DM_LY[@]}"
+        elif [[ "$DM_CHOICE" == "greetd" ]]; then
+            add_pkg_group "Display Mgr" "$C_CYAN" "${PKG_DM_GREETD[@]}"
+        fi
+        if [[ "$AUR_HELPER" != "none" ]]; then
+            add_pkg_group "AUR Prereqs" "$C_PURPLE" "${PKG_AUR_PREREQS[@]}"
+        fi
     fi
 }
 
@@ -1236,19 +1579,8 @@ run_tui_wizard() {
     REV_BTN=0
 
     # Smart defaults when flags were not explicitly forced
-    if [[ "$SKIP_PACKAGES_EXPLICIT" == false ]] && [[ "$HAS_ARCH" == false || "$HAS_PACMAN" == false ]]; then
-        SKIP_PACKAGES=true
-    fi
-    if [[ "$SET_ZSH" == "auto" ]]; then
-        if [[ "$SKIP_PACKAGES" == true ]]; then
-            SET_ZSH="false"
-        else
-            SET_ZSH="true"
-        fi
-    fi
-    if [[ "$REBOOT" == "auto" ]] && [[ "$SKIP_PACKAGES" == true ]]; then
-        REBOOT="no"
-    fi
+    resolve_effective_defaults
+    build_options_list
 
     tui_enter
 
@@ -1347,23 +1679,59 @@ run_tui_wizard() {
                 esac
                 ;;
             options)
+                build_options_list
+                local opt_total="${#OPT_KEYS[@]}"
+                local btn_idx=$(( opt_total - 1 ))
+                local cur_key="${OPT_KEYS[$OPT_IDX]}"
                 case "$key" in
                     UP)
-                        OPT_IDX=$(( (OPT_IDX + 4) % 5 ))
+                        OPT_IDX=$(( (OPT_IDX + opt_total - 1) % opt_total ))
                         ;;
                     DOWN)
-                        OPT_IDX=$(( (OPT_IDX + 1) % 5 ))
+                        OPT_IDX=$(( (OPT_IDX + 1) % opt_total ))
                         ;;
                     TAB)
-                        if (( OPT_IDX < 4 )); then
-                            OPT_IDX=4
+                        if (( OPT_IDX < btn_idx )); then
+                            OPT_IDX=$btn_idx
                             OPT_BTN=0
                         else
                             OPT_BTN=$(( (OPT_BTN + 1) % 2 ))
                         fi
                         ;;
                     LEFT|RIGHT)
-                        if (( OPT_IDX == 3 )); then
+                        if [[ "$cur_key" == "dm" ]]; then
+                            if [[ "$HAS_ARCH" == false || "$HAS_PACMAN" == false ]]; then
+                                TUI_STATUS_MSG="pacman unavailable on this host; display manager setup requires Arch"
+                            elif [[ "$key" == "RIGHT" ]]; then
+                                case "$DM_CHOICE" in
+                                    none)   DM_CHOICE="ly" ;;
+                                    ly)     DM_CHOICE="greetd" ;;
+                                    greetd) DM_CHOICE="none" ;;
+                                esac
+                            else
+                                case "$DM_CHOICE" in
+                                    none)   DM_CHOICE="greetd" ;;
+                                    greetd) DM_CHOICE="ly" ;;
+                                    ly)     DM_CHOICE="none" ;;
+                                esac
+                            fi
+                        elif [[ "$cur_key" == "aur" ]]; then
+                            if [[ "$HAS_ARCH" == false || "$HAS_PACMAN" == false ]]; then
+                                TUI_STATUS_MSG="pacman unavailable on this host; AUR helper requires Arch"
+                            elif [[ "$key" == "RIGHT" ]]; then
+                                case "$AUR_HELPER" in
+                                    none)     AUR_HELPER="yay-bin" ;;
+                                    yay-bin)  AUR_HELPER="paru-bin" ;;
+                                    paru-bin) AUR_HELPER="none" ;;
+                                esac
+                            else
+                                case "$AUR_HELPER" in
+                                    none)     AUR_HELPER="paru-bin" ;;
+                                    paru-bin) AUR_HELPER="yay-bin" ;;
+                                    yay-bin)  AUR_HELPER="none" ;;
+                                esac
+                            fi
+                        elif [[ "$cur_key" == "reboot" ]]; then
                             if [[ "$key" == "RIGHT" ]]; then
                                 case "$REBOOT" in
                                     auto) REBOOT="yes" ;;
@@ -1377,26 +1745,30 @@ run_tui_wizard() {
                                     yes)  REBOOT="auto" ;;
                                 esac
                             fi
-                        elif (( OPT_IDX == 4 )); then
+                        elif [[ "$cur_key" == "buttons" ]]; then
                             OPT_BTN=$(( (OPT_BTN + 1) % 2 ))
                         elif [[ "$key" == "LEFT" ]]; then
                             TUI_SCREEN="style"
                         fi
                         ;;
                     SPACE)
-                        case "$OPT_IDX" in
-                            0)
+                        case "$cur_key" in
+                            pkg)
                                 if [[ "$SKIP_PACKAGES" == true ]]; then
                                     if [[ "$HAS_ARCH" == false || "$HAS_PACMAN" == false ]]; then
                                         TUI_STATUS_MSG="pacman unavailable on this host; dotfiles-only mode required"
                                     else
                                         SKIP_PACKAGES=false
+                                        [[ "$SYSTEM_SETUP_EXPLICIT" == false ]] && SYSTEM_SETUP="true"
+                                        [[ "$SET_ZSH_EXPLICIT" == false ]] && SET_ZSH="true"
                                     fi
                                 else
                                     SKIP_PACKAGES=true
+                                    [[ "$SYSTEM_SETUP_EXPLICIT" == false ]] && SYSTEM_SETUP="false"
+                                    [[ "$SET_ZSH_EXPLICIT" == false ]] && SET_ZSH="false"
                                 fi
                                 ;;
-                            1)
+                            noconfirm)
                                 if [[ "$SKIP_PACKAGES" == true ]]; then
                                     TUI_STATUS_MSG="Enable package installation first to toggle --noconfirm"
                                 else
@@ -1407,21 +1779,59 @@ run_tui_wizard() {
                                     fi
                                 fi
                                 ;;
-                            2)
+                            syssetup)
+                                SYSTEM_SETUP_EXPLICIT=true
+                                if [[ "$SYSTEM_SETUP" == "true" ]]; then
+                                    SYSTEM_SETUP="false"
+                                else
+                                    SYSTEM_SETUP="true"
+                                fi
+                                ;;
+                            zsh)
+                                SET_ZSH_EXPLICIT=true
                                 if [[ "$SET_ZSH" == "true" ]]; then
                                     SET_ZSH="false"
                                 else
                                     SET_ZSH="true"
                                 fi
                                 ;;
-                            3)
+                            dm)
+                                if [[ "$HAS_ARCH" == false || "$HAS_PACMAN" == false ]]; then
+                                    TUI_STATUS_MSG="pacman unavailable on this host; display manager setup requires Arch"
+                                else
+                                    case "$DM_CHOICE" in
+                                        none)   DM_CHOICE="ly" ;;
+                                        ly)     DM_CHOICE="greetd" ;;
+                                        greetd) DM_CHOICE="none" ;;
+                                    esac
+                                fi
+                                ;;
+                            aur)
+                                if [[ "$HAS_ARCH" == false || "$HAS_PACMAN" == false ]]; then
+                                    TUI_STATUS_MSG="pacman unavailable on this host; AUR helper requires Arch"
+                                else
+                                    case "$AUR_HELPER" in
+                                        none)     AUR_HELPER="yay-bin" ;;
+                                        yay-bin)  AUR_HELPER="paru-bin" ;;
+                                        paru-bin) AUR_HELPER="none" ;;
+                                    esac
+                                fi
+                                ;;
+                            hybrid_gpu)
+                                if [[ "$AUTO_HYBRID_GPU" == true ]]; then
+                                    AUTO_HYBRID_GPU=false
+                                else
+                                    AUTO_HYBRID_GPU=true
+                                fi
+                                ;;
+                            reboot)
                                 case "$REBOOT" in
                                     auto) REBOOT="yes" ;;
                                     yes)  REBOOT="no" ;;
                                     no)   REBOOT="auto" ;;
                                 esac
                                 ;;
-                            4)
+                            buttons)
                                 if (( OPT_BTN == 0 )); then
                                     TUI_SCREEN="review"
                                 else
@@ -1431,7 +1841,7 @@ run_tui_wizard() {
                         esac
                         ;;
                     ENTER)
-                        if (( OPT_IDX == 4 && OPT_BTN == 1 )); then
+                        if [[ "$cur_key" == "buttons" ]] && (( OPT_BTN == 1 )); then
                             TUI_SCREEN="style"
                         else
                             TUI_SCREEN="review"
@@ -1521,8 +1931,12 @@ log_exec_header() {
         else
             printf '%sK A Z E%s\n' "${C_BOLD}${C_CYAN}" "$C_RESET"
         fi
-        printf '%sHyprland 0.57 + Noctalia v5.x %s profile=%s (%d pkgs, 0 AUR)%s\n\n' \
-            "$C_MUTED" "$G_BULLET" "$PROFILE" "${#PACKAGES[@]}" "$C_RESET"
+        local hdr_pkgs="${#PACKAGES[@]} core"
+        (( ${#ADDON_PACKAGES[@]} > 0 )) && hdr_pkgs+=" + ${#ADDON_PACKAGES[@]} add-on"
+        local hdr_aur="0 AUR"
+        [[ "$AUR_HELPER" != "none" ]] && hdr_aur="0 AUR core + opt-in ${AUR_HELPER}"
+        printf '%sHyprland 0.57 + Noctalia v5.x %s profile=%s (%s pkgs, %s)%s\n\n' \
+            "$C_MUTED" "$G_BULLET" "$PROFILE" "$hdr_pkgs" "$hdr_aur" "$C_RESET"
     fi
 }
 
@@ -1634,13 +2048,7 @@ if [[ "$TUI_ACTIVE" == true ]]; then
     APPLY_FLAGS=(--yes)
     PRINT_STYLED=true
 else
-    if [[ "$SET_ZSH" == "auto" ]]; then
-        if [[ "$SKIP_PACKAGES" == false ]]; then
-            SET_ZSH="true"
-        else
-            SET_ZSH="false"
-        fi
-    fi
+    resolve_effective_defaults
     if [[ "$AUTO_YES" == false ]] && [[ -t 0 ]]; then
         read -r -p "Install kaze-dots (profile: $PROFILE, style: $STYLE) into $HOME? [Y/n] " reply
         case "$reply" in
@@ -1656,47 +2064,130 @@ else
     [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]] && PRINT_STYLED=true
 fi
 
-get_packages_for_profile "$PROFILE"
+compute_pacman_packages
 
 PACMAN_FLAGS=(--needed)
 if [[ "$AUTO_YES" == true ]] || [[ "$PACMAN_NOCONFIRM" == true ]]; then
     PACMAN_FLAGS+=(--noconfirm)
 fi
 
-TOTAL_STEPS=2
+NEEDS_SUDO=false
+if [[ "$SKIP_PACKAGES" == false || "$SYSTEM_SETUP" == "true" || "$SET_ZSH" == "true" || "$DM_CHOICE" != "none" || "$AUR_HELPER" != "none" ]]; then
+    NEEDS_SUDO=true
+fi
+
+TOTAL_STEPS=3 # Preflight + Deploy + Doctor
 [[ "$SKIP_PACKAGES" == false ]] && TOTAL_STEPS=$(( TOTAL_STEPS + 1 ))
+[[ "$SYSTEM_SETUP" == "true" ]] && TOTAL_STEPS=$(( TOTAL_STEPS + 1 ))
+[[ "$DM_CHOICE" != "none" ]] && TOTAL_STEPS=$(( TOTAL_STEPS + 1 ))
+[[ "$AUR_HELPER" != "none" ]] && TOTAL_STEPS=$(( TOTAL_STEPS + 1 ))
 [[ "$SET_ZSH" == "true" ]] && TOTAL_STEPS=$(( TOTAL_STEPS + 1 ))
 STEP_NUM=1
 
+if [[ "$NO_LOG" == false && -n "$LOG_FILE" ]]; then
+    kaze_start_logging "$LOG_FILE"
+fi
+
 log_exec_header
 
-# Step 1: Preflight
-log_step "$STEP_NUM" "$TOTAL_STEPS" "Preflight & configuration check"
+# Step 1: Preflight, GPU/Conflict Check & sudo keepalive
+log_step "$STEP_NUM" "$TOTAL_STEPS" "Preflight, hardware & conflict check"
 STEP_NUM=$(( STEP_NUM + 1 ))
 if [[ "$SKIP_PACKAGES" == false ]]; then
     if [[ "$HAS_ARCH" == false ]] || [[ "$HAS_PACMAN" == false ]]; then
         echo "install.sh: Arch Linux (pacman) is required (or pass --skip-packages)." >&2
         exit 1
     fi
-    log_ok "Arch Linux & pacman verified (${#PACKAGES[@]} ${PROFILE} packages, 0 AUR)"
+    log_ok "Arch Linux & pacman verified (${#PACKAGES[@]} core + ${#ADDON_PACKAGES[@]} add-on pkgs, 0 AUR core)"
 else
     log_info "Skipping package installation (--skip-packages)"
 fi
+
+log_ok "GPU detected: ${GPU_LABEL} (${GPU_MODE})"
+if [[ -n "$GPU_DETAIL" ]]; then
+    log_info "Display hardware: $GPU_DETAIL"
+fi
+if [[ "$GPU_MODE" == "single-nvidia" ]]; then
+    log_warn "Single NVIDIA GPU detected: verify nvidia-open/nvidia driver and nvidia_drm.modeset=1 kernel parameter."
+fi
+
+REMOVE_HARD_CONFLICTS=false
+if [[ "$SKIP_PACKAGES" == false ]] && (( ${#CONFLICT_HARD[@]} > 0 )); then
+    log_warn "Hard package conflict(s) detected: ${CONFLICT_HARD[*]}"
+    if [[ "$AUTO_YES" == true ]]; then
+        if [[ "$REPLACE_CONFLICTS" == true ]]; then
+            REMOVE_HARD_CONFLICTS=true
+        else
+            echo "install.sh: hard package conflicts detected (${CONFLICT_HARD[*]}) that block PipeWire installation." >&2
+            echo "install.sh: re-run interactively or pass --replace-conflicts to remove them with 'pacman -Rdd --noconfirm'." >&2
+            exit 1
+        fi
+    else
+        read -r -p "Remove conflicting package(s) (${CONFLICT_HARD[*]}) via 'sudo pacman -Rdd --noconfirm' before installing PipeWire? [y/N] " conf_reply
+        case "$conf_reply" in
+            [yY]|[yY][eE][sS])
+                REMOVE_HARD_CONFLICTS=true
+                ;;
+            *)
+                echo "Aborted due to conflicting packages: ${CONFLICT_HARD[*]}"
+                exit 1
+                ;;
+        esac
+    fi
+fi
+
+if (( ${#CONFLICT_SOFT[@]} > 0 )); then
+    log_warn "Soft runtime conflict(s) installed: ${CONFLICT_SOFT[*]}"
+    log_info "Noctalia/Hyprland already provide portals & notifications; consider: sudo pacman -Rns ${CONFLICT_SOFT[*]}"
+fi
+
+if [[ "$NEEDS_SUDO" == true ]]; then
+    if ! kaze_start_sudo_keepalive; then
+        echo "install.sh: sudo authentication failed." >&2
+        exit 1
+    fi
+    log_ok "sudo session verified (keepalive active)"
+fi
 log_ok "Targets ready (CONFIG_HOME=$CONFIG_HOME, DATA_HOME=$DATA_HOME)"
 
-# Step 2: Pacman packages
+# Step 2: Pacman packages (-Syu --needed)
 if [[ "$SKIP_PACKAGES" == false ]]; then
     echo ""
-    log_step "$STEP_NUM" "$TOTAL_STEPS" "Installing official Arch [core]/[extra] packages (${#PACKAGES[@]} pkgs)"
+    log_step "$STEP_NUM" "$TOTAL_STEPS" "Syncing & installing official Arch packages (${#ALL_PACMAN_PACKAGES[@]} pkgs)"
     STEP_NUM=$(( STEP_NUM + 1 ))
-    sudo pacman -S "${PACMAN_FLAGS[@]}" "${PACKAGES[@]}"
+    if [[ "$REMOVE_HARD_CONFLICTS" == true ]] && (( ${#CONFLICT_HARD[@]} > 0 )); then
+        log_info "Removing hard conflict(s): ${CONFLICT_HARD[*]}"
+        sudo pacman -Rdd --noconfirm "${CONFLICT_HARD[@]}"
+    fi
+    sudo pacman -Syu "${PACMAN_FLAGS[@]}" "${ALL_PACMAN_PACKAGES[@]}"
     log_ok "Packages installed cleanly"
 fi
 
-# Step 3: Apply dotfiles, profile, visual style, polkit & backup manifest
+# Step 3: System Setup (NetworkManager, Bluetooth, PipeWire, video group, fc-cache)
+if [[ "$SYSTEM_SETUP" == "true" ]]; then
+    echo ""
+    log_step "$STEP_NUM" "$TOTAL_STEPS" "Configuring system services, audio & font cache"
+    STEP_NUM=$(( STEP_NUM + 1 ))
+    kaze_run_system_setup "$TARGET_USER"
+fi
+
+# Step 4: Optional Display Manager (ly / greetd)
+if [[ "$DM_CHOICE" != "none" ]]; then
+    echo ""
+    log_step "$STEP_NUM" "$TOTAL_STEPS" "Configuring Display Manager ($DM_CHOICE)"
+    STEP_NUM=$(( STEP_NUM + 1 ))
+    kaze_setup_display_manager "$DM_CHOICE"
+fi
+
+# Step 5: Apply dotfiles, profile, visual style, polkit, hybrid GPU seed & backup manifest
 echo ""
 log_step "$STEP_NUM" "$TOTAL_STEPS" "Backing up & deploying kaze-dots configs"
 STEP_NUM=$(( STEP_NUM + 1 ))
+
+HAD_PREINSTALL_USER_LUA=false
+if [[ -e "$CONFIG_HOME/hypr/user.lua" || -L "$CONFIG_HOME/hypr/user.lua" ]]; then
+    HAD_PREINSTALL_USER_LUA=true
+fi
 
 HAD_PREINSTALL_PROFILE=false
 PREINSTALL_PROFILE_CONTENT=""
@@ -1782,10 +2273,18 @@ if [[ -f "$THEME_BACKUP_FILE" ]] || [[ "$HAD_PREINSTALL_THEME_BACKUP" == true ]]
 fi
 log_ok "Profile '${PROFILE}' and style '${STYLE}' recorded under $CONFIG_HOME/kaze"
 
-# Step 4: Default login shell
+HYBRID_GPU_SEEDED=false
+if [[ "$HAD_PREINSTALL_USER_LUA" == false && "$GPU_MODE" == "hybrid-laptop" && "$AUTO_HYBRID_GPU" == true ]]; then
+    if kaze_seed_hybrid_gpu_user_lua "$CONFIG_HOME/hypr/user.lua"; then
+        HYBRID_GPU_SEEDED=true
+    fi
+fi
+
+# Step 6: Default login shell
 if [[ "$SET_ZSH" == "true" ]]; then
     echo ""
     log_step "$STEP_NUM" "$TOTAL_STEPS" "Configuring default login shell"
+    STEP_NUM=$(( STEP_NUM + 1 ))
     if command -v zsh >/dev/null 2>&1; then
         ZSH_BIN="$(command -v zsh)"
         CURRENT_SHELL="$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f7 || true)"
@@ -1801,6 +2300,43 @@ if [[ "$SET_ZSH" == "true" ]]; then
     fi
 fi
 
+# Step 7: Opt-in AUR Helper (yay-bin / paru-bin) — runs after core dotfiles so AUR outages never block desktop deploy
+AUR_FAILED=false
+if [[ "$AUR_HELPER" != "none" ]]; then
+    echo ""
+    log_step "$STEP_NUM" "$TOTAL_STEPS" "Installing opt-in AUR helper ($AUR_HELPER)"
+    STEP_NUM=$(( STEP_NUM + 1 ))
+    AUR_NOCONFIRM=false
+    if [[ "$AUTO_YES" == true || "$PACMAN_NOCONFIRM" == true ]]; then
+        AUR_NOCONFIRM=true
+    fi
+    if ! kaze_install_aur_helper "$AUR_HELPER" "$AUR_NOCONFIRM"; then
+        AUR_FAILED=true
+        kaze_cleanup_aur_tmp
+        log_warn "Opt-in AUR helper '$AUR_HELPER' failed; core kaze-dots desktop deployment is unaffected."
+    fi
+fi
+
+# Step 8: Post-install offline health verification (kaze-doctor)
+echo ""
+log_step "$STEP_NUM" "$TOTAL_STEPS" "Running post-install verification (kaze-doctor --offline)"
+DOCTOR_OUT=""
+DOCTOR_RC=0
+if [[ -x "$BIN_HOME/kaze-doctor" ]]; then
+    DOCTOR_OUT="$("$BIN_HOME/kaze-doctor" --offline --profile "$PROFILE" 2>&1)" || DOCTOR_RC=$?
+    printf '%s\n' "$DOCTOR_OUT"
+    if (( DOCTOR_RC == 0 )); then
+        log_ok "kaze-doctor --offline passed"
+    elif [[ "$SKIP_PACKAGES" == true ]]; then
+        log_warn "kaze-doctor --offline reported missing runtime binaries (advisory in --skip-packages mode)"
+    else
+        log_warn "kaze-doctor --offline exited with status $DOCTOR_RC"
+    fi
+else
+    log_warn "kaze-doctor not found at $BIN_HOME/kaze-doctor"
+fi
+DOCTOR_SUMMARY="$(printf '%s\n' "$DOCTOR_OUT" | grep -m1 '^Doctor summary:' || true)"
+
 # Completion Summary
 echo ""
 if [[ "$PRINT_STYLED" == true ]]; then
@@ -1813,6 +2349,12 @@ if [[ "$PRINT_STYLED" == true ]]; then
         printf '  %sRollback:%s %s/rollback.sh\n' \
             "$C_MUTED" "$C_RESET" "$(<"$LAST_BACKUP")"
     fi
+    if [[ "$NO_LOG" == false && -n "$LOG_FILE" ]]; then
+        printf '  %sLog:%s      %s\n' "$C_MUTED" "$C_RESET" "$LOG_FILE"
+    fi
+    if [[ -n "$DOCTOR_SUMMARY" ]]; then
+        printf '  %sDoctor:%s   %s\n' "$C_MUTED" "$C_RESET" "${DOCTOR_SUMMARY#Doctor summary: }"
+    fi
     printf '  %sKeys:%s     Super+Space Launcher %s Super+Return Foot %s Super+/ Keys\n' \
         "$C_MUTED" "$C_RESET" "$G_BULLET" "$G_BULLET"
     printf '  %sStyle:%s    Super+Shift+I Switcher %s Super+I Settings %s Health: kaze-doctor\n' \
@@ -1820,11 +2362,29 @@ if [[ "$PRINT_STYLED" == true ]]; then
     printf '%s%s%s\n' "$C_GREEN" "$rule_line" "$C_RESET"
 else
     echo "Installed kaze-dots profile: $PROFILE (style: $STYLE)"
+    if [[ "$NO_LOG" == false && -n "$LOG_FILE" ]]; then
+        echo "Install log: $LOG_FILE"
+    fi
+    if [[ -n "$DOCTOR_SUMMARY" ]]; then
+        echo "$DOCTOR_SUMMARY"
+    fi
 fi
 
+if [[ "$AUR_FAILED" == true ]]; then
+    echo "Note: Opt-in AUR helper '$AUR_HELPER' did not complete; retry later or inspect $LOG_FILE."
+fi
+if [[ "$HYBRID_GPU_SEEDED" == true ]]; then
+    echo "Note: Hybrid GPU seeded in $CONFIG_HOME/hypr/user.lua (${GPU_IGPU_CARD}, prefer_mesa_egl = true). If card0/card1 swap across reboots, pin a colon-free udev symlink (Aquamarine splits AQ_DRM_DEVICES on ':')."
+fi
+if (( ${#CONFLICT_SOFT[@]} > 0 )); then
+    echo "Note: Optional soft conflict cleanup: sudo pacman -Rns ${CONFLICT_SOFT[*]}"
+fi
 if [[ "$PROFILE" == "full" ]]; then
     echo "Note: fcitx5-configtool is an optional on-demand Qt GUI if you want a GUI to switch Bamboo between Telex and VNI."
 fi
+
+kaze_stop_logging
+kaze_stop_sudo_keepalive
 
 if [[ "$REBOOT" == "yes" ]]; then
     echo "Rebooting into Kaze Hyprland..."

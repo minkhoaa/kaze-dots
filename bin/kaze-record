@@ -267,6 +267,8 @@ local function start_recording(dir, opts)
     end
     local session = require("kaze.session")
     if not session.is_active() then fail("no active Kaze session") end
+    local wl_disp = os.getenv("WAYLAND_DISPLAY")
+    if not wl_disp or wl_disp == "" then fail("no active Wayland display (WAYLAND_DISPLAY unset)") end
 
     local output, geom
     if opts.region then

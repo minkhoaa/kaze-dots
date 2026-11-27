@@ -1531,10 +1531,11 @@ end
 
 -- Safely update ParallelDownloads inside [options] (comments out any duplicate active lines).
 function M.update_pacman_conf_parallel_downloads(base_conf_text, new_pd)
-    local pd = math.floor(tonumber(new_pd) or 0)
-    if pd < 1 or pd > 32 then
-        return nil, "ParallelDownloads must be between 1 and 32"
+    local num = tonumber(new_pd)
+    if not num or num ~= math.floor(num) or num < 1 or num > 32 then
+        return nil, "ParallelDownloads must be an integer between 1 and 32"
     end
+    local pd = math.floor(num)
     local out = {}
     local in_options = false
     local saw_options = false

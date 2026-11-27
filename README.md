@@ -52,17 +52,26 @@ templates/               Example ~/.config/hypr/user.lua override file
 
 ## Setup
 
+Fresh Arch Linux / CachyOS one-liner (clones `kaze-dots` safely, installs `git` via `pacman -Syu --needed` if needed, and launches the interactive TUI installer):
+
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/minkhoaa/kaze-dots/main/scripts/bootstrap.sh)
+# Or pass flags straight through to install.sh:
+bash <(curl -fsSL https://raw.githubusercontent.com/minkhoaa/kaze-dots/main/scripts/bootstrap.sh) --profile full --dm ly
+```
+
 Preview first without touching anything:
 
 ```sh
 ./scripts/install.sh --profile minimal --dry-run
 ```
 
-Install packages, set Zsh as default login shell, choose a visual preset (11 presets across Angular, Dynamic, and Retro groups; default `dynamic-island`), and apply configs (backs up existing dotfiles automatically):
+Install packages (`pacman -Syu --needed`), configure system services (NetworkManager if no other stack is active, Bluetooth, PipeWire user sockets, `video` group, font cache), set Zsh as default login shell, choose a visual preset (11 presets across Angular, Dynamic, and Retro groups; default `dynamic-island`), and apply configs (backs up existing dotfiles automatically and logs to `~/.local/state/kaze/install-*.log`):
 
 ```sh
 ./scripts/install.sh --profile minimal --style dynamic-island   # default 3-island + hover-expanding center pill
-./scripts/install.sh --profile full --style dynamic-island  # full profile + Dynamic Island pill
+./scripts/install.sh --profile full --style dynamic-island      # full profile + Dynamic Island pill
+./scripts/install.sh --profile full --dm ly --aur yay-bin       # optional official DM (ly/greetd) & opt-in AUR helper
 ```
 
 Apply dotfiles only (if packages are already installed):

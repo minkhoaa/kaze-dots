@@ -6,7 +6,7 @@ Build a crisp, Omarchy-inspired, vertical-first **Hyprland 0.57+ + Noctalia Shel
 
 - **Native Noctalia for everything Noctalia already owns:** bar layout, themes/palettes, built-in app theming (`hyprland`, `foot`, `gtk3`, `gtk4`, `btop`), wallpaper, launcher (`noctalia dmenu`), Control Center, Settings GUI, notifications, OSD, clipboard history, idle, lockscreen, Night Light, Caffeine, Polkit, screenshots/annotation, and window switcher.
 - **Minimal Hyprland + Lua helpers only for what Noctalia does not provide:** Hyprland native Lua config (`hypr/*.lua`), systemd session lifecycle (`kaze-session`), Foot server client (`kaze-footclient`), Hyprland multi-monitor / Present Workspace / 1080p Virtual Share orchestrator (`kaze-display`), Hyprland keybind cheat-sheet (`kaze-keys`), on-demand floating `btop` TUI (`kaze-tui`), Wayland screen recorder (`kaze-record`), modular Zsh + ANSI Starship shell config (`config/zsh/`, `config/starship/`), and health/config-drift diagnostics (`kaze-doctor`).
-- **Zero AUR core:** 24 official `[core]`/`[extra]` packages for `minimal` (+23 optional official packages for `full`, 47 total; unified in `scripts/packages.sh`).
+- **Zero AUR core:** 27 official `[core]`/`[extra]` packages for `minimal` (+24 optional official packages for `full`, 51 total; unified in `scripts/packages.sh`).
 
 ## Resource Budgets (1920×1080, Intel iGPU Arch KVM Guest)
 
