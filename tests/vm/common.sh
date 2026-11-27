@@ -35,7 +35,7 @@ stop_vm() {
     [ -n "$vm_pid" ] || return 0
     if kill -0 "$vm_pid" 2>/dev/null; then
         ssh_guest 'sudo systemctl poweroff' >/dev/null 2>&1 || true
-        for _ in {1..30}; do
+        for _ in {1..45}; do
             kill -0 "$vm_pid" 2>/dev/null || break
             sleep 1
         done

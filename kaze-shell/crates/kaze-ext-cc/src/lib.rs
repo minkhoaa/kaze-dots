@@ -489,7 +489,7 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
             subtitle: if state.dnd {
                 "Muted".into()
             } else {
-                "Active".into()
+                "Off".into()
             },
             active: state.dnd,
         },
