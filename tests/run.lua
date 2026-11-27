@@ -275,6 +275,12 @@ test("native configs: config/noctalia/config.toml and config/foot/foot.ini valid
     local xdph_src = assert(fs.read_file(repo_dir .. "/config/hypr/xdph.conf"))
     assert_contains(xdph_src, "max_fps = 60\n", "xdph.conf caps screencopy framerate at 60 FPS")
     assert_contains(xdph_src, "allow_token_by_default = true\n", "xdph.conf enables restore tokens by default")
+    local fcitx_unit = assert(fs.read_file(repo_dir .. "/config/systemd/user/kaze-fcitx5.service"))
+    assert_contains(fcitx_unit, "DefaultIM=bamboo", "kaze-fcitx5.service seeds Bamboo profile")
+    assert_contains(fcitx_unit, "0=Control+space", "kaze-fcitx5.service seeds Ctrl+Space trigger")
+    assert_contains(fcitx_unit, "1=Control+Shift_L", "kaze-fcitx5.service seeds Ctrl+Shift trigger")
+    assert_contains(fcitx_unit, "3=Shift+Control_L", "kaze-fcitx5.service seeds Shift+Ctrl trigger")
+    assert_contains(fcitx_unit, "ShareInputState=All", "kaze-fcitx5.service shares input state across apps")
     rm_rf(tmp)
 end)
 

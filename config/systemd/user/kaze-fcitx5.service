@@ -12,6 +12,7 @@ Type=exec
 EnvironmentFile=%t/kaze/session.env
 ExecCondition=:/usr/bin/sh -c 'test "${KAZE_ENABLE_FCITX5:-0}" = 1'
 ExecStartPre=:/usr/bin/sh -c 'cfg="${XDG_CONFIG_HOME:-$HOME/.config}/fcitx5/profile"; if [ ! -e "$cfg" ] && [ ! -L "$cfg" ]; then mkdir -p -- "$(dirname -- "$cfg")" && tmp=$(mktemp -- "$cfg.XXXXXXXX") && printf "%%s\\n" "[Groups/0]" "Name=Default" "Default Layout=us" "DefaultIM=bamboo" "" "[Groups/0/Items/0]" "Name=keyboard-us" "Layout=" "" "[Groups/0/Items/1]" "Name=bamboo" "Layout=" "" "[GroupOrder]" "0=Default" > "$tmp" && mv -f -- "$tmp" "$cfg"; fi'
+ExecStartPre=:/usr/bin/sh -c 'cfg="${XDG_CONFIG_HOME:-$HOME/.config}/fcitx5/config"; if [ ! -e "$cfg" ] && [ ! -L "$cfg" ]; then mkdir -p -- "$(dirname -- "$cfg")" && tmp=$(mktemp -- "$cfg.XXXXXXXX") && printf "%%s\\n" "[Hotkey]" "EnumerateWithTriggerKeys=True" "ModifierOnlyKeyTimeout=500" "" "[Hotkey/TriggerKeys]" "0=Control+space" "1=Control+Shift_L" "2=Control+Shift_R" "3=Shift+Control_L" "4=Shift+Control_R" "" "[Hotkey/AltTriggerKeys]" "" "[Behavior]" "ActiveByDefault=False" "ShareInputState=All" "ShowInputMethodInformation=True" "showInputMethodInformationWhenFocusIn=False" > "$tmp" && mv -f -- "$tmp" "$cfg"; fi'
 ExecStart=/usr/bin/fcitx5
 Restart=on-failure
 RestartSec=250ms

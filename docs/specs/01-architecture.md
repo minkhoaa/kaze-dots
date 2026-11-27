@@ -43,7 +43,7 @@ In the `minimal` profile, `kaze-session.target` runs **2 resident native daemons
 | `foot-server.service` + `foot-server.socket` | `foot --server=3` | Shared terminal daemon for instant `kaze-footclient` and `kaze-tui` windows | Uses Arch's packaged unit via systemd drop-ins; never restarted on theme switches |
 
 Optional / on-demand units:
-- `kaze-fcitx5.service`: enabled via `ExecCondition` when `profile = "full"` (or `fcitx5 = true` in `user.lua`), running `fcitx5` + `fcitx5-bamboo` (`XMODIFIERS=@im=fcitx`; native Wayland `text-input-v3` preferred without forcing global `GTK_IM_MODULE`/`QT_IM_MODULE`). Adds `0 MiB` in `minimal`.
+- `kaze-fcitx5.service`: enabled via `ExecCondition` when `profile = "full"` (or `fcitx5 = true` in `user.lua`), running `fcitx5` + `fcitx5-bamboo` (`XMODIFIERS=@im=fcitx`; native Wayland `text-input-v3` preferred without forcing global `GTK_IM_MODULE`/`QT_IM_MODULE`). Seeds `fcitx5/profile` (`keyboard-us` + `bamboo`) and `fcitx5/config` (`Ctrl+Space` & `Ctrl+Shift` toggle, `ShareInputState=All`) when absent. Adds `0 MiB` in `minimal`.
 - `kaze-record.service`: on-demand `wf-recorder` unit started/stopped by `bin/kaze-record`, bound to `kaze-session.target` and finalized gracefully with `SIGINT` on logout.
 - Portal services (`xdg-desktop-portal`, `xdg-desktop-portal-hyprland`, `xdg-desktop-portal-gtk`): strictly D-Bus-activatable on demand (`0` early portals at `T0`). Hyprland sets `HYPRLAND_NO_SD_VARS=1` so `kaze-session start` exports only the minimal Wayland activation variables (`WAYLAND_DISPLAY`, `XDG_CURRENT_DESKTOP=Hyprland`, `HYPRLAND_INSTANCE_SIGNATURE`) to `systemd --user` / D-Bus.
 
