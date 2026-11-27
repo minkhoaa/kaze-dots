@@ -1,0 +1,24 @@
+[package]
+name = "kaze-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kaze-shell"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+calloop.workspace = true
+calloop-wayland-source.workspace = true
+kaze-core.workspace = true
+kaze-ext-bar.workspace = true
+kaze-hypr.workspace = true
+kaze-ipc.workspace = true
+kaze-ui.workspace = true
+notify.workspace = true
+serde_json.workspace = true
+smithay-client-toolkit.workspace = true

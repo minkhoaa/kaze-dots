@@ -19,7 +19,7 @@ class IdleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             proc = Path(tmp)
             fixtures = {
-                12: ("noctalia", 1000, "app.slice/kaze-noctalia.service"),
+                12: ("kaze-shell", 1000, "app.slice/kaze-shell.service"),
                 13: ("foot", 1000, "app.slice/foot-server.service"),
                 14: ("bwrap", 1000, "app.slice/unknown.scope"),
                 15: ("at-spi-bus-laun", 1000, "app.slice/at-spi-dbus-bus.service"),
@@ -36,13 +36,13 @@ class IdleTest(unittest.TestCase):
                     patch("os.getuid", return_value=1000), patch("os.getpid", return_value=11):
                 procs, counts = collect()
             self.assertEqual(procs, {
-                12: ("noctalia", "kaze-noctalia.service", "shell"),
+                12: ("kaze-shell", "kaze-shell.service", "shell"),
                 13: ("foot", "foot-server.service", "shell"),
                 14: ("bwrap", "unknown.scope", "unclassified"),
                 15: ("at-spi-bus-laun", "at-spi-dbus-bus.service", "session"),
                 16: ("pipewire", "pipewire.service", "outside"),
             })
-            self.assertEqual(counts, {"noctalia": 1, "foot": 1})
+            self.assertEqual(counts, {"kaze-shell": 1, "foot": 1})
 
     def test_warm_portal_thread_churn_is_reported(self):
         probe = sampler["probe"]
@@ -76,7 +76,7 @@ class IdleTest(unittest.TestCase):
 
     def verdict(self, *, shell=90.0, session=1.5, cpu=0.09, ctx=5.6, live=None, journal=None):
         totals = {"shell": [shell, cpu, ctx], "session": [session, 0.0, 0.0]}
-        started = {"kaze-noctalia.service"} | (set() if journal is None else journal)
+        started = {"kaze-shell.service"} | (set() if journal is None else journal)
         return sampler["t0_issues"](totals, set() if live is None else live, started)
 
     def test_no_portal_within_budget_passes(self):

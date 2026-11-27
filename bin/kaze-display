@@ -495,6 +495,16 @@ local function toml_quote(s)
 end
 
 local function sync_present_indicator(mode, detail)
+    if cmd_exists("kaze-shell") then
+        local status_mode = mode or "idle"
+        local cmd = "kaze-shell msg display-status " .. fs.shell_quote(status_mode)
+        if detail and detail ~= "" then
+            cmd = cmd .. " " .. fs.shell_quote(detail)
+        end
+        if os.execute(cmd .. " >/dev/null 2>&1") then
+            return
+        end
+    end
     if not cmd_exists("noctalia") then
         return
     end
@@ -564,7 +574,9 @@ local function reapply_virtual_share_after_reload(state, primary_mon)
         return
     end
     hypr_eval('hl.monitor({ output = "kaze-share", mode = "1920x1080@60", position = "9999x0", scale = 1, disabled = false, mirror = "" })')
-    if cmd_exists("noctalia") then
+    if cmd_exists("kaze-shell") then
+        os.execute("kaze-shell msg bar-hide kaze-share >/dev/null 2>&1 || true")
+    elseif cmd_exists("noctalia") then
         for _, bar_name in ipairs(active_bar_names()) do
             os.execute("noctalia msg bar-hide " .. fs.shell_quote(bar_name) .. " kaze-share >/dev/null 2>&1 || true")
         end
@@ -674,11 +686,17 @@ local function restore_dnd_if_managed(state)
 end
 
 local function hide_bar_on(state, monitor_name)
-    if not cmd_exists("noctalia") or type(monitor_name) ~= "string" or monitor_name == "" then
+    if type(monitor_name) ~= "string" or monitor_name == "" then
         return
     end
-    for _, bar_name in ipairs(active_bar_names()) do
-        os.execute("noctalia msg bar-hide " .. fs.shell_quote(bar_name) .. " " .. fs.shell_quote(monitor_name) .. " >/dev/null 2>&1 || true")
+    if cmd_exists("kaze-shell") then
+        os.execute("kaze-shell msg bar-hide " .. fs.shell_quote(monitor_name) .. " >/dev/null 2>&1 || true")
+    elseif cmd_exists("noctalia") then
+        for _, bar_name in ipairs(active_bar_names()) do
+            os.execute("noctalia msg bar-hide " .. fs.shell_quote(bar_name) .. " " .. fs.shell_quote(monitor_name) .. " >/dev/null 2>&1 || true")
+        end
+    else
+        return
     end
     state.bar_hidden_monitors = type(state.bar_hidden_monitors) == "table" and state.bar_hidden_monitors or {}
     for _, m in ipairs(state.bar_hidden_monitors) do
@@ -690,11 +708,15 @@ local function hide_bar_on(state, monitor_name)
 end
 
 local function restore_bars(state)
-    if cmd_exists("noctalia") and type(state.bar_hidden_monitors) == "table" then
+    if type(state.bar_hidden_monitors) == "table" then
         for _, m in ipairs(state.bar_hidden_monitors) do
             if type(m) == "string" and m ~= "" then
-                for _, bar_name in ipairs(active_bar_names()) do
-                    os.execute("noctalia msg bar-show " .. fs.shell_quote(bar_name) .. " " .. fs.shell_quote(m) .. " >/dev/null 2>&1 || true")
+                if cmd_exists("kaze-shell") then
+                    os.execute("kaze-shell msg bar-show " .. fs.shell_quote(m) .. " >/dev/null 2>&1 || true")
+                elseif cmd_exists("noctalia") then
+                    for _, bar_name in ipairs(active_bar_names()) do
+                        os.execute("noctalia msg bar-show " .. fs.shell_quote(bar_name) .. " " .. fs.shell_quote(m) .. " >/dev/null 2>&1 || true")
+                    end
                 end
             end
         end
@@ -1842,7 +1864,9 @@ local function run_virtual_share(ws_arg, interactive_pick)
     if state.virtual_workspace and tostring(state.virtual_workspace) ~= tostring(ws_id) then
         evacuate_workspace_to_primary(state.virtual_workspace, "kaze-share-edge", "kaze-share", primary, existing_ws)
     end
-    if cmd_exists("noctalia") then
+    if cmd_exists("kaze-shell") then
+        os.execute("kaze-shell msg bar-hide kaze-share >/dev/null 2>&1 || true")
+    elseif cmd_exists("noctalia") then
         for _, bar_name in ipairs(active_bar_names()) do
             os.execute("noctalia msg bar-hide " .. fs.shell_quote(bar_name) .. " kaze-share >/dev/null 2>&1 || true")
         end

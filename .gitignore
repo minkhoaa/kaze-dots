@@ -13,3 +13,6 @@ screenshots/tmp-*
 *.qcow2
 *.iso
 *.fd
+
+# Rust build outputs
+kaze-shell/target/

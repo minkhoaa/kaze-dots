@@ -23,6 +23,7 @@ for _, mod in ipairs({
     "kaze.popups",
     "kaze.display",
     "kaze.keybinds_data",
+    "kaze-theme",
     "noctalia",
     "env",
     "core",
@@ -34,14 +35,19 @@ for _, mod in ipairs({
 end
 
 local cfg = require("kaze.hypr_user").load()
+local ok_kaze, kaze_theme = pcall(require, "kaze-theme")
+if not (ok_kaze and type(kaze_theme) == "table") then
+    kaze_theme = nil
+end
 local ok_noc, noctalia_theme = pcall(require, "noctalia")
 if not (ok_noc and type(noctalia_theme) == "table") then
     noctalia_theme = nil
 end
+local active_theme = kaze_theme or noctalia_theme
 
 package.loaded["kaze._ctx"] = {
     cfg = cfg,
-    noctalia = noctalia_theme,
+    noctalia = active_theme,
 }
 
 local monitors = cfg.monitors
@@ -91,11 +97,9 @@ if xdg_runtime and xdg_runtime:sub(1, 1) == "/" then
     end
 end
 
--- Apply Noctalia built-in Hyprland color template when present.
--- Keeping require("noctalia") here ensures Noctalia's template apply script
--- never appends duplicate lines into this symlinked config.
-if noctalia_theme and type(noctalia_theme.apply_theme) == "function" then
-    noctalia_theme.apply_theme()
+-- Apply kaze-shell (or legacy Noctalia) generated Hyprland color template when present.
+if active_theme and type(active_theme.apply_theme) == "function" then
+    active_theme.apply_theme()
 end
 
 if type(cfg.border_override) == "table" and (cfg.border_override.active or cfg.border_override.inactive) then

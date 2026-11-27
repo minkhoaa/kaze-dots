@@ -1011,8 +1011,9 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
 
       -- Seeded empty placeholder files
       local placeholders = {
-        sb.config .. "/foot/themes/noctalia",
-        sb.config .. "/gtk-3.0/noctalia.css",
+        sb.config .. "/foot/themes/kaze-shell",
+        sb.config .. "/gtk-3.0/kaze-shell.css",
+        sb.config .. "/gtk-4.0/kaze-shell.css",
         sb.config .. "/gtk-3.0/kaze-style.css",
       }
       for _, p in ipairs(placeholders) do
@@ -1022,7 +1023,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
 
       -- gtk-3.0/gtk.css imports
       local gtk_css = read_file(sb.config .. "/gtk-3.0/gtk.css") or ""
-      assert_eq(count_occurrences(gtk_css, "noctalia.css"), 1, "gtk.css must import noctalia.css once")
+      assert_eq(count_occurrences(gtk_css, "kaze-shell.css"), 1, "gtk.css must import kaze-shell.css once")
       assert_eq(count_occurrences(gtk_css, "kaze-thunar.css"), 1, "gtk.css must import kaze-thunar.css once")
       assert_eq(count_occurrences(gtk_css, "kaze-style.css"), 1, "gtk.css must import kaze-style.css once")
 
@@ -1035,16 +1036,16 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
     with_sandbox({}, function(sb)
       local custom_user = "-- pre-existing user.lua must not be clobbered\nreturn { kb_layout = 'fr' }\n"
       local custom_theme = "[colors]\nbackground=111111\n"
-      local custom_noctalia_css = "@define-color accent #ff0000;\n"
+      local custom_shell_css = "@define-color accent #ff0000;\n"
       write_file(sb.config .. "/hypr/user.lua", custom_user)
-      write_file(sb.config .. "/foot/themes/noctalia", custom_theme)
-      write_file(sb.config .. "/gtk-3.0/noctalia.css", custom_noctalia_css)
+      write_file(sb.config .. "/foot/themes/kaze-shell", custom_theme)
+      write_file(sb.config .. "/gtk-3.0/kaze-shell.css", custom_shell_css)
       local r = run_apply(sb, { "--yes" })
       assert_eq(r.rc, 0, "apply with existing user.lua must exit 0: " .. r.combined)
       assert_true(is_regular_non_symlink(sb.config .. "/hypr/user.lua"), "existing user.lua must remain regular file")
       assert_eq(read_file(sb.config .. "/hypr/user.lua"), custom_user, "pre-existing user.lua must not be overwritten")
-      assert_eq(read_file(sb.config .. "/foot/themes/noctalia"), custom_theme, "pre-existing foot/themes/noctalia must not be truncated")
-      assert_eq(read_file(sb.config .. "/gtk-3.0/noctalia.css"), custom_noctalia_css, "pre-existing gtk-3.0/noctalia.css must not be truncated")
+      assert_eq(read_file(sb.config .. "/foot/themes/kaze-shell"), custom_theme, "pre-existing foot/themes/kaze-shell must not be truncated")
+      assert_eq(read_file(sb.config .. "/gtk-3.0/kaze-shell.css"), custom_shell_css, "pre-existing gtk-3.0/kaze-shell.css must not be truncated")
     end)
   end)
 
@@ -1096,7 +1097,7 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       -- Verify gtk.css preserved pre-existing custom lines AND did NOT duplicate imports
       local gtk_css = read_file(sb.config .. "/gtk-3.0/gtk.css") or ""
       assert_contains(gtk_css, custom_css_line, "gtk.css must preserve pre-existing custom CSS lines")
-      assert_eq(count_occurrences(gtk_css, "noctalia.css"), 1, "gtk.css must not duplicate noctalia.css import")
+      assert_eq(count_occurrences(gtk_css, "kaze-shell.css"), 1, "gtk.css must not duplicate kaze-shell.css import")
       assert_eq(count_occurrences(gtk_css, "kaze-thunar.css"), 1, "gtk.css must not duplicate kaze-thunar.css import")
       assert_eq(count_occurrences(gtk_css, "kaze-style.css"), 1, "gtk.css must not duplicate kaze-style.css import")
     end)

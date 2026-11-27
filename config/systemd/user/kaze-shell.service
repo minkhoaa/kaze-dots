@@ -1,0 +1,16 @@
+[Unit]
+Description=Kaze native Rust shell
+PartOf=kaze-session.target
+Requisite=kaze-session.target
+After=kaze-session.target
+StartLimitIntervalSec=30s
+StartLimitBurst=5
+
+[Service]
+Type=exec
+Slice=session.slice
+EnvironmentFile=%t/kaze/session.env
+ExecStart=%h/.local/bin/kaze-shell daemon
+Restart=on-failure
+RestartSec=250ms
+TimeoutStopSec=5s

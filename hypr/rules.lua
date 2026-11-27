@@ -163,8 +163,16 @@ hl.window_rule({
     no_focus = true,
 })
 
--- Disable Hyprland layer animations on Noctalia surfaces so Noctalia's internal
--- animations never double-animate or tear.
+-- Disable Hyprland layer animations on kaze-shell (and legacy Noctalia) surfaces
+-- so shell surfaces never double-animate or tear.
+hl.layer_rule({
+    name = "kaze-shell-no-anim",
+    match = {
+        namespace = "^(kaze-bar-.+|kaze-island|kaze-osd)$",
+    },
+    no_anim = true,
+})
+
 hl.layer_rule({
     name = "noctalia-no-anim",
     match = {

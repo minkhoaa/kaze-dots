@@ -154,7 +154,7 @@ test("native configs: config/noctalia/config.toml and config/foot/foot.ini valid
     assert_contains(noc_src, '"foot"', "Noctalia Foot template enabled")
 
     local foot_src = assert(fs.read_file(repo_dir .. "/config/foot/foot.ini"))
-    assert_contains(foot_src, "include=~/.config/foot/themes/noctalia\n", "foot includes Noctalia theme")
+    assert_contains(foot_src, "include=~/.config/foot/themes/kaze-shell\n", "foot includes kaze-shell theme")
 
     assert_contains(noc_src, '"record"', "Noctalia bar includes record indicator widget")
     assert_contains(noc_src, "[widget.record]\n", "Noctalia config defines [widget.record]")
@@ -268,8 +268,8 @@ test("native configs: config/noctalia/config.toml and config/foot/foot.ini valid
         assert_true(not val_out:find("WARN"), "noctalia config validate must have 0 warnings:\n" .. val_out)
     end
     if cmd_exists("foot") then
-        fs.write_atomic(tmp .. "/themes/noctalia", "")
-        local test_foot = foot_src:gsub("~/.config/foot/themes/noctalia", tmp .. "/themes/noctalia")
+        fs.write_atomic(tmp .. "/themes/kaze-shell", "")
+        local test_foot = foot_src:gsub("~/.config/foot/themes/kaze%-shell", tmp .. "/themes/kaze-shell")
         fs.write_atomic(tmp .. "/foot.ini", test_foot)
         local ok_foot = os.execute("foot --check-config --config " .. fs.shell_quote(tmp .. "/foot.ini") .. " >/dev/null 2>&1")
         assert_true(ok_foot == true or ok_foot == 0, "foot --check-config must succeed")
@@ -340,8 +340,9 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         assert_contains(seeded_noc, '[wallpaper.default]\npath = "' .. tmp .. '/Pictures/Wallpapers/05-kanagawa.jpg"\n', "expands default wallpaper table path")
         assert_true(not seeded_noc:find("~/Pictures/Wallpapers", 1, true), "leaves no unexpanded ~/Pictures/Wallpapers")
         assert_eq(fs.read_file(user_wall), "user-wallpaper-bytes\n", "preserves pre-existing user wallpaper")
-        assert_true(fs.file_exists(cfg .. "/foot/themes/noctalia"), "seeds empty Foot Noctalia theme")
-        assert_true(os.execute("test -L " .. q(tmp .. "/.config/foot/themes/noctalia")), "links ~/.config/foot/themes/noctalia when XDG_CONFIG_HOME is custom")
+        assert_true(fs.file_exists(cfg .. "/foot/themes/kaze-shell"), "seeds empty Foot kaze-shell theme")
+        assert_true(os.execute("test -L " .. q(tmp .. "/.config/foot/themes/kaze-shell")), "links ~/.config/foot/themes/kaze-shell when XDG_CONFIG_HOME is custom")
+        assert_true(fs.file_exists(cfg .. "/kaze-shell/config.toml"), "seeds editable kaze-shell config.toml")
         assert_eq(fs.read_file(user_zsh), "# user-owned zsh overrides\n")
         assert_eq(fs.read_file(zprof_local), "# user-owned zprofile overrides\n")
 
@@ -358,6 +359,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         assert_contains(manifest, tmp .. "/.local/bin/kaze-session\n")
         assert_contains(manifest, tmp .. "/.local/bin/kaze-project\n")
         assert_contains(manifest, cfg .. "/hypr/xdph.conf\n")
+        assert_contains(manifest, cfg .. "/systemd/user/kaze-shell.service\n")
         assert_contains(manifest, cfg .. "/systemd/user/kaze-noctalia.service\n")
         assert_contains(manifest, cfg .. "/foot/foot.ini\n")
         assert_contains(manifest, cfg .. "/starship.toml\n")
@@ -393,9 +395,10 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         assert_contains(manifest, cfg .. "/xfce4/xfconf/xfce-perchannel-xml/thunar.xml\n")
         assert_contains(manifest, data .. "/applications/yazi.desktop\n")
         local gtk_css = assert(fs.read_file(cfg .. "/gtk-3.0/gtk.css"))
-        assert_contains(gtk_css, '@import url("noctalia.css");\n', "gtk.css imports noctalia.css")
+        assert_contains(gtk_css, '@import url("kaze-shell.css");\n', "gtk.css imports kaze-shell.css")
         assert_contains(gtk_css, '@import url("kaze-thunar.css");\n', "gtk.css imports kaze-thunar.css")
         assert_contains(gtk_css, '@import url("kaze-style.css");\n', "gtk.css imports kaze-style.css")
+        assert_contains(manifest, cfg .. "/kaze-shell/config.toml\n")
         assert_contains(manifest, cfg .. "/noctalia/config.toml\n")
         assert_contains(manifest, tmp .. "/.zshrc\n")
         assert_contains(manifest, tmp .. "/.zprofile\n")
@@ -423,8 +426,9 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
             tmp .. "/.zprofile",
             data .. "/kaze-dots/lua/kaze",
             data .. "/applications/yazi.desktop",
-            cfg .. "/foot/themes/noctalia",
-            tmp .. "/.config/foot/themes/noctalia",
+            cfg .. "/foot/themes/kaze-shell",
+            tmp .. "/.config/foot/themes/kaze-shell",
+            cfg .. "/kaze-shell/config.toml",
             cfg .. "/yazi/yazi.toml",
             cfg .. "/zathura/zathurarc",
             cfg .. "/imv/config",
@@ -472,7 +476,7 @@ test("kaze-footclient & kaze-session: copied helpers pass live Noctalia theme ov
         for _, cli in ipairs({ "kaze-footclient", "kaze-session" }) do
             assert(os.execute("cp -- " .. q(repo .. "/bin/" .. cli) .. " " .. q(tools .. "/" .. cli)))
         end
-        fs.write_atomic(tmp .. "/cfg/foot/themes/noctalia", "[colors-dark]\nbackground=1a1b26\nforeground=c0caf5\n")
+        fs.write_atomic(tmp .. "/cfg/foot/themes/kaze-shell", "[colors-dark]\nbackground=1a1b26\nforeground=c0caf5\n")
         stub("footclient", [[
 [ "$1" = -E ]
 printf '%s\n' "$@" > "$HOME/client-args"

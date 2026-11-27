@@ -12,9 +12,11 @@ import sys
 import time
 
 CORE = {
-    "kaze-noctalia.service": "noctalia",
+    "kaze-shell.service": "kaze-shell",
     "foot-server.service": "foot",
 }
+SHELL_UNIT = "kaze-shell.service"
+SHELL_COMM = "kaze-shell"
 ON_DEMAND = {
     "kaze-record.service": "wf-recorder",
 }
@@ -138,7 +140,7 @@ def probe(seconds, guest_sudo_pss=False, phase="T0"):
             err.append(f"expected exactly one {comm} in {unit}")
     print(f"dt={stop - start:.2f}s")
     totals = defaultdict(lambda: [0.0, 0.0, 0.0])
-    noctalia_pss = 0.0
+    shell_pss = 0.0
     for pid, (comm, unit, group) in sorted(last.items()):
         prefix = f"{group:12s} {pid:5d} {comm:<16s} {unit:<36s}"
         try:
@@ -148,8 +150,8 @@ def probe(seconds, guest_sudo_pss=False, phase="T0"):
             prefix += "  PSS n/a  "
         else:
             totals[group][0] += pss
-            if comm == "noctalia":
-                noctalia_pss += pss
+            if comm == SHELL_COMM:
+                shell_pss += pss
             prefix += f" {pss:6.2f} MiB"
         if pid not in before or pid not in after:
             note(group, f"CPU/CS unavailable for {comm} [{pid}]: counters missing or PID changed")
@@ -172,8 +174,8 @@ def probe(seconds, guest_sudo_pss=False, phase="T0"):
     portals = {unit if unit in PORTALS else comm for comm, unit, _ in (*first.values(), *last.values())
                if unit in PORTALS or comm in PORTAL_COMMS}
     combined = totals["shell"][0] + totals["session"][0]
-    print(f"Summary: shell+session={combined:.2f} MiB, noctalia={noctalia_pss:.2f} MiB, live portals={','.join(sorted(portals)) or 'none'}")
-    return totals, noctalia_pss, portals, stop - start, err
+    print(f"Summary: shell+session={combined:.2f} MiB, {SHELL_COMM}={shell_pss:.2f} MiB, live portals={','.join(sorted(portals)) or 'none'}")
+    return totals, shell_pss, portals, stop - start, err
 
 
 def units_started_this_boot(units):
@@ -192,8 +194,8 @@ def t0_issues(totals, portals, started):
                                ("idle CPU", cpu, 0.20), ("context switches/s", ctx, 8.0)):
         if value > limit:
             errors.append(f"{name}: {value:.2f} > {limit:.2f}")
-    if "kaze-noctalia.service" not in started:
-        errors.append("T0 journal check unavailable: no startup record for kaze-noctalia.service")
+    if SHELL_UNIT not in started:
+        errors.append(f"T0 journal check unavailable: no startup record for {SHELL_UNIT}")
     early = portals | (started & PORTALS)
     if early:
         errors.append(f"portal activation before first client probe: {', '.join(sorted(early))}")
@@ -209,7 +211,7 @@ def main():
     if not math.isfinite(args.seconds) or args.seconds <= 0:
         parser.error("--seconds must be finite and positive")
     print(f"Phase: {args.phase}", flush=True)
-    packages = subprocess.run(["pacman", "-Q", "hyprland", "noctalia", "foot",
+    packages = subprocess.run(["pacman", "-Q", "hyprland", "foot",
                                "xdg-desktop-portal", "xdg-desktop-portal-gtk",
                                "xdg-desktop-portal-hyprland", "dconf"],
                               check=True, stdout=subprocess.PIPE, text=True).stdout
@@ -219,7 +221,7 @@ def main():
     time.sleep(settle)
     totals, _, portals, _, errors = probe(args.seconds, args.guest_sudo_pss, args.phase)
     if args.phase == "T0":
-        started = units_started_this_boot(PORTALS | {"kaze-noctalia.service"})
+        started = units_started_this_boot(PORTALS | {SHELL_UNIT})
         errors.extend(t0_issues(totals, portals, started))
     if errors:
         for e in errors:

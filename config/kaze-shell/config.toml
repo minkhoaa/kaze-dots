@@ -1,0 +1,25 @@
+# Kaze Shell default configuration (Omarchy 42px vertical left rail)
+# Hot-reloaded automatically on save; syntax errors keep the active config running.
+
+[theme]
+mode = "dark"
+palette = "Kanagawa"
+
+[bar]
+enabled = true
+position = "left"
+island_mode = false
+thickness = 42
+length = 0
+margin_edge = 8
+margin_ends = 8
+corner_radius = 0.0
+border_width = 2.0
+background_opacity = 0.94
+exclusive = true
+persistent_workspaces = 5
+font = "JetBrainsMono Nerd Font"
+
+[display]
+left_click_cmd = ["kaze-display", "--menu"]
+right_click_cmd = ["kaze-display", "toggle-window-share"]

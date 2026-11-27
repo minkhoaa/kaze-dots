@@ -17,6 +17,7 @@ Read the matching guide before editing the source paths below. Add a nested guid
 | Guide | Change | Current source paths |
 | --- | --- | --- |
 | [config/AGENTS.md](config/AGENTS.md) | Native Hyprland, Noctalia, Foot, and systemd configs | `hypr/`, `config/noctalia/`, `config/foot/`, `config/systemd/` |
+| [kaze-shell/AGENTS.md](kaze-shell/AGENTS.md) | Rust shell workspace, headless checks and Rust CI | `kaze-shell/`, `.github/workflows/kaze-shell.yml` |
 | [kaze/AGENTS.md](kaze/AGENTS.md) | Lua helper libraries and CLIs | `lua/kaze/`, `bin/`, `templates/hypr-user.lua.example`, `tests/run.lua` |
 | [scripts/AGENTS.md](scripts/AGENTS.md) | Installation, backups and VM testing | `scripts/`, `tests/vm/verify.sh` |
 

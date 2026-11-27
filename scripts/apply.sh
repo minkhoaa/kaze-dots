@@ -188,11 +188,11 @@ ensure_gtk3_css_imports() {
     elif [ ! -f "$dst" ]; then
         : > "$dst"
     fi
-    if ! grep -Fq 'noctalia.css' "$dst" 2>/dev/null; then
+    if ! grep -Fq 'kaze-shell.css' "$dst" 2>/dev/null; then
         local tmp_css
         tmp_css=$(mktemp -- "$dst.XXXXXXXX")
         {
-            printf '@import url("noctalia.css");\n'
+            printf '@import url("kaze-shell.css");\n'
             cat -- "$dst"
         } > "$tmp_css"
         mv -fT -- "$tmp_css" "$dst"
@@ -238,11 +238,18 @@ seed_editable_file "$REPO_DIR/config/Thunar/accels.scm" "$CONFIG_HOME/Thunar/acc
 seed_editable_file "$REPO_DIR/config/xfce4/xfconf/xfce-perchannel-xml/thunar.xml" "$CONFIG_HOME/xfce4/xfconf/xfce-perchannel-xml/thunar.xml"
 ensure_gtk3_css_imports
 
-GTK3_NOCTALIA="$CONFIG_HOME/gtk-3.0/noctalia.css"
-if [ ! -e "$GTK3_NOCTALIA" ] && [ ! -L "$GTK3_NOCTALIA" ]; then
-    mkdir -p -- "$(dirname -- "$GTK3_NOCTALIA")"
-    : > "$GTK3_NOCTALIA"
-    record_installed "$GTK3_NOCTALIA"
+GTK3_KAZE_CSS="$CONFIG_HOME/gtk-3.0/kaze-shell.css"
+if [ ! -e "$GTK3_KAZE_CSS" ] && [ ! -L "$GTK3_KAZE_CSS" ]; then
+    mkdir -p -- "$(dirname -- "$GTK3_KAZE_CSS")"
+    : > "$GTK3_KAZE_CSS"
+    record_installed "$GTK3_KAZE_CSS"
+fi
+
+GTK4_KAZE_CSS="$CONFIG_HOME/gtk-4.0/kaze-shell.css"
+if [ ! -e "$GTK4_KAZE_CSS" ] && [ ! -L "$GTK4_KAZE_CSS" ]; then
+    mkdir -p -- "$(dirname -- "$GTK4_KAZE_CSS")"
+    : > "$GTK4_KAZE_CSS"
+    record_installed "$GTK4_KAZE_CSS"
 fi
 
 GTK3_STYLE="$CONFIG_HOME/gtk-3.0/kaze-style.css"
@@ -252,16 +259,16 @@ if [ ! -e "$GTK3_STYLE" ] && [ ! -L "$GTK3_STYLE" ]; then
     record_installed "$GTK3_STYLE"
 fi
 
-# Ensure Foot's included Noctalia theme file exists before Noctalia runs its first template pass.
-FOOT_THEME="$CONFIG_HOME/foot/themes/noctalia"
+# Ensure Foot's included kaze-shell theme file exists before kaze-shell runs its first template pass.
+FOOT_THEME="$CONFIG_HOME/foot/themes/kaze-shell"
 if [ ! -e "$FOOT_THEME" ] && [ ! -L "$FOOT_THEME" ]; then
     mkdir -p -- "$(dirname -- "$FOOT_THEME")"
     : > "$FOOT_THEME"
     record_installed "$FOOT_THEME"
 fi
-DEFAULT_FOOT_THEME="$(realpath -ms -- "$HOME/.config/foot/themes/noctalia")"
+DEFAULT_FOOT_THEME="$(realpath -ms -- "$HOME/.config/foot/themes/kaze-shell")"
 if [ "$FOOT_THEME" != "$DEFAULT_FOOT_THEME" ]; then
-    # foot.ini uses include=~/.config/foot/themes/noctalia (Foot expands ~ via $HOME, not XDG_CONFIG_HOME).
+    # foot.ini uses include=~/.config/foot/themes/kaze-shell (Foot expands ~ via $HOME, not XDG_CONFIG_HOME).
     backup_and_link "$FOOT_THEME" "$DEFAULT_FOOT_THEME"
 fi
 
@@ -289,6 +296,11 @@ for bin_file in "$REPO_DIR"/bin/kaze-*; do
     backup_and_link "$bin_file" "$BIN_HOME/$(basename "$bin_file")"
 done
 
+if [ -x "$REPO_DIR/kaze-shell/target/release/kaze-shell" ]; then
+    backup_and_link "$REPO_DIR/kaze-shell/target/release/kaze-shell" "$BIN_HOME/kaze-shell"
+fi
+
+seed_editable_file "$REPO_DIR/config/kaze-shell/config.toml" "$CONFIG_HOME/kaze-shell/config.toml"
 seed_editable_noctalia_config "$REPO_DIR/config/noctalia/config.toml" "$CONFIG_HOME/noctalia/config.toml"
 
 if [ ! -e "$CONFIG_HOME/hypr/user.lua" ] && [ ! -L "$CONFIG_HOME/hypr/user.lua" ]; then

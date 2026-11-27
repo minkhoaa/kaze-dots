@@ -7,4 +7,4 @@ After=graphical-session-pre.target graphical-session.target
 DefaultDependencies=no
 Conflicts=shutdown.target
 Before=shutdown.target
-Wants=kaze-noctalia.service foot-server.service kaze-fcitx5.service
+Wants=kaze-shell.service foot-server.service kaze-fcitx5.service

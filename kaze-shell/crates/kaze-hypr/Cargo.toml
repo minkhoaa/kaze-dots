@@ -1,0 +1,13 @@
+[package]
+name = "kaze-hypr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+kaze-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true

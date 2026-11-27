@@ -51,12 +51,16 @@ local function read_overrides(path)
     ini:close()
 end
 
--- foot --server keeps its startup palette. Pass Noctalia's live generated
+-- foot --server keeps its startup palette. Pass kaze-shell's live generated
 -- theme file as per-window overrides so new terminals pick up theme switches
 -- immediately without restarting the server or killing open shells.
 local cfg_dir = fs.config_dir()
 read_overrides(cfg_dir .. "/foot/foot.ini")
-read_overrides(cfg_dir .. "/foot/themes/noctalia")
+if fs.file_exists(cfg_dir .. "/foot/themes/kaze-shell") then
+    read_overrides(cfg_dir .. "/foot/themes/kaze-shell")
+else
+    read_overrides(cfg_dir .. "/foot/themes/noctalia")
+end
 
 for _, value in ipairs(arg) do command[#command + 1] = fs.shell_quote(value) end
 os.exit(fs.exit_status(os.execute(table.concat(command, " "))))

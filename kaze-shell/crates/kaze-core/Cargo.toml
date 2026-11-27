@@ -1,0 +1,15 @@
+[package]
+name = "kaze-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bitflags.workspace = true
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
