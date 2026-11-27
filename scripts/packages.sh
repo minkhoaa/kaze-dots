@@ -19,7 +19,8 @@ MINIMAL_PACKAGES=(
     "${PKG_MIN_FONTS[@]}"
 )
 
-# Optional official Arch [extra] groups (enabled only via --dm / --aur).
+# Optional official Arch [extra] groups (noctalia-greeter via greetd is default DM in install.sh).
+PKG_DM_NOCTALIA=(greetd noctalia-greeter)
 PKG_DM_LY=(ly)
 PKG_DM_GREETD=(greetd greetd-tuigreet)
 PKG_AUR_PREREQS=(base-devel git)

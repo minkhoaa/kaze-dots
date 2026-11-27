@@ -37,7 +37,8 @@ SET_ZSH="auto"
 SET_ZSH_EXPLICIT=false
 SYSTEM_SETUP="auto"
 SYSTEM_SETUP_EXPLICIT=false
-DM_CHOICE="none"
+DM_CHOICE="auto"
+DM_EXPLICIT=false
 AUR_HELPER="none"
 AUTO_HYBRID_GPU=true
 REPLACE_CONFLICTS=false
@@ -60,7 +61,7 @@ Options:
                                   Angular: omarchy-rail, swiss-grid, corner-hud, ghost-zero
                                   Dynamic: dynamic-island, hardware-notch, glass-studio, floating-rail
                                   Retro:   tui-hacker, retro-90s, cinema-frame
-  --dm <none|ly|greetd>         Optional official display manager (default: none / TTY1)
+  --dm <none|noctalia|ly|greetd> Official display manager (default: noctalia; none = TTY1)
   --aur <none|yay-bin|paru-bin> Opt-in AUR helper built after core install (default: none)
   --system-setup                Enable systemd/audio/group/font setup explicitly
   --skip-system-setup           Skip systemd/audio/group/font setup
@@ -111,14 +112,16 @@ while (( $# > 0 )); do
             ;;
         --dm)
             if (( $# < 2 )) || [[ -z "${2:-}" ]]; then
-                echo "install.sh: --dm requires an argument (none, ly, or greetd)" >&2
+                echo "install.sh: --dm requires an argument (none, noctalia, ly, or greetd)" >&2
                 exit 2
             fi
             DM_CHOICE="$2"
+            DM_EXPLICIT=true
             shift 2
             ;;
         --dm=*)
             DM_CHOICE="${1#--dm=}"
+            DM_EXPLICIT=true
             shift
             ;;
         --aur)
@@ -208,10 +211,14 @@ case "$PROFILE" in
         ;;
 esac
 
+if [[ "$DM_EXPLICIT" == true && "$DM_CHOICE" == "auto" ]]; then
+    echo "install.sh: invalid --dm '$DM_CHOICE' (expected: none, noctalia, ly, or greetd)" >&2
+    exit 2
+fi
 case "$DM_CHOICE" in
-    none|ly|greetd) ;;
+    auto|none|noctalia|ly|greetd) ;;
     *)
-        echo "install.sh: invalid --dm '$DM_CHOICE' (expected: none, ly, or greetd)" >&2
+        echo "install.sh: invalid --dm '$DM_CHOICE' (expected: none, noctalia, ly, or greetd)" >&2
         exit 2
         ;;
 esac
@@ -253,7 +260,9 @@ ALL_PACMAN_PACKAGES=()
 compute_pacman_packages() {
     get_packages_for_profile "$PROFILE"
     ADDON_PACKAGES=()
-    if [[ "$DM_CHOICE" == "ly" ]]; then
+    if [[ "$DM_CHOICE" == "noctalia" ]]; then
+        ADDON_PACKAGES+=("${PKG_DM_NOCTALIA[@]}")
+    elif [[ "$DM_CHOICE" == "ly" ]]; then
         ADDON_PACKAGES+=("${PKG_DM_LY[@]}")
     elif [[ "$DM_CHOICE" == "greetd" ]]; then
         ADDON_PACKAGES+=("${PKG_DM_GREETD[@]}")
@@ -282,6 +291,13 @@ resolve_effective_defaults() {
             SYSTEM_SETUP="false"
         else
             SYSTEM_SETUP="true"
+        fi
+    fi
+    if [[ "$DM_CHOICE" == "auto" ]]; then
+        if [[ "$SKIP_PACKAGES" == true ]]; then
+            DM_CHOICE="none"
+        else
+            DM_CHOICE="noctalia"
         fi
     fi
     if [[ "$REBOOT" == "auto" ]] && [[ "$SKIP_PACKAGES" == true ]]; then
@@ -1266,8 +1282,9 @@ draw_screen_options() {
             dm)
                 local dm_label="None (TTY1)" dm_col="$C_MUTED"
                 case "$DM_CHOICE" in
-                    ly)     dm_label="ly";               dm_col="$C_CYAN" ;;
-                    greetd) dm_label="greetd + tuigreet"; dm_col="$C_CYAN" ;;
+                    noctalia) dm_label="noctalia-greeter";  dm_col="$C_CYAN" ;;
+                    ly)       dm_label="ly";                dm_col="$C_CYAN" ;;
+                    greetd)   dm_label="greetd + tuigreet"; dm_col="$C_CYAN" ;;
                 esac
                 draw_opt_cycle_row "$i" "Display Manager:" "$dm_label" "$dm_col"
                 ;;
@@ -1353,8 +1370,9 @@ draw_screen_review() {
 
     local dm_desc="None (TTY1 auto-start via ~/.zprofile)"
     case "$DM_CHOICE" in
-        ly)     dm_desc="ly (ly@tty1.service)" ;;
-        greetd) dm_desc="greetd + tuigreet (/etc/greetd/config.toml)" ;;
+        noctalia) dm_desc="noctalia-greeter (greetd, Tokyo-Night)" ;;
+        ly)       dm_desc="ly (ly@tty1.service)" ;;
+        greetd)   dm_desc="greetd + tuigreet (/etc/greetd/config.toml)" ;;
     esac
     tui_box_kv 14 "Display mgr" "$dm_desc" "$C_FG"
 
@@ -1490,7 +1508,9 @@ build_pkg_modal_lines() {
     if [[ "$DM_CHOICE" != "none" || "$AUR_HELPER" != "none" ]]; then
         PKG_MODAL_LINES+=("  Optional Add-ons")
         PKG_MODAL_STYLES+=("HDR")
-        if [[ "$DM_CHOICE" == "ly" ]]; then
+        if [[ "$DM_CHOICE" == "noctalia" ]]; then
+            add_pkg_group "Display Mgr" "$C_CYAN" "${PKG_DM_NOCTALIA[@]}"
+        elif [[ "$DM_CHOICE" == "ly" ]]; then
             add_pkg_group "Display Mgr" "$C_CYAN" "${PKG_DM_LY[@]}"
         elif [[ "$DM_CHOICE" == "greetd" ]]; then
             add_pkg_group "Display Mgr" "$C_CYAN" "${PKG_DM_GREETD[@]}"
@@ -1703,16 +1723,20 @@ run_tui_wizard() {
                             if [[ "$HAS_ARCH" == false || "$HAS_PACMAN" == false ]]; then
                                 TUI_STATUS_MSG="pacman unavailable on this host; display manager setup requires Arch"
                             elif [[ "$key" == "RIGHT" ]]; then
+                                DM_EXPLICIT=true
                                 case "$DM_CHOICE" in
-                                    none)   DM_CHOICE="ly" ;;
-                                    ly)     DM_CHOICE="greetd" ;;
-                                    greetd) DM_CHOICE="none" ;;
+                                    none)     DM_CHOICE="noctalia" ;;
+                                    noctalia) DM_CHOICE="ly" ;;
+                                    ly)       DM_CHOICE="greetd" ;;
+                                    greetd)   DM_CHOICE="none" ;;
                                 esac
                             else
+                                DM_EXPLICIT=true
                                 case "$DM_CHOICE" in
-                                    none)   DM_CHOICE="greetd" ;;
-                                    greetd) DM_CHOICE="ly" ;;
-                                    ly)     DM_CHOICE="none" ;;
+                                    none)     DM_CHOICE="greetd" ;;
+                                    greetd)   DM_CHOICE="ly" ;;
+                                    ly)       DM_CHOICE="noctalia" ;;
+                                    noctalia) DM_CHOICE="none" ;;
                                 esac
                             fi
                         elif [[ "$cur_key" == "aur" ]]; then
@@ -1761,11 +1785,13 @@ run_tui_wizard() {
                                         SKIP_PACKAGES=false
                                         [[ "$SYSTEM_SETUP_EXPLICIT" == false ]] && SYSTEM_SETUP="true"
                                         [[ "$SET_ZSH_EXPLICIT" == false ]] && SET_ZSH="true"
+                                        [[ "$DM_EXPLICIT" == false ]] && DM_CHOICE="noctalia"
                                     fi
                                 else
                                     SKIP_PACKAGES=true
                                     [[ "$SYSTEM_SETUP_EXPLICIT" == false ]] && SYSTEM_SETUP="false"
                                     [[ "$SET_ZSH_EXPLICIT" == false ]] && SET_ZSH="false"
+                                    [[ "$DM_EXPLICIT" == false ]] && DM_CHOICE="none"
                                 fi
                                 ;;
                             noconfirm)
@@ -1799,10 +1825,12 @@ run_tui_wizard() {
                                 if [[ "$HAS_ARCH" == false || "$HAS_PACMAN" == false ]]; then
                                     TUI_STATUS_MSG="pacman unavailable on this host; display manager setup requires Arch"
                                 else
+                                    DM_EXPLICIT=true
                                     case "$DM_CHOICE" in
-                                        none)   DM_CHOICE="ly" ;;
-                                        ly)     DM_CHOICE="greetd" ;;
-                                        greetd) DM_CHOICE="none" ;;
+                                        none)     DM_CHOICE="noctalia" ;;
+                                        noctalia) DM_CHOICE="ly" ;;
+                                        ly)       DM_CHOICE="greetd" ;;
+                                        greetd)   DM_CHOICE="none" ;;
                                     esac
                                 fi
                                 ;;
@@ -2171,12 +2199,12 @@ if [[ "$SYSTEM_SETUP" == "true" ]]; then
     kaze_run_system_setup "$TARGET_USER"
 fi
 
-# Step 4: Optional Display Manager (ly / greetd)
+# Step 4: Optional Display Manager (noctalia / ly / greetd)
 if [[ "$DM_CHOICE" != "none" ]]; then
     echo ""
     log_step "$STEP_NUM" "$TOTAL_STEPS" "Configuring Display Manager ($DM_CHOICE)"
     STEP_NUM=$(( STEP_NUM + 1 ))
-    kaze_setup_display_manager "$DM_CHOICE"
+    kaze_setup_display_manager "$DM_CHOICE" "$TARGET_USER"
 fi
 
 # Step 5: Apply dotfiles, profile, visual style, polkit, hybrid GPU seed & backup manifest

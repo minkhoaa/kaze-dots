@@ -348,6 +348,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
         local arch_release = etc_dir .. "/arch-release"
         local sys_drm = opts.missing_drm and (root .. "/no_such_drm") or (root .. "/sys_drm")
         local greetd_cfg = etc_dir .. "/greetd/config.toml"
+        local greeter_dir = root .. "/var/lib/noctalia-greeter"
+        local greeter_setup = root .. "/no-such-greeter-setup.sh"
         local systemd_etc = etc_dir .. "/systemd/system"
         local aur_base = opts.aur_base_url or ("https://mock-aur.invalid")
         local tmpdir = root .. "/tmp"
@@ -1008,6 +1010,8 @@ exit "$RC"
             arch_release = arch_release,
             sys_drm = sys_drm,
             greetd_cfg = greetd_cfg,
+            greeter_dir = greeter_dir,
+            greeter_setup = greeter_setup,
             systemd_etc = systemd_etc,
             aur_base = aur_base,
             tmpdir = tmpdir,
@@ -1038,6 +1042,8 @@ exit "$RC"
                 KAZE_ARCH_RELEASE_FILE = self.arch_release,
                 KAZE_SYS_DRM_DIR = self.sys_drm,
                 KAZE_GREETD_CONFIG = self.greetd_cfg,
+                KAZE_NOCTALIA_GREETER_DIR = self.greeter_dir,
+                KAZE_NOCTALIA_GREETER_SETUP = self.greeter_setup,
                 KAZE_SYSTEMD_ETC_DIR = self.systemd_etc,
                 KAZE_AUR_BASE_URL = self.aur_base,
                 TMPDIR = self.tmpdir,
@@ -1414,14 +1420,23 @@ exit 0
                 for _, prof in ipairs({ "minimal", "full" }) do
                     local expected = prof == "minimal" and MINIMAL_PKGS or FULL_PKGS
                     local r_pkg = sb:run({ INSTALL_PKGS_SH, "--profile", prof, "--dry-run" })
-                    local r_ins = sb:run({ INSTALL_SH, "--profile", prof, "--dry-run" })
+                    local r_ins_none = sb:run({ INSTALL_SH, "--profile", prof, "--dm", "none", "--dry-run" })
+                    local r_ins_def = sb:run({ INSTALL_SH, "--profile", prof, "--dry-run" })
                     assert_eq(r_pkg.rc, 0, "install-packages dry-run " .. prof)
-                    assert_eq(r_ins.rc, 0, "install.sh dry-run " .. prof)
+                    assert_eq(r_ins_none.rc, 0, "install.sh --dm none dry-run " .. prof)
+                    assert_eq(r_ins_def.rc, 0, "install.sh default dry-run " .. prof)
                     local p1 = extract_pacman_pkgs_from_text(r_pkg.combined)
-                    local p2 = extract_pacman_pkgs_from_text(r_ins.combined)
+                    local p2 = extract_pacman_pkgs_from_text(r_ins_none.combined)
+                    local p_def = extract_pacman_pkgs_from_text(r_ins_def.combined)
+                    local expected_def = {}
+                    for i = 1, #expected do expected_def[#expected_def + 1] = expected[i] end
+                    expected_def[#expected_def + 1] = "greetd"
+                    expected_def[#expected_def + 1] = "noctalia-greeter"
                     assert_pkg_set_eq(p1, expected, "install-packages " .. prof)
-                    assert_pkg_set_eq(p2, expected, "install.sh " .. prof)
+                    assert_pkg_set_eq(p2, expected, "install.sh --dm none " .. prof)
                     assert_eq(#p1, #p2, "exact count parity for " .. prof)
+                    assert_pkg_set_eq(p_def, expected_def, "install.sh default includes greetd + noctalia-greeter for " .. prof)
+                    assert_contains(r_ins_def.combined, "Display manager: noctalia", "default DM is noctalia for " .. prof)
                 end
             end)
 
@@ -1490,6 +1505,8 @@ exit 0
                     { "--style=default" },
                     { "--style", "foo;bar" },
                     { "--dm", "sddm" },
+                    { "--dm", "auto" },
+                    { "--dm", "NOCTALIA" },
                     { "--dm", "gdm" },
                     { "--dm=lightdm" },
                     { "--dm", "LY" },
@@ -1568,7 +1585,7 @@ exit 0
             with_sandbox({ skip_xdg_mkdir = true }, function(sb)
                 local before = sb:xdg_snapshot()
                 local profiles = { "minimal", "full" }
-                local dms = { "none", "ly", "greetd" }
+                local dms = { "none", "noctalia", "ly", "greetd" }
                 local aurs = { "none", "yay-bin", "paru-bin" }
 
                 for _, prof in ipairs(profiles) do
@@ -1591,7 +1608,10 @@ exit 0
 
                             local expected = {}
                             for i = 1, #base_pkgs do expected[#expected + 1] = base_pkgs[i] end
-                            if dm == "ly" then
+                            if dm == "noctalia" then
+                                expected[#expected + 1] = "greetd"
+                                expected[#expected + 1] = "noctalia-greeter"
+                            elseif dm == "ly" then
                                 expected[#expected + 1] = "ly"
                             elseif dm == "greetd" then
                                 expected[#expected + 1] = "greetd"
@@ -1639,13 +1659,30 @@ exit 0
                 assert_true(not sb:calls():find("CHSH", 1, true), "SET_ZSH remains false under --skip-packages")
             end)
 
-            -- Default Arch live run (no --skip-packages): SYSTEM_SETUP=true AND SET_ZSH=true
-            with_sandbox({ login_shell = "/usr/bin/bash" }, function(sb)
+            -- Default Arch live run (no --skip-packages): SYSTEM_SETUP=true, SET_ZSH=true, AND DM=noctalia
+            with_sandbox({
+                login_shell = "/usr/bin/bash",
+                units_exist = { "greetd.service", "NetworkManager.service", "bluetooth.service" },
+            }, function(sb)
                 local r = sb:run({ INSTALL_SH, "--yes", "--no-log" })
                 assert_eq(r.rc, 0, "default Arch live run exit 0: " .. r.combined)
                 assert_contains(sb:calls(), "PACMAN -Syu", "default Arch runs pacman -Syu")
                 assert_contains(sb:calls(), "SYSTEMCTL enable NetworkManager.service", "default Arch enables system setup")
+                assert_contains(sb:calls(), "SYSTEMCTL enable greetd.service", "default Arch enables greetd.service for noctalia-greeter")
                 assert_contains(sb:calls(), "CHSH", "default Arch switches login shell to zsh")
+                assert_contains(read_file(sb.greetd_cfg) or "", "/usr/bin/noctalia-greeter-session --session Hyprland", "writes noctalia-greeter greetd config")
+                assert_contains(read_file(sb.greeter_dir .. "/sync.toml") or "", 'scheme = "Tokyo-Night"', "seeds Tokyo-Night greeter theme")
+                assert_contains(read_file(sb.greeter_dir .. "/greeter.toml") or "", 'default = "Hyprland"', "seeds Hyprland default greeter session")
+            end)
+
+            -- VM GPU mode adds WLR_NO_HARDWARE_CURSORS=1 automatically to noctalia-greeter command
+            with_sandbox({
+                drm_cards = { { name = "card0", vendor = "0x1af4" } },
+                units_exist = { "greetd.service" },
+            }, function(sb)
+                local r = sb:run({ INSTALL_SH, "--skip-packages", "--dm", "noctalia", "--yes", "--no-log" })
+                assert_eq(r.rc, 0, "noctalia DM on VM GPU exit 0: " .. r.combined)
+                assert_contains(read_file(sb.greetd_cfg) or "", "WLR_NO_HARDWARE_CURSORS=1", "VM mode sets WLR_NO_HARDWARE_CURSORS=1")
             end)
 
             -- Already using zsh -> idempotent (no chsh call); --no-zsh skips chsh
@@ -2558,7 +2595,7 @@ exit 0
 
             -- --skip-system-setup on full Arch run skips all system setup unit enables, usermod, and fc-cache
             with_sandbox({ user_bus_socket = HAS_PYTHON3 }, function(sb)
-                local r = sb:run({ INSTALL_SH, "--yes", "--skip-system-setup", "--no-zsh", "--no-log" })
+                local r = sb:run({ INSTALL_SH, "--yes", "--skip-system-setup", "--dm", "none", "--no-zsh", "--no-log" })
                 assert_eq(r.rc, 0, "--skip-system-setup exit 0")
                 assert_true(not sb:calls():find("SYSTEMCTL enable", 1, true), "--skip-system-setup skips system systemctl enable")
                 assert_true(not sb:calls():find("SYSTEMCTL --user enable", 1, true), "--skip-system-setup skips PipeWire --user enable")
@@ -2573,6 +2610,10 @@ exit 0
 
         test("bb.dm.competing_dm_guard_matrix", function()
             local guard_cases = {
+                { dm = "noctalia", unit = "sddm.service", state = "enabled" },
+                { dm = "noctalia", unit = "gdm.service", state = "enabled" },
+                { dm = "noctalia", unit = "lightdm.service", state = "active" },
+                { dm = "noctalia", unit = "ly@tty1.service", state = "enabled" },
                 { dm = "ly", unit = "gdm.service", state = "enabled" },
                 { dm = "ly", unit = "gdm.service", state = "active" },
                 { dm = "ly", unit = "sddm.service", state = "enabled" },

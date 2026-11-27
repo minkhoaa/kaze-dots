@@ -60,6 +60,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             assert_contains(min_out, "  zsh-autosuggestions\n", "minimal includes zsh-autosuggestions")
             assert_contains(min_out, "  zsh-syntax-highlighting\n", "minimal includes zsh-syntax-highlighting")
             assert_contains(min_out, "sudo pacman -Syu --needed", "uses pacman -Syu")
+            assert_contains(min_out, "Display manager: noctalia\n", "defaults display manager to noctalia")
+            assert_contains(min_out, "greetd noctalia-greeter", "default dry-run includes greetd noctalia-greeter")
             assert_contains(min_out, "0 AUR", "zero AUR")
 
             local function has_word(text, word)
@@ -2041,8 +2043,8 @@ exit 0
 
             local installer = q(repo_dir .. "/scripts/install.sh")
             local env = string.format(
-                "HOME=%s USER=tester XDG_CONFIG_HOME=%s XDG_DATA_HOME=%s XDG_CACHE_HOME=%s XDG_STATE_HOME=%s XDG_RUNTIME_DIR=%s LANG=en_US.UTF-8 LC_ALL='' HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY='' KAZE_ARCH_RELEASE_FILE=%s KAZE_GREETD_CONFIG=%s KAZE_SYSTEMD_ETC_DIR=%s PATH=%s",
-                q(home), q(cfg), q(data), q(cache), q(state), q(runtime), q(tmp .. "/arch-release"), q(etc_greetd .. "/config.toml"), q(tmp .. "/etc/systemd/system"), q(stub_bin)
+                "HOME=%s USER=tester XDG_CONFIG_HOME=%s XDG_DATA_HOME=%s XDG_CACHE_HOME=%s XDG_STATE_HOME=%s XDG_RUNTIME_DIR=%s LANG=en_US.UTF-8 LC_ALL='' HYPRLAND_INSTANCE_SIGNATURE='' WAYLAND_DISPLAY='' KAZE_ARCH_RELEASE_FILE=%s KAZE_GREETD_CONFIG=%s KAZE_NOCTALIA_GREETER_DIR=%s KAZE_NOCTALIA_GREETER_SETUP=%s KAZE_SYSTEMD_ETC_DIR=%s PATH=%s",
+                q(home), q(cfg), q(data), q(cache), q(state), q(runtime), q(tmp .. "/arch-release"), q(etc_greetd .. "/config.toml"), q(tmp .. "/var/lib/noctalia-greeter"), q(tmp .. "/no-greeter-setup.sh"), q(tmp .. "/etc/systemd/system"), q(stub_bin)
             )
 
             -- 1. Hard conflict in --yes mode without --replace-conflicts MUST abort before pacman -Syu

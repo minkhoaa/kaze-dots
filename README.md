@@ -67,12 +67,13 @@ Preview first without touching anything:
 ./scripts/install.sh --profile minimal --dry-run
 ```
 
-Install packages (`pacman -Syu --needed`), configure system services (NetworkManager if no other stack is active, Bluetooth, PipeWire user sockets, `video` group, font cache), set Zsh as default login shell, choose a visual preset (11 presets across Angular, Dynamic, and Retro groups; default `dynamic-island`), and apply configs (backs up existing dotfiles automatically and logs to `~/.local/state/kaze/install-*.log`):
+Install packages (`pacman -Syu --needed`), configure system services (NetworkManager if no other stack is active, Bluetooth, PipeWire user sockets, `video` group, font cache), enable **`noctalia-greeter` (via `greetd`)** styled with Tokyo-Night + Noctalia wallpaper by default (0 AUR, 0 Qt/GTK, preserves any existing DM such as SDDM/GDM; pass `--dm ly`, `--dm greetd` for `tuigreet`, or `--dm none` for TTY1), set Zsh as default login shell, choose a visual preset (11 presets across Angular, Dynamic, and Retro groups; default `dynamic-island`), and apply configs (backs up existing dotfiles automatically and logs to `~/.local/state/kaze/install-*.log`):
 
 ```sh
-./scripts/install.sh --profile minimal --style dynamic-island   # default 3-island top bar with centered Live Activity pill
-./scripts/install.sh --profile full --style dynamic-island      # full profile + Dynamic Island pill
-./scripts/install.sh --profile full --dm ly --aur yay-bin       # optional official DM (ly/greetd) & opt-in AUR helper
+./scripts/install.sh --profile minimal --style dynamic-island   # default 3-island top bar + Noctalia Greeter
+./scripts/install.sh --profile full --style dynamic-island      # full profile + Dynamic Island pill + Noctalia Greeter
+./scripts/install.sh --profile full --dm ly --aur yay-bin       # switch DM to ly & opt-in AUR helper
+./scripts/install.sh --profile minimal --dm none                # plain TTY1 auto-start without a display manager
 ```
 
 Apply dotfiles only (if packages are already installed):

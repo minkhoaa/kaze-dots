@@ -482,6 +482,7 @@ kaze_detect_existing_dm() {
 
 kaze_setup_display_manager() {
     local dm_choice="${1:-none}"
+    local target_user="${2:-${USER:-}}"
     if [[ "$dm_choice" == "none" ]]; then
         return 0
     fi
@@ -496,8 +497,13 @@ kaze_setup_display_manager() {
             _kaze_msg_ok "Display Manager '$EXISTING_DM' is already enabled"
             return 0
         fi
-        if [[ "$dm_choice" == "greetd" && "$EXISTING_DM" == "greetd.service" ]]; then
+        if [[ ("$dm_choice" == "greetd" || "$dm_choice" == "noctalia") && "$EXISTING_DM" == "greetd.service" ]]; then
             _kaze_msg_ok "Display Manager 'greetd.service' is already enabled; preserving existing config"
+            return 0
+        fi
+        if [[ "$dm_choice" == "noctalia" ]]; then
+            _kaze_msg_warn "Existing Display Manager detected ($EXISTING_DM); refusing to overwrite with noctalia-greeter (greetd)."
+            _kaze_msg_info "To switch manually later: sudo systemctl disable $EXISTING_DM && sudo systemctl enable greetd.service"
             return 0
         fi
         if [[ "$dm_choice" == "greetd" ]]; then
@@ -513,6 +519,104 @@ kaze_setup_display_manager() {
     fi
 
     case "$dm_choice" in
+        noctalia)
+            if ! _kaze_unit_exists "greetd.service"; then
+                _kaze_msg_warn "greetd.service unit not found; skipping noctalia-greeter configuration and enable"
+                return 0
+            fi
+            local greeter_dir="${KAZE_NOCTALIA_GREETER_DIR:-/var/lib/noctalia-greeter}"
+            local greeter_setup="${KAZE_NOCTALIA_GREETER_SETUP:-/usr/share/noctalia-greeter/setup_greeter_system.sh}"
+            if [[ -x "$greeter_setup" ]]; then
+                sudo "$greeter_setup" >/dev/null || _kaze_msg_warn "noctalia-greeter setup_greeter_system.sh returned non-zero; continuing"
+            fi
+            sudo mkdir -p -- "$greeter_dir"
+
+            local greeter_toml="$greeter_dir/greeter.toml"
+            if [[ ! -f "$greeter_toml" ]] || ! grep -Eq '^[[:space:]]*\[[a-zA-Z]' "$greeter_toml" 2>/dev/null; then
+                local tmp_gt
+                tmp_gt="$(mktemp "${TMPDIR:-/tmp}/kaze-greeter.XXXXXX")"
+                cat > "$tmp_gt" <<'EOF'
+# Kaze defaults for noctalia-greeter (declarative; UI and Sync never overwrite this)
+[session]
+default = "Hyprland"
+
+[cursor]
+theme = "Adwaita"
+size = 24
+
+[pointer]
+accel_profile = "flat"
+
+[clock]
+enabled = true
+time_format = "%H:%M"
+date_format = "%A, %d %B"
+EOF
+                sudo install -m 0644 -- "$tmp_gt" "$greeter_toml"
+                rm -f -- "$tmp_gt"
+            fi
+
+            local sync_toml="$greeter_dir/sync.toml"
+            if [[ ! -f "$sync_toml" ]] || ! grep -Eq '^\[appearance\.wallpaper\]' "$sync_toml" 2>/dev/null; then
+                local tmp_st
+                tmp_st="$(mktemp "${TMPDIR:-/tmp}/kaze-sync.XXXXXX")"
+                cat > "$tmp_st" <<'EOF'
+# Seeded Kaze appearance (Tokyo-Night + Noctalia wallpaper; freely updated by UI & Noctalia Sync)
+[appearance]
+scheme = "Tokyo-Night"
+theme_mode = "dark"
+font_family = "JetBrainsMono Nerd Font"
+corner_radius_scale = 1.0
+
+[appearance.wallpaper]
+path = "/usr/share/noctalia/assets/noctalia-wallpaper.png"
+blur = 0.25
+tint = 0.15
+
+[session]
+last = "Hyprland"
+EOF
+                sudo install -m 0644 -- "$tmp_st" "$sync_toml"
+                rm -f -- "$tmp_st"
+            fi
+
+            if [[ -z "${KAZE_NOCTALIA_GREETER_DIR:-}" ]] && id greeter >/dev/null 2>&1; then
+                sudo chown greeter:greeter -- "$greeter_toml" "$sync_toml" 2>/dev/null || true
+            fi
+            if [[ -z "${KAZE_NOCTALIA_GREETER_DIR:-}" && -n "$target_user" ]] && command -v noctalia-greeter >/dev/null 2>&1; then
+                sudo noctalia-greeter passwordless-sync enable "$target_user" >/dev/null 2>&1 || true
+            fi
+
+            local greetd_cfg="${KAZE_GREETD_CONFIG:-/etc/greetd/config.toml}"
+            if [[ -e "$greetd_cfg" || -L "$greetd_cfg" ]]; then
+                local bak_path
+                bak_path="${greetd_cfg}.kaze-bak-$(date +%Y%m%d-%H%M%S)"
+                sudo cp -a -- "$greetd_cfg" "$bak_path"
+                _kaze_msg_info "Backed up existing $greetd_cfg -> $bak_path"
+            fi
+            local greeter_cmd="/usr/bin/noctalia-greeter-session --session Hyprland"
+            if [[ "${GPU_MODE:-unknown}" == "vm" ]]; then
+                # VirGL hardware cursor planes can flip vertically under wlroots in QEMU GTK GL.
+                greeter_cmd="env WLR_NO_HARDWARE_CURSORS=1 ${greeter_cmd}"
+            fi
+            local tmp_cfg
+            tmp_cfg="$(mktemp "${TMPDIR:-/tmp}/kaze-greetd.XXXXXX")"
+            cat > "$tmp_cfg" <<EOF
+[terminal]
+vt = 1
+
+[default_session]
+command = "${greeter_cmd}"
+user = "greeter"
+EOF
+            sudo mkdir -p -- "$(dirname -- "$greetd_cfg")"
+            sudo install -m 0644 -- "$tmp_cfg" "$greetd_cfg"
+            rm -f -- "$tmp_cfg"
+            if ! systemctl is-enabled --quiet greetd.service 2>/dev/null; then
+                sudo systemctl enable greetd.service
+            fi
+            _kaze_msg_ok "Configured $greetd_cfg and enabled greetd.service (noctalia-greeter, Tokyo-Night)"
+            ;;
         ly)
             if _kaze_unit_exists "ly@.service"; then
                 if systemctl is-enabled --quiet getty@tty1.service 2>/dev/null; then
