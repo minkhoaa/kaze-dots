@@ -15,7 +15,7 @@ exercise_portals() {
     local dir=$1 client
     in_session busctl --user --timeout=10s call org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop \
         org.freedesktop.portal.Settings ReadOne ss org.freedesktop.appearance color-scheme | tee "$dir/settings.log"
-    in_session timeout 25s '~/kaze-dots/tests/portal-probe' file </dev/null >"$dir/file-chooser.log" 2>&1 & client=$!
+    in_session timeout 25s '~/kaze-dots/tests/vm/portal-probe' file </dev/null >"$dir/file-chooser.log" 2>&1 & client=$!
     wait_clients 'title: Kaze QA File Picker'
     in_session hyprctl clients | grep 'class: xdg-desktop-portal-gtk'
     qmp key esc
@@ -23,7 +23,7 @@ exercise_portals() {
     grep -E '^OpenFile response=[12]$' "$dir/file-chooser.log"
     if in_session hyprctl clients | grep -Fq 'title: Kaze QA File Picker'; then return 1; fi
 
-    in_session timeout 38s '~/kaze-dots/tests/portal-probe' cast </dev/null >"$dir/screencast.log" 2>&1 & client=$!
+    in_session timeout 38s '~/kaze-dots/tests/vm/portal-probe' cast </dev/null >"$dir/screencast.log" 2>&1 & client=$!
     wait_clients 'class:.*(sharing|picker|xdg-desktop-portal-hyprland)'
     sleep .3 # wait for the picker animation before clicking its monitor row and Share
     in_session grim - > "$dir/share-picker.png"

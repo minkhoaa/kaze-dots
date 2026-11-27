@@ -1074,21 +1074,21 @@ test("kaze-thunar-action: terminal, yazi, copy-path, checksum, wallpaper, compre
     end)
 end)
 
-dofile(repo_dir .. "/tests/test_stage3_keys.lua")(test, assert_eq, assert_true, assert_contains, repo_dir)
-dofile(repo_dir .. "/tests/test_stage3_profile_doctor.lua")(test, assert_eq, assert_true, assert_contains, repo_dir)
+dofile(repo_dir .. "/tests/unit/keybinds.lua")(test, assert_eq, assert_true, assert_contains, repo_dir)
+dofile(repo_dir .. "/tests/unit/system.lua")(test, assert_eq, assert_true, assert_contains, repo_dir)
 
--- Modular blind black-box & brute-force behavioral suites (one file per functional domain)
-for _, bb_suite in ipairs({
-    "test_installer.lua",
-    "test_display_share.lua",
-    "test_record.lua",
-    "test_style_theming.lua",
-    "test_mirror.lua",
-    "test_session_foot_tui.lua",
-    "test_projects_keys_thunar.lua",
-    "test_apply_doctor_hypr.lua",
+-- Modular integration & behavioral suites (one file per functional domain)
+for _, suite in ipairs({
+    "installer.lua",
+    "display_share.lua",
+    "record.lua",
+    "style_theming.lua",
+    "mirror.lua",
+    "session_foot_tui.lua",
+    "projects_keys_thunar.lua",
+    "apply_doctor_hypr.lua",
 }) do
-    dofile(repo_dir .. "/tests/blackbox/" .. bb_suite)(test, assert_eq, assert_true, assert_contains, repo_dir)
+    dofile(repo_dir .. "/tests/integration/" .. suite)(test, assert_eq, assert_true, assert_contains, repo_dir)
 end
 
 io.stdout:write(string.format("\nSummary: %d passed, %d failed\n", passed, failed))

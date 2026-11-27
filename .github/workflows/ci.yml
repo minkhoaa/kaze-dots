@@ -32,17 +32,17 @@ jobs:
         run: lua tests/run.lua
 
       - name: Python VM idle sampler unit tests
-        run: python3 -B -m unittest tests/vm-idle-test.py
+        run: python3 -B -m unittest tests/vm/test_idle_sampler.py
 
       - name: Bash syntax check (bash -n)
-        run: bash -n scripts/*.sh tests/*.sh
+        run: bash -n scripts/*.sh tests/vm/*.sh
 
       - name: ShellCheck (errors)
-        run: shellcheck --severity=error scripts/*.sh tests/vm-verify.sh tests/vm-common.sh
+        run: shellcheck --severity=error scripts/*.sh tests/vm/verify.sh tests/vm/common.sh
 
       - name: ShellCheck (warnings, advisory)
         continue-on-error: true
-        run: shellcheck --severity=warning scripts/*.sh tests/vm-verify.sh tests/vm-common.sh
+        run: shellcheck --severity=warning scripts/*.sh tests/vm/verify.sh tests/vm/common.sh
 
       - name: Dry-run installer & package manifest consistency
         run: |

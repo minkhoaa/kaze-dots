@@ -81,8 +81,9 @@ config/zsh/              Modular Zsh config (~/.zprofile, ~/.zshrc, conf.d/*.zsh
 config/systemd/user/     Session target and user service units (Noctalia, Foot, Fcitx5, Recorder)
 lua/kaze/                Pure-Lua helper modules (hypr_user, styles, display, projects, mirror, session)
 bin/                     11 small Lua helper CLIs for things Noctalia doesn't cover
-scripts/                 Bootstrap, TUI installer, apply/rollback, and VM test harness
+scripts/                 Bootstrap, TUI installer, apply/rollback, and VM launcher
 templates/               Example ~/.config/hypr/user.lua override file
+tests/                   Unit, integration, and isolated VM verification suites
 docs/specs/              Architecture, layout presets, theming, CLI/keybinds, and benchmark specs
 ```
 

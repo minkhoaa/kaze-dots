@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared host-side plumbing; callers use strict mode and own all launched VMs.
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VMDIR="${KAZE_VM_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/shell-bench-vm}"
 
 ssh_guest() {
@@ -101,8 +101,8 @@ GUEST
     return 1
 }
 
-in_session() { ssh_guest '~/kaze-dots/tests/vm-in-session.sh' "$@"; }
-qmp() { python3 "$REPO_DIR/tests/vm-input.py" "$VMDIR/qmp.sock" "$@"; }
+in_session() { ssh_guest '~/kaze-dots/tests/vm/in_session.sh' "$@"; }
+qmp() { python3 "$REPO_DIR/tests/vm/input.py" "$VMDIR/qmp.sock" "$@"; }
 
 stage_guest() {
     # Avoid drawing with files being replaced and never mutate the backing image.

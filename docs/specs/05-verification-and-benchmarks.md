@@ -21,22 +21,22 @@ Run from the repository root before every VM deployment or commit (and enforced 
 ```sh
 find lua hypr bin tests -type f \( -name '*.lua' -o -path 'bin/kaze-*' \) -print0 | xargs -0 -r -n1 luac -p
 lua tests/run.lua
-python3 -m unittest tests/vm-idle-test.py
-shellcheck scripts/*.sh tests/vm-verify.sh tests/vm-common.sh 2>/dev/null || bash -n scripts/*.sh tests/vm-verify.sh tests/vm-common.sh
+python3 -m unittest tests/vm/test_idle_sampler.py
+shellcheck scripts/*.sh tests/vm/verify.sh tests/vm/common.sh 2>/dev/null || bash -n scripts/*.sh tests/vm/verify.sh tests/vm/common.sh
 ```
 
 What Gate 1 covers:
 1. **Lua syntax (`luac -p`)**: every `.lua` file and `bin/kaze-*` executable → `0` errors.
-2. **Lua unit suite (`lua tests/run.lua`)**:
+2. **Lua unit & integration suite (`lua tests/run.lua`)**:
    - `fs` quoting/atomic writes, `hypr_user` profile + `user.lua` merge/fallback, `json` strict decode/encode, `toml_diff` Noctalia config drift detection.
-   - Native config invariants (`config/noctalia/config.toml` offline/zero-telemetry/sharp settings, `foot.ini` Noctalia include, `xdph.conf`, Zsh `conf.d` guards, ANSI-only `starship.toml`, plus live `noctalia config validate`, `foot --check-config`, and `zsh -n` when installed).
+   - Native config invariants (`config/noctalia/config.toml` offline/zero-telemetry/sharp settings, `foot.ini` Noctalia include, `xdph.conf`, Zsh `conf.d` guards, ANSI-only `starship.toml` & `fastfetch/config.jsonc`, plus live `noctalia config validate`, `foot --check-config`, and `zsh -n` when installed).
    - `scripts/apply.sh` reapply & rollback with spaces in XDG paths, Noctalia GUI edit preservation, and `hypr/user.lua` preservation.
-   - `scripts/install.sh`, `scripts/install-packages.sh`, and `scripts/bootstrap.sh` dry-run checks, package manifest parity (`minimal` = 27 pkgs, `full` = 51 pkgs, 0 AUR core), `install-lib.sh` GPU/conflict/system-setup/DM/AUR/logging stubs, root/sh guards, and rollback.
+   - `scripts/install.sh`, `scripts/install-packages.sh`, and `scripts/bootstrap.sh` dry-run checks, package manifest parity (`minimal` = 27 pkgs, `full` = 52 pkgs, 0 AUR core), `install-lib.sh` GPU/conflict/system-setup/DM/AUR/logging stubs, root/sh guards, and rollback.
    - `kaze-keys`, `kaze-tui`, `kaze-footclient`, `kaze-session`, `kaze-doctor` (including `--diff`), and `kaze-display` (monitor/workspace parsers, hotplug guards, Present Workspace, 1080p Virtual Share).
-3. **Python sampler tests (`tests/vm-idle-test.py`)**: validates process classification, thread stability checks, and budget attribution without requiring a running VM.
-4. **Shell checks (`bash -n` / `shellcheck`)**: verifies all scripts in `scripts/` and `tests/`.
+3. **Python sampler tests (`tests/vm/test_idle_sampler.py`)**: validates process classification, thread stability checks, and budget attribution without requiring a running VM.
+4. **Shell checks (`bash -n` / `shellcheck`)**: verifies all scripts in `scripts/` and `tests/vm/`.
 
-### Gate 2 — Clean VM Cold-Boot & Live Session Checks (`tests/vm-verify.sh`)
+### Gate 2 — Clean VM Cold-Boot & Live Session Checks (`tests/vm/verify.sh`)
 Inside the isolated Arch KVM guest (`1920×1080`):
 1. **Stage & Rollback Fixture**: verifies `pacman -Q` for core packages (`hyprland`, `noctalia`, `foot`, portals, `dconf`), runs `apply.sh --yes` → reapply → `rollback.sh --yes` in an isolated fixture confirming pre-existing files, Noctalia edits, and `hypr/user.lua` survive, then applies to the guest user.
 2. **Cold Boot**: powers off and boots cleanly with zero keyboard interaction:
@@ -52,16 +52,16 @@ Inside the isolated Arch KVM guest (`1920×1080`):
    - `kaze-footclient` waits and propagates exact child exit codes (`37`).
    - `kaze-tui sysmon` opens and toggles a floating `class: kaze-tui` window cleanly.
 
-### Gate 3 — Performance & Resource Budgets (`tests/vm-idle.py`)
-`tests/vm-verify.sh` defaults to 3 independent cold boots (`--samples N` overrides; `--functional-only` skips Gate 3). At **T0**, it waits for the Noctalia bar layer and Foot socket, settles for 45s, and samples for 60s **before** running interactive probes or portal checks.
+### Gate 3 — Performance & Resource Budgets (`tests/vm/idle_sampler.py`)
+`tests/vm/verify.sh` defaults to 3 independent cold boots (`--samples N` overrides; `--functional-only` skips Gate 3). At **T0**, it waits for the Noctalia bar layer and Foot socket, settles for 45s, and samples for 60s **before** running interactive probes or portal checks.
 
-`tests/vm-idle.py` partitions every same-UID process into:
+`tests/vm/idle_sampler.py` partitions every same-UID process into:
 - **Shell stack (`CORE` + `ON_DEMAND`)**: `kaze-noctalia.service` (`noctalia`), `foot-server.service` (`foot`), and on-demand `kaze-record.service` (`wf-recorder`).
 - **Session services**: `dconf.service`, `kaze-fcitx5.service`, `xdg-desktop-portal*`, `at-spi-dbus-bus`, `gvfs-daemon`.
 - **Outside budget (known)**: `Hyprland`, `start-hyprland`, `Xwayland`, `pipewire*`, `wireplumber`, `systemd`, `dbus-broker*`, `sshd*`.
 - **Unclassified**: flagged explicitly so hidden workers are never silently dropped.
 
-| Metric | Measurement Source | T0 Budget ([GOAL.md](../../GOAL.md)) |
+| Metric | Measurement Source | T0 Budget |
 |---|---|---|
 | **Shell stack PSS** | Sum of `Pss:` from `/proc/<pid>/smaps_rollup` across `kaze-noctalia.service` + `foot-server.service` | **≤ 100 MiB** |
 | **Shell + Session PSS** | Shell stack + passive session services | **≤ 105 MiB** |

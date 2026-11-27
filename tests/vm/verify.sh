@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# shellcheck source=tests/vm-common.sh
-source "$(dirname -- "${BASH_SOURCE[0]}")/vm-common.sh"
+# shellcheck source=tests/vm/common.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
 
 samples=3
 mode=
@@ -73,7 +73,7 @@ if (( samples > 0 )); then
         echo "==> [Gate 3] Cold T0 sample $i/$samples"
         boot_vm cold
         wait_session
-        if ! ssh_guest 'python3 -u ~/kaze-dots/tests/vm-idle.py --phase T0 --guest-sudo-pss'; then
+        if ! ssh_guest 'python3 -u ~/kaze-dots/tests/vm/idle_sampler.py --phase T0 --guest-sudo-pss'; then
             bench_status=1
         fi
     done

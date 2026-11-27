@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 
-sampler = runpy.run_path(Path(__file__).with_name("vm-idle.py"))
+sampler = runpy.run_path(Path(__file__).with_name("idle_sampler.py"))
 
 
 class IdleTest(unittest.TestCase):
