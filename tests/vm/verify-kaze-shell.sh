@@ -76,6 +76,9 @@ rm -f "$HOME/.config/kaze-shell/config.toml"
 test -x "$HOME/.local/bin/kaze-shell"
 "$HOME/.local/bin/kaze-shell" config validate "$HOME/.config/kaze-shell/config.toml"
 GUEST
+if [[ -n "$screenshot_out" ]]; then
+    ssh_guest 'command -v grim >/dev/null 2>&1 || sudo pacman -Sy --noconfirm --needed grim >/dev/null'
+fi
 stop_vm
 
 bench_status=0
@@ -187,11 +190,42 @@ sleep 0.15
 kaze-shell msg status | grep -Fq '"active_workspace_id": 1'
 echo "    [PASS] Live Hyprland socket2 workspace sync"
 
-# 4. Display slot IPC
+# 4. Display slot & DND IPC
 kaze-shell msg display-status present "WS 4" >/dev/null
 kaze-shell msg status | grep -Fq '"display_status": "present"'
 kaze-shell msg display-status idle >/dev/null
-echo "    [PASS] IPC display-status"
+test "$(kaze-shell msg dnd-status)" = "off"
+test "$(kaze-shell msg dnd-on)" = "on"
+test "$(kaze-shell msg dnd-status)" = "on"
+test "$(kaze-shell msg dnd-toggle)" = "off"
+echo "    [PASS] IPC display-status & dnd-*"
+
+# 4b. Stage 3A: Event-driven native pipewire-pulse audio + Overlay OSD (auto-hide & free surface)
+thread_count=$(ls "/proc/$initial_pid/task" | wc -l)
+echo "    kaze-shell threads=$thread_count (budget <= 4)"
+if (( thread_count > 4 )); then
+    echo "FAIL: kaze-shell exceeded thread budget ($thread_count > 4)" >&2
+    exit 1
+fi
+kaze-shell msg status | grep -Fq '"available": true'
+wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 >/dev/null 2>&1 || true
+wpctl set-volume @DEFAULT_AUDIO_SINK@ 72% >/dev/null
+sleep 0.3
+kaze-shell msg status | grep -Fq '"volume_pct": 72'
+wait_layer_present "kaze-osd"
+if command -v grim >/dev/null 2>&1; then
+    grim -o Virtual-1 /tmp/kaze-shell-3a-osd.png
+fi
+sleep 2.0
+wait_layer_absent "kaze-osd"
+kaze-shell msg volume-mute >/dev/null
+sleep 0.25
+kaze-shell msg status | grep -Fq '"muted": true'
+wait_layer_present "kaze-osd"
+kaze-shell msg volume-mute >/dev/null
+sleep 2.0
+wait_layer_absent "kaze-osd"
+echo "    [PASS] Stage 3A native pipewire-pulse + OSD auto-hide (surface freed)"
 
 # 5. Config hot-reload resilience (broken TOML must NOT crash daemon)
 cfg="$HOME/.config/kaze-shell/config.toml"
@@ -262,6 +296,8 @@ GUEST
 if [[ -n "$screenshot_out" ]]; then
     mkdir -p -- "$(dirname -- "$screenshot_out")"
     scp -i "$VMDIR/bench_id_ed25519" -P 22222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        bench@127.0.0.1:/tmp/kaze-shell-3a-osd.png "$screenshot_out" || \
+    scp -i "$VMDIR/bench_id_ed25519" -P 22222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         bench@127.0.0.1:/tmp/kaze-shell-vm.png "$screenshot_out" || true
 fi
 
@@ -269,4 +305,4 @@ stop_vm
 if (( boot_status || bench_status )); then
     exit 1
 fi
-echo "==> ALL kaze-shell Stage 1-2 VM acceptance gates PASSED."
+echo "==> ALL kaze-shell Stage 1-3A VM acceptance gates PASSED."

@@ -1,3 +1,5 @@
+#![deny(clippy::unwrap_used)]
+
 mod daemon;
 
 use kaze_core::Config;
@@ -21,6 +23,14 @@ IPC Commands (via `kaze-shell msg`):\n\
   theme-mode-toggle                 Toggle Dark/Light mode & regenerate templates\n\
   templates-apply                   Regenerate Hyprland, Foot, GTK3/4, btop themes\n\
   display-status <mode> [detail]    Update Display Slot dot (idle|present|virtual-share|virtual-control|recording)\n\
+  volume-up [step]                  Raise default sink volume (default 5%)\n\
+  volume-down [step]                Lower default sink volume (default 5%)\n\
+  volume-mute                       Toggle default sink mute\n\
+  mic-mute                          Toggle default source mic mute\n\
+  brightness-up [step]              Raise screen brightness (default 5%)\n\
+  brightness-down [step]            Lower screen brightness (default 5%)\n\
+  media <play-pause|next|prev|stop> Control active MPRIS player\n\
+  dnd-status | dnd-on | dnd-off | dnd-toggle\n\
   reload                            Reload config.toml without restarting\n\
   status                            Print daemon JSON status",
         env!("CARGO_PKG_VERSION")
@@ -75,10 +85,17 @@ fn run_daemon_cmd(args: &[String]) -> ExitCode {
         i += 1;
     }
 
-    match config_path
-        .map_or_else(Config::default_path, Ok)
-        .and_then(daemon::run)
-    {
+    let path = match config_path {
+        Some(p) => p,
+        None => match Config::default_path() {
+            Ok(p) => p,
+            Err(err) => {
+                eprintln!("kaze-shell daemon: {err}");
+                return ExitCode::FAILURE;
+            }
+        },
+    };
+    match daemon::run(path) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("kaze-shell daemon: {err}");
@@ -135,12 +152,22 @@ fn run_msg_cmd(args: &[String]) -> ExitCode {
 fn run_config_cmd(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
         Some("validate") => {
-            let path = args
-                .get(1)
-                .map(PathBuf::from)
-                .map_or_else(Config::default_path, Ok);
-            match path.and_then(|p| Config::load_from_path(&p).map(|_| p)) {
-                Ok(path) => {
+            let path = match &args[1..] {
+                [] => match Config::default_path() {
+                    Ok(p) => p,
+                    Err(err) => {
+                        eprintln!("kaze-shell config validate: {err}");
+                        return ExitCode::FAILURE;
+                    }
+                },
+                [single] => PathBuf::from(single),
+                _ => {
+                    eprintln!("Usage: kaze-shell config validate [PATH]");
+                    return ExitCode::from(2);
+                }
+            };
+            match Config::load_from_path(&path) {
+                Ok(_) => {
                     println!("OK: {}", path.display());
                     ExitCode::SUCCESS
                 }

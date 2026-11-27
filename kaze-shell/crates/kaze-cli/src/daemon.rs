@@ -10,15 +10,23 @@ use kaze_core::{
     ShellAction, ShellContext, SystemEvent, ThemePaths,
 };
 use kaze_ext_bar::BarExtension;
+use kaze_ext_osd::OsdExtension;
 use kaze_hypr::{HyprClient, HyprEvent, ReconnectBackoff};
-use kaze_ipc::{default_socket_path, IpcRequest, IpcResponse, IpcServer};
+use kaze_ipc::{default_socket_path, IpcRequest, IpcResponder, IpcResponse, IpcServer};
+use kaze_sys::{backlight, SysCommand, SysHandle};
 use kaze_ui::UiState;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use smithay_client_toolkit::reexports::client::Connection;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
+
+enum WatchNotice {
+    Config,
+    Backlight,
+}
 
 struct Daemon {
     loop_handle: LoopHandle<'static, Self>,
@@ -27,6 +35,7 @@ struct Daemon {
     ui: UiState,
     state: AppState,
     config_path: PathBuf,
+    backlight_dir: Option<PathBuf>,
     theme_paths: ThemePaths,
     extensions: Vec<Box<dyn KazeExtension>>,
     hypr_client: Option<HyprClient>,
@@ -34,7 +43,9 @@ struct Daemon {
     hypr_backoff: ReconnectBackoff,
     hypr_reconnect_armed: bool,
     config_reload_armed: bool,
-    _config_watcher: Option<RecommendedWatcher>,
+    timers: HashMap<String, RegistrationToken>,
+    sys: Option<SysHandle>,
+    _fs_watcher: Option<RecommendedWatcher>,
     children: Vec<Child>,
 }
 
@@ -107,7 +118,27 @@ impl Daemon {
             SystemEvent::ThemeChanged(mode) => {
                 self.state.theme_mode = *mode;
             }
-            SystemEvent::ConfigReloaded | SystemEvent::PointerClick { .. } => {}
+            SystemEvent::NetworkChanged(net) => {
+                self.state.network = net.clone();
+            }
+            SystemEvent::BatteryChanged(bat) => {
+                self.state.battery = bat.clone();
+            }
+            SystemEvent::AudioChanged { state, .. } => {
+                self.state.audio = state.clone();
+            }
+            SystemEvent::BacklightChanged { state, .. } => {
+                self.state.backlight = state.clone();
+            }
+            SystemEvent::MediaChanged(media) => {
+                self.state.media = media.clone();
+            }
+            SystemEvent::ConfigReloaded
+            | SystemEvent::PointerClick { .. }
+            | SystemEvent::PointerScroll { .. }
+            | SystemEvent::KeyInput { .. }
+            | SystemEvent::ImeInput { .. }
+            | SystemEvent::TimerFired { .. } => {}
         }
 
         let mut dirty = DirtyFlags::NONE;
@@ -155,7 +186,10 @@ impl Daemon {
                     }
                 }
                 ShellAction::SpawnCommand { program, args } => {
-                    self.spawn_detached(&program, &args);
+                    self.spawn_child(&program, &args);
+                }
+                ShellAction::SpawnDetachedApp { program, args } => {
+                    self.spawn_detached_scope(&program, &args);
                 }
                 ShellAction::ApplyTemplates => {
                     if let Err(err) = self.apply_templates() {
@@ -168,11 +202,63 @@ impl Daemon {
                 ShellAction::SyncSurfaces => {
                     self.sync_ui_surfaces(DirtyFlags::ALL);
                 }
+                ShellAction::ScheduleTimer { id, after_ms } => {
+                    self.schedule_named_timer(id, Duration::from_millis(after_ms));
+                }
+                ShellAction::CancelTimer { id } => {
+                    self.cancel_named_timer(&id);
+                }
+                ShellAction::AudioStepVolume(delta) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::AudioStepVolume(delta));
+                    }
+                }
+                ShellAction::AudioToggleMute => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::AudioToggleMute);
+                    }
+                }
+                ShellAction::AudioToggleMicMute => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::AudioToggleMicMute);
+                    }
+                }
+                ShellAction::BacklightStep(delta) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::BacklightStep(delta));
+                    }
+                }
+                ShellAction::MediaCommand(cmd) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::MediaCommand(cmd));
+                    }
+                }
             }
         }
     }
 
-    fn spawn_detached(&mut self, program: &str, args: &[String]) {
+    fn schedule_named_timer(&mut self, id: String, duration: Duration) {
+        self.cancel_named_timer(&id);
+        let timer = Timer::from_duration(duration);
+        let fired_id = id.clone();
+        if let Ok(token) = self.loop_handle.insert_source(timer, move |_, _, daemon| {
+            daemon.timers.remove(&fired_id);
+            daemon.dispatch_system_event(SystemEvent::TimerFired {
+                id: fired_id.clone(),
+            });
+            TimeoutAction::Drop
+        }) {
+            self.timers.insert(id, token);
+        }
+    }
+
+    fn cancel_named_timer(&mut self, id: &str) {
+        if let Some(token) = self.timers.remove(id) {
+            self.loop_handle.remove(token);
+        }
+    }
+
+    fn spawn_child(&mut self, program: &str, args: &[String]) {
         self.reap_children();
         match Command::new(program)
             .args(args)
@@ -183,6 +269,30 @@ impl Daemon {
         {
             Ok(child) => self.children.push(child),
             Err(err) => eprintln!("kaze-shell: failed spawning '{program}': {err}"),
+        }
+    }
+
+    /// Launches user apps in a separate systemd user scope so restarting `kaze-shell.service`
+    /// never terminates windows opened from the bar or launcher.
+    fn spawn_detached_scope(&mut self, program: &str, args: &[String]) {
+        self.reap_children();
+        let mut scope_args = vec![
+            "--user".to_string(),
+            "--scope".to_string(),
+            "--quiet".to_string(),
+            "--".to_string(),
+            program.to_string(),
+        ];
+        scope_args.extend(args.iter().cloned());
+        match Command::new("systemd-run")
+            .args(&scope_args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(child) => self.children.push(child),
+            Err(_) => self.spawn_child(program, args),
         }
     }
 
@@ -249,17 +359,19 @@ impl Daemon {
         }
     }
 
-    fn handle_ipc(&mut self, req: IpcRequest) -> IpcResponse {
-        match req.cmd.as_str() {
+    fn handle_ipc(&mut self, req: IpcRequest, responder: IpcResponder) {
+        let resp = match req.cmd.as_str() {
             "ping" => IpcResponse::ok("pong"),
             "theme-mode-toggle" => {
                 let next = self.state.theme_mode.toggled();
                 self.state.theme_mode = next;
-                if let Err(err) = self.apply_templates() {
-                    return IpcResponse::err(err);
+                match self.apply_templates() {
+                    Ok(_) => {
+                        self.dispatch_system_event(SystemEvent::ThemeChanged(next));
+                        IpcResponse::ok(next.as_str())
+                    }
+                    Err(err) => IpcResponse::err(err),
                 }
-                self.dispatch_system_event(SystemEvent::ThemeChanged(next));
-                IpcResponse::ok(next.as_str())
             }
             "templates-apply" => match self.apply_templates() {
                 Ok(msg) => IpcResponse::ok(msg),
@@ -269,6 +381,44 @@ impl Daemon {
                 Ok(()) => IpcResponse::ok("reloaded"),
                 Err(err) => IpcResponse::err(err),
             },
+            "volume-up" => {
+                let step = parse_step(&req.args, 5);
+                self.execute_actions(vec![ShellAction::AudioStepVolume(step)]);
+                IpcResponse::ok(format!("volume +{step}"))
+            }
+            "volume-down" => {
+                let step = parse_step(&req.args, 5);
+                self.execute_actions(vec![ShellAction::AudioStepVolume(-step)]);
+                IpcResponse::ok(format!("volume -{step}"))
+            }
+            "volume-mute" => {
+                self.execute_actions(vec![ShellAction::AudioToggleMute]);
+                IpcResponse::ok("volume mute toggled")
+            }
+            "mic-mute" => {
+                self.execute_actions(vec![ShellAction::AudioToggleMicMute]);
+                IpcResponse::ok("mic mute toggled")
+            }
+            "brightness-up" => {
+                let step = parse_step(&req.args, 5);
+                self.execute_actions(vec![ShellAction::BacklightStep(step)]);
+                IpcResponse::ok(format!("brightness +{step}"))
+            }
+            "brightness-down" => {
+                let step = parse_step(&req.args, 5);
+                self.execute_actions(vec![ShellAction::BacklightStep(-step)]);
+                IpcResponse::ok(format!("brightness -{step}"))
+            }
+            "media" => {
+                let action = req
+                    .args
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("play-pause")
+                    .to_string();
+                self.execute_actions(vec![ShellAction::MediaCommand(action.clone())]);
+                IpcResponse::ok(format!("media {action}"))
+            }
             "status" => {
                 let outputs: Vec<&String> = self.state.outputs.keys().collect();
                 let hidden: Vec<&String> = self.state.hidden_bars.iter().collect();
@@ -279,6 +429,12 @@ impl Daemon {
                     "hypr_connected": self.state.hypr_connected,
                     "active_workspace_id": self.state.active_workspace_id,
                     "display_status": self.state.display_status.kind_name(),
+                    "dnd": self.state.dnd,
+                    "audio": self.state.audio,
+                    "network": self.state.network,
+                    "battery": self.state.battery,
+                    "backlight": self.state.backlight,
+                    "media": self.state.media,
                     "outputs": outputs,
                     "hidden_bars": hidden,
                     "hide_all_bars": self.state.hide_all_bars,
@@ -320,7 +476,8 @@ impl Daemon {
                 handled_resp
                     .unwrap_or_else(|| IpcResponse::err(format!("unknown command '{}'", req.cmd)))
             }
-        }
+        };
+        responder.send(&resp);
     }
 
     fn connect_hypr_socket2(&mut self) {
@@ -499,10 +656,30 @@ impl Daemon {
             self.config_reload_armed = false;
         }
     }
+
+    fn handle_backlight_fs_event(&mut self) {
+        let Some(ref dir) = self.backlight_dir else {
+            return;
+        };
+        if let Some(next) = backlight::read_backlight_from_dir(dir) {
+            if next != self.state.backlight {
+                self.dispatch_system_event(SystemEvent::BacklightChanged {
+                    state: next,
+                    trigger_osd: true,
+                });
+            }
+        }
+    }
+}
+
+fn parse_step(args: &[String], default: i32) -> i32 {
+    args.first()
+        .and_then(|s| s.parse::<i32>().ok())
+        .map(|v| v.clamp(1, 50))
+        .unwrap_or(default)
 }
 
 pub fn run(config_path: PathBuf) -> Result<(), String> {
-    let theme_paths = ThemePaths::default_paths()?;
     let config = match Config::load_from_path(&config_path) {
         Ok(cfg) => cfg,
         Err(err) => {
@@ -512,7 +689,6 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     };
 
     let (wayland_conn, mut event_queue, mut ui) = UiState::connect(&config.bar.font)?;
-    // Perform initial Wayland roundtrips so wl_output names & logical modes populate before first draw.
     event_queue
         .roundtrip(&mut ui)
         .map_err(|e| format!("initial Wayland roundtrip failed: {e}"))?;
@@ -530,12 +706,30 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     let loop_handle = event_loop.handle();
     let loop_signal = event_loop.get_signal();
 
-    // Config file watcher via `notify`, routed into calloop over a channel (0 polling).
-    let (cfg_tx, cfg_rx) = channel::channel::<()>();
-    let config_watcher = start_config_watcher(&config_path, cfg_tx);
+    // Shared single-thread `notify` watcher for BOTH `config.toml` and `/sys/class/backlight/*` (1 thread).
+    let backlight_dir = backlight::discover_device();
+    let (fs_tx, fs_rx) = channel::channel::<WatchNotice>();
+    let fs_watcher = start_shared_watcher(&config_path, backlight_dir.as_deref(), fs_tx);
 
-    let state = AppState::new(config);
-    let extensions: Vec<Box<dyn KazeExtension>> = vec![Box::new(BarExtension::new())];
+    // Single background `tokio` current_thread runtime for D-Bus + native pipewire-pulse (1 thread).
+    let (sys_tx, sys_rx) = channel::channel::<SystemEvent>();
+    let sys_handle = match SysHandle::spawn(sys_tx) {
+        Ok(h) => Some(h),
+        Err(err) => {
+            eprintln!("kaze-shell: kaze-sys disabled: {err}");
+            None
+        }
+    };
+
+    let mut state = AppState::new(config);
+    if let Some(ref dir) = backlight_dir {
+        if let Some(bl) = backlight::read_backlight_from_dir(dir) {
+            state.backlight = bl;
+        }
+    }
+    let theme_paths = ThemePaths::default_paths()?;
+    let extensions: Vec<Box<dyn KazeExtension>> =
+        vec![Box::new(BarExtension::new()), Box::new(OsdExtension::new())];
 
     let mut daemon = Daemon {
         loop_handle: loop_handle.clone(),
@@ -544,6 +738,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         ui,
         state,
         config_path,
+        backlight_dir,
         theme_paths,
         extensions,
         hypr_client: HyprClient::from_env().ok(),
@@ -551,7 +746,9 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         hypr_backoff: ReconnectBackoff::default(),
         hypr_reconnect_armed: false,
         config_reload_armed: false,
-        _config_watcher: config_watcher,
+        timers: HashMap::new(),
+        sys: sys_handle,
+        _fs_watcher: fs_watcher,
         children: Vec::new(),
     };
 
@@ -587,21 +784,33 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     let ipc_source = Generic::new(ipc_server, Interest::READ, Mode::Level);
     loop_handle
         .insert_source(ipc_source, |_, server, daemon| {
-            server.accept_and_dispatch(|req| daemon.handle_ipc(req));
+            server.accept_with_responder(|req, responder| daemon.handle_ipc(req, responder));
             Ok(PostAction::Continue)
         })
         .map_err(|e| format!("failed inserting IPC source: {e}"))?;
 
-    // 4. Config hot-reload channel (`notify` -> `calloop`).
+    // 4. Shared filesystem watcher channel (`notify` -> `calloop`: config.toml + backlight).
     loop_handle
-        .insert_source(cfg_rx, |ev, _, daemon| {
-            if matches!(ev, channel::Event::Msg(())) {
-                daemon.schedule_config_reload();
+        .insert_source(fs_rx, |ev, _, daemon| {
+            if let channel::Event::Msg(notice) = ev {
+                match notice {
+                    WatchNotice::Config => daemon.schedule_config_reload(),
+                    WatchNotice::Backlight => daemon.handle_backlight_fs_event(),
+                }
             }
         })
-        .map_err(|e| format!("failed inserting config watcher channel: {e}"))?;
+        .map_err(|e| format!("failed inserting fs watcher channel: {e}"))?;
 
-    // 5. Minute-boundary Clock timer (0 per-second polling).
+    // 5. System services channel (`kaze-sys` 1-thread tokio -> `calloop`).
+    loop_handle
+        .insert_source(sys_rx, |ev, _, daemon| {
+            if let channel::Event::Msg(sys_ev) = ev {
+                daemon.dispatch_system_event(sys_ev);
+            }
+        })
+        .map_err(|e| format!("failed inserting kaze-sys channel: {e}"))?;
+
+    // 6. Minute-boundary Clock timer (0 per-second polling).
     let (clock, first_wait) = ClockTime::now_and_duration_to_next_minute();
     daemon.state.clock = clock;
     let clock_timer = Timer::from_duration(first_wait);
@@ -613,7 +822,6 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         })
         .map_err(|e| format!("failed inserting clock timer: {e}"))?;
 
-    // Generate initial theme files & bootstrap outputs + Hyprland + extensions.
     if let Err(err) = daemon.apply_templates() {
         eprintln!("kaze-shell: initial template apply warning: {err}");
     }
@@ -630,17 +838,19 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     Ok(())
 }
 
-fn start_config_watcher(config_path: &Path, tx: channel::Sender<()>) -> Option<RecommendedWatcher> {
-    let parent = config_path.parent()?;
-    if let Err(err) = fs::create_dir_all(parent) {
-        eprintln!(
-            "kaze-shell: unable to create config dir {} for watching: {err}",
-            parent.display()
-        );
-        return None;
+fn start_shared_watcher(
+    config_path: &Path,
+    backlight_dir: Option<&Path>,
+    tx: channel::Sender<WatchNotice>,
+) -> Option<RecommendedWatcher> {
+    let config_parent = config_path.parent().map(Path::to_path_buf);
+    if let Some(ref parent) = config_parent {
+        let _ = fs::create_dir_all(parent);
     }
 
-    let target_name = config_path.file_name().map(|n| n.to_os_string());
+    let config_name = config_path.file_name().map(|n| n.to_os_string());
+    let bl_dir_owned = backlight_dir.map(Path::to_path_buf);
+
     let mut watcher =
         match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(ev) = res else {
@@ -653,27 +863,38 @@ fn start_config_watcher(config_path: &Path, tx: channel::Sender<()>) -> Option<R
             if !relevant_kind {
                 return;
             }
-            let matches_file = match &target_name {
-                Some(expected) => ev
-                    .paths
-                    .iter()
-                    .any(|p| p.file_name().is_some_and(|n| n == expected.as_os_str())),
-                None => true,
-            };
-            if matches_file {
-                let _ = tx.send(());
+            for path in &ev.paths {
+                if let Some(ref expected) = config_name {
+                    if path.file_name().is_some_and(|n| n == expected.as_os_str()) {
+                        let _ = tx.send(WatchNotice::Config);
+                        continue;
+                    }
+                }
+                if let Some(ref bl) = bl_dir_owned {
+                    if path.starts_with(bl)
+                        && path
+                            .file_name()
+                            .is_some_and(|n| n == "brightness" || n == "actual_brightness")
+                    {
+                        let _ = tx.send(WatchNotice::Backlight);
+                    }
+                }
             }
         }) {
             Ok(w) => w,
             Err(err) => {
-                eprintln!("kaze-shell: failed initializing notify watcher: {err}");
+                eprintln!("kaze-shell: failed initializing shared notify watcher: {err}");
                 return None;
             }
         };
 
-    if let Err(err) = watcher.watch(parent, RecursiveMode::NonRecursive) {
-        eprintln!("kaze-shell: failed watching {}: {err}", parent.display());
-        return None;
+    if let Some(ref parent) = config_parent {
+        if let Err(err) = watcher.watch(parent, RecursiveMode::NonRecursive) {
+            eprintln!("kaze-shell: failed watching {}: {err}", parent.display());
+        }
+    }
+    if let Some(bl_dir) = backlight_dir {
+        let _ = watcher.watch(bl_dir, RecursiveMode::NonRecursive);
     }
     Some(watcher)
 }

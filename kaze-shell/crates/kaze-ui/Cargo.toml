@@ -9,7 +9,9 @@ workspace = true
 
 [dependencies]
 ab_glyph.workspace = true
+cosmic-text.workspace = true
 kaze-core.workspace = true
 memmap2.workspace = true
 smithay-client-toolkit.workspace = true
 tiny-skia.workspace = true
+wayland-protocols.workspace = true

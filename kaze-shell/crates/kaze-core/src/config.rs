@@ -57,6 +57,7 @@ pub struct BarConfig {
     pub exclusive: bool,
     pub persistent_workspaces: u32,
     pub font: String,
+    pub end_slots: Vec<String>,
 }
 
 impl Default for BarConfig {
@@ -75,6 +76,39 @@ impl Default for BarConfig {
             exclusive: true,
             persistent_workspaces: 5,
             font: "JetBrainsMono Nerd Font".to_string(),
+            end_slots: vec![
+                "display".to_string(),
+                "net".to_string(),
+                "vol".to_string(),
+                "bat".to_string(),
+                "notifications".to_string(),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OsdConfig {
+    pub enabled: bool,
+    pub position: String,
+    pub width: u32,
+    pub height: u32,
+    pub offset_x: i32,
+    pub offset_y: i32,
+    pub timeout_ms: u64,
+}
+
+impl Default for OsdConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            position: "top_right".to_string(),
+            width: 224,
+            height: 48,
+            offset_x: 12,
+            offset_y: 12,
+            timeout_ms: 1500,
         }
     }
 }
@@ -103,6 +137,7 @@ impl Default for DisplayConfig {
 pub struct Config {
     pub theme: ThemeConfig,
     pub bar: BarConfig,
+    pub osd: OsdConfig,
     pub display: DisplayConfig,
 }
 

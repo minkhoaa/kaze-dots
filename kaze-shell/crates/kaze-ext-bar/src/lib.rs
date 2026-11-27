@@ -1,12 +1,15 @@
+#![deny(clippy::unwrap_used)]
+
 use kaze_core::{
-    Anchor, AppState, BarPosition, DirtyFlags, DisplayStatus, EdgeInsets, HitTarget, IpcResult,
-    KazeExtension, Layer, OutputInfo, PaintCmd, PointerButton, Rect, ShellAction, ShellContext,
-    SurfaceSpec, SystemEvent, TextAlign,
+    Anchor, AppState, BarPosition, Color, DirtyFlags, DisplayStatus, EdgeInsets, HitTarget,
+    IconKind, IpcResult, KazeExtension, KeyboardMode, Layer, NetworkKind, OutputInfo, PaintCmd,
+    PointerButton, Rect, ShellAction, ShellContext, SurfaceSpec, SystemEvent, TextAlign,
 };
 use std::collections::BTreeMap;
 
-/// First production extension built strictly against the `KazeExtension` contract:
-/// renders Workspaces, minute-boundary Clock, and interactive Display Slot.
+/// Production bar extension built strictly against the `KazeExtension` contract:
+/// Workspaces, minute-boundary Clock, and configurable end status slots
+/// (`display`, `net`, `vol`, `bat`, `notifications`).
 pub struct BarExtension {
     cached_specs: Vec<SurfaceSpec>,
 }
@@ -60,7 +63,11 @@ impl KazeExtension for BarExtension {
             | SystemEvent::HyprWorkspaceChanged { .. }
             | SystemEvent::HyprFocusedMonitor { .. }
             | SystemEvent::HyprConnectionChanged { .. }
-            | SystemEvent::ClockTick(_) => {
+            | SystemEvent::ClockTick(_)
+            | SystemEvent::NetworkChanged(_)
+            | SystemEvent::BatteryChanged(_)
+            | SystemEvent::AudioChanged { .. }
+            | SystemEvent::MediaChanged(_) => {
                 self.rebuild(ctx.state);
                 DirtyFlags::BAR
             }
@@ -86,60 +93,111 @@ impl KazeExtension for BarExtension {
                     }
                     return DirtyFlags::NONE;
                 }
-                if target_id == "display" {
-                    let cmd = match button {
-                        PointerButton::Left => Some(&ctx.state.config.display.left_click_cmd),
-                        PointerButton::Right => Some(&ctx.state.config.display.right_click_cmd),
-                        PointerButton::Middle => None,
-                    };
-                    if let Some(parts) = cmd {
-                        if let Some((program, args)) = parts.split_first() {
-                            ctx.push_action(ShellAction::SpawnCommand {
-                                program: program.clone(),
-                                args: args.to_vec(),
+                match target_id.as_str() {
+                    "display" => {
+                        let cmd = match button {
+                            PointerButton::Left => Some(&ctx.state.config.display.left_click_cmd),
+                            PointerButton::Right => Some(&ctx.state.config.display.right_click_cmd),
+                            PointerButton::Middle => None,
+                        };
+                        if let Some(parts) = cmd {
+                            if let Some((program, args)) = parts.split_first() {
+                                ctx.push_action(ShellAction::SpawnCommand {
+                                    program: program.clone(),
+                                    args: args.to_vec(),
+                                });
+                            }
+                        }
+                    }
+                    "net" => {
+                        if *button == PointerButton::Left {
+                            ctx.push_action(ShellAction::SpawnDetachedApp {
+                                program: "kaze-tui".to_string(),
+                                args: vec!["wifi".to_string()],
                             });
                         }
                     }
+                    "vol" => match button {
+                        PointerButton::Left => {
+                            ctx.push_action(ShellAction::SpawnDetachedApp {
+                                program: "kaze-tui".to_string(),
+                                args: vec!["audio".to_string()],
+                            });
+                        }
+                        PointerButton::Right => {
+                            ctx.push_action(ShellAction::AudioToggleMute);
+                        }
+                        PointerButton::Middle => {
+                            ctx.push_action(ShellAction::AudioToggleMicMute);
+                        }
+                    },
+                    "notifications" => match button {
+                        PointerButton::Left => {
+                            ctx.state.dnd = !ctx.state.dnd;
+                            self.rebuild(ctx.state);
+                            return DirtyFlags::BAR;
+                        }
+                        PointerButton::Right => {
+                            ctx.state.unread_notifications = 0;
+                            self.rebuild(ctx.state);
+                            return DirtyFlags::BAR | DirtyFlags::NOTIFY;
+                        }
+                        PointerButton::Middle => {}
+                    },
+                    _ => {}
                 }
                 DirtyFlags::NONE
             }
+            SystemEvent::PointerScroll {
+                surface_id,
+                target_id,
+                delta_y,
+            } => {
+                if surface_id.starts_with("bar:") && target_id == "vol" {
+                    // Wayland negative delta_y = scroll up (raise volume), positive = scroll down.
+                    let step = if *delta_y < 0.0 { 5 } else { -5 };
+                    ctx.push_action(ShellAction::AudioStepVolume(step));
+                }
+                DirtyFlags::NONE
+            }
+            SystemEvent::KeyInput { .. }
+            | SystemEvent::ImeInput { .. }
+            | SystemEvent::TimerFired { .. }
+            | SystemEvent::BacklightChanged { .. } => DirtyFlags::NONE,
         }
     }
 
     fn on_ipc(&mut self, cmd: &str, args: &[String], ctx: &mut ShellContext) -> IpcResult {
         match cmd {
-            "bar-hide" => {
-                match args {
-                    [] => {
-                        ctx.state.hide_all_bars = true;
-                        self.rebuild(ctx.state);
-                        IpcResult::Handled {
-                            ok: true,
-                            message: "hidden all bars".into(),
-                            dirty: DirtyFlags::BAR | DirtyFlags::LAYOUT,
-                        }
-                    }
-                    [monitor] => {
-                        ctx.state.hidden_bars.insert(monitor.clone());
-                        self.rebuild(ctx.state);
-                        IpcResult::Handled {
-                            ok: true,
-                            message: format!("hidden bar on {monitor}"),
-                            dirty: DirtyFlags::BAR | DirtyFlags::LAYOUT,
-                        }
-                    }
-                    // Accept Noctalia-style `bar-hide <bar_name> <monitor>` seamlessly.
-                    [_bar_name, monitor, ..] => {
-                        ctx.state.hidden_bars.insert(monitor.clone());
-                        self.rebuild(ctx.state);
-                        IpcResult::Handled {
-                            ok: true,
-                            message: format!("hidden bar on {monitor}"),
-                            dirty: DirtyFlags::BAR | DirtyFlags::LAYOUT,
-                        }
+            "bar-hide" => match args {
+                [] => {
+                    ctx.state.hide_all_bars = true;
+                    self.rebuild(ctx.state);
+                    IpcResult::Handled {
+                        ok: true,
+                        message: "hidden all bars".into(),
+                        dirty: DirtyFlags::BAR | DirtyFlags::LAYOUT,
                     }
                 }
-            }
+                [monitor] => {
+                    ctx.state.hidden_bars.insert(monitor.clone());
+                    self.rebuild(ctx.state);
+                    IpcResult::Handled {
+                        ok: true,
+                        message: format!("hidden bar on {monitor}"),
+                        dirty: DirtyFlags::BAR | DirtyFlags::LAYOUT,
+                    }
+                }
+                [_bar_name, monitor, ..] => {
+                    ctx.state.hidden_bars.insert(monitor.clone());
+                    self.rebuild(ctx.state);
+                    IpcResult::Handled {
+                        ok: true,
+                        message: format!("hidden bar on {monitor}"),
+                        dirty: DirtyFlags::BAR | DirtyFlags::LAYOUT,
+                    }
+                }
+            },
             "bar-show" => match args {
                 [] => {
                     ctx.state.hide_all_bars = false;
@@ -198,6 +256,38 @@ impl KazeExtension for BarExtension {
                     dirty: DirtyFlags::BAR,
                 }
             }
+            "dnd-status" => IpcResult::Handled {
+                ok: true,
+                message: if ctx.state.dnd { "on" } else { "off" }.into(),
+                dirty: DirtyFlags::NONE,
+            },
+            "dnd-on" => {
+                ctx.state.dnd = true;
+                self.rebuild(ctx.state);
+                IpcResult::Handled {
+                    ok: true,
+                    message: "on".into(),
+                    dirty: DirtyFlags::BAR,
+                }
+            }
+            "dnd-off" => {
+                ctx.state.dnd = false;
+                self.rebuild(ctx.state);
+                IpcResult::Handled {
+                    ok: true,
+                    message: "off".into(),
+                    dirty: DirtyFlags::BAR,
+                }
+            }
+            "dnd-toggle" => {
+                ctx.state.dnd = !ctx.state.dnd;
+                self.rebuild(ctx.state);
+                IpcResult::Handled {
+                    ok: true,
+                    message: if ctx.state.dnd { "on" } else { "off" }.into(),
+                    dirty: DirtyFlags::BAR,
+                }
+            }
             _ => IpcResult::Unhandled,
         }
     }
@@ -233,6 +323,148 @@ fn collect_workspaces(state: &AppState, output_name: &str) -> Vec<(i32, bool, bo
         .into_iter()
         .map(|(id, occupied)| (id, id == active_ws, occupied))
         .collect()
+}
+
+struct SlotVisual {
+    id: String,
+    icon: IconKind,
+    icon_color: Color,
+    fill: Color,
+    stroke: Option<Color>,
+    level: Option<u8>,
+    dot: Option<Color>,
+}
+
+fn active_end_slots(state: &AppState) -> Vec<SlotVisual> {
+    let colors = state.palette.for_mode(state.theme_mode);
+    let primary = colors.primary_color();
+    let secondary = colors.secondary_color();
+    let tertiary = colors.tertiary_color();
+    let error_col = colors.error_color();
+    let on_surface = colors.on_surface_color();
+    let muted = colors.on_surface_variant_color();
+    let surface_container = colors.surface_container_color();
+    let surface_variant = colors.surface_variant_color();
+
+    let mut slots = Vec::new();
+    for name in &state.config.bar.end_slots {
+        match name.as_str() {
+            "display" => {
+                let active = state.display_status.is_active();
+                slots.push(SlotVisual {
+                    id: "display".into(),
+                    icon: IconKind::Display,
+                    icon_color: if active { primary } else { on_surface },
+                    fill: if active {
+                        surface_variant
+                    } else {
+                        surface_container
+                    },
+                    stroke: if active { Some(primary) } else { None },
+                    level: None,
+                    dot: status_dot_color(&state.display_status, primary, secondary, error_col),
+                });
+            }
+            "net" => {
+                let (icon, icon_color, level) =
+                    if !state.network.available || !state.network.connected {
+                        (IconKind::WifiOff, muted, None)
+                    } else {
+                        match state.network.kind {
+                            NetworkKind::Wifi => {
+                                (IconKind::Wifi, on_surface, Some(state.network.strength))
+                            }
+                            NetworkKind::Ethernet => (IconKind::Ethernet, on_surface, None),
+                            NetworkKind::Disconnected => (IconKind::WifiOff, muted, None),
+                        }
+                    };
+                slots.push(SlotVisual {
+                    id: "net".into(),
+                    icon,
+                    icon_color,
+                    fill: surface_container,
+                    stroke: None,
+                    level,
+                    dot: None,
+                });
+            }
+            "vol" => {
+                let (icon, icon_color, level) = if state.audio.muted || state.audio.volume_pct == 0
+                {
+                    (IconKind::VolumeMuted, error_col, Some(0))
+                } else {
+                    (IconKind::Volume, on_surface, Some(state.audio.volume_pct))
+                };
+                slots.push(SlotVisual {
+                    id: "vol".into(),
+                    icon,
+                    icon_color,
+                    fill: surface_container,
+                    stroke: None,
+                    level,
+                    dot: if state.audio.mic_muted {
+                        Some(tertiary)
+                    } else {
+                        None
+                    },
+                });
+            }
+            "bat" => {
+                if !state.battery.present {
+                    continue;
+                }
+                let (icon, icon_color) = if state.battery.charging {
+                    (IconKind::BatteryCharging, secondary)
+                } else if state.battery.low {
+                    (IconKind::Battery, error_col)
+                } else {
+                    (IconKind::Battery, on_surface)
+                };
+                slots.push(SlotVisual {
+                    id: "bat".into(),
+                    icon,
+                    icon_color,
+                    fill: surface_container,
+                    stroke: if state.battery.low {
+                        Some(error_col)
+                    } else {
+                        None
+                    },
+                    level: Some(state.battery.percentage),
+                    dot: None,
+                });
+            }
+            "notifications" => {
+                let (icon, icon_color, fill, stroke, dot) = if state.dnd {
+                    (
+                        IconKind::BellOff,
+                        tertiary,
+                        surface_variant,
+                        Some(tertiary),
+                        None,
+                    )
+                } else {
+                    let badge = if state.unread_notifications > 0 {
+                        Some(primary)
+                    } else {
+                        None
+                    };
+                    (IconKind::Bell, on_surface, surface_container, None, badge)
+                };
+                slots.push(SlotVisual {
+                    id: "notifications".into(),
+                    icon,
+                    icon_color,
+                    fill,
+                    stroke,
+                    level: None,
+                    dot,
+                });
+            }
+            _ => {}
+        }
+    }
+    slots
 }
 
 fn build_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
@@ -391,13 +623,13 @@ fn build_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
     let mut commands = Vec::new();
     let mut hit_targets = Vec::new();
     let workspaces = collect_workspaces(state, &output.name);
+    let end_slots = active_end_slots(state);
 
     let bg = colors.surface_color().with_opacity(bar.background_opacity);
     let border_color = colors.outline_variant_color();
     let primary = colors.primary_color();
     let on_primary = colors.on_primary_color();
     let secondary = colors.secondary_color();
-    let error_col = colors.error_color();
     let on_surface = colors.on_surface_color();
     let muted = colors.on_surface_variant_color();
     let surface_container = colors.surface_container_color();
@@ -471,59 +703,53 @@ fn build_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
             align: TextAlign::Center,
         });
 
-        // 3. End cluster: Display Slot (monitor icon + live status dot)
-        let slot_h = cell_w.min(32.0);
-        let slot_y = (bh - pad - bar.border_width - slot_h).max(center_y + 24.0);
-        let slot_rect = Rect::new(pad, slot_y, cell_w, slot_h);
-        commands.push(PaintCmd::RoundedRect {
-            rect: slot_rect,
-            radius: inner_radius,
-            fill: Some(if state.display_status.is_active() {
-                surface_variant
-            } else {
-                surface_container
-            }),
-            stroke: if state.display_status.is_active() {
-                Some(primary)
-            } else {
-                None
-            },
-            stroke_width: 1.0,
-        });
+        // 3. End cluster: Configurable status slots stacked from bottom upward
+        let slot_h = cell_w.min(30.0);
+        let total_slots_h =
+            end_slots.len() as f32 * slot_h + (end_slots.len().saturating_sub(1)) as f32 * spacing;
+        let mut slot_y = (bh - pad - bar.border_width - total_slots_h).max(center_y + 24.0);
 
-        let icon_w = (cell_w * 0.56).clamp(12.0, 18.0);
-        let icon_h = (slot_h * 0.50).clamp(10.0, 15.0);
-        let icon_rect = Rect::new(
-            slot_rect.x + (slot_rect.w - icon_w) * 0.5,
-            slot_rect.y + (slot_rect.h - icon_h) * 0.5,
-            icon_w,
-            icon_h,
-        );
-        commands.push(PaintCmd::MonitorIcon {
-            rect: icon_rect,
-            color: if state.display_status.is_active() {
-                primary
-            } else {
-                on_surface
-            },
-            stroke_width: 1.6,
-        });
-
-        if let Some(dot_color) =
-            status_dot_color(&state.display_status, primary, secondary, error_col)
-        {
-            commands.push(PaintCmd::Circle {
-                cx: slot_rect.x + slot_rect.w - 5.5,
-                cy: slot_rect.y + 5.5,
-                radius: 3.2,
-                fill: dot_color,
+        for slot in end_slots {
+            let slot_rect = Rect::new(pad, slot_y, cell_w, slot_h);
+            commands.push(PaintCmd::RoundedRect {
+                rect: slot_rect,
+                radius: inner_radius,
+                fill: Some(slot.fill),
+                stroke: slot.stroke,
+                stroke_width: if slot.stroke.is_some() { 1.0 } else { 0.0 },
             });
-        }
 
-        hit_targets.push(HitTarget {
-            rect: slot_rect,
-            id: "display".to_string(),
-        });
+            let icon_w = (cell_w * 0.56).clamp(12.0, 17.0);
+            let icon_h = (slot_h * 0.52).clamp(10.0, 15.0);
+            let icon_rect = Rect::new(
+                slot_rect.x + (slot_rect.w - icon_w) * 0.5,
+                slot_rect.y + (slot_rect.h - icon_h) * 0.5,
+                icon_w,
+                icon_h,
+            );
+            commands.push(PaintCmd::Icon {
+                rect: icon_rect,
+                kind: slot.icon,
+                color: slot.icon_color,
+                stroke_width: 1.5,
+                level: slot.level,
+            });
+
+            if let Some(dot_color) = slot.dot {
+                commands.push(PaintCmd::Circle {
+                    cx: slot_rect.x + slot_rect.w - 5.0,
+                    cy: slot_rect.y + 5.0,
+                    radius: 3.0,
+                    fill: dot_color,
+                });
+            }
+
+            hit_targets.push(HitTarget {
+                rect: slot_rect,
+                id: slot.id,
+            });
+            slot_y += slot_h + spacing;
+        }
     } else {
         // Horizontal bar / floating Island layout
         let bw = logical_w as f32;
@@ -576,59 +802,51 @@ fn build_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
             align: TextAlign::Center,
         });
 
-        // 3. End cluster: Display Slot
-        let slot_w = cell_h.max(28.0);
-        let slot_x = (bw - pad - bar.border_width - slot_w).max(clock_rect.x + clock_rect.w + 8.0);
-        let slot_rect = Rect::new(slot_x, pad, slot_w, cell_h);
-        commands.push(PaintCmd::RoundedRect {
-            rect: slot_rect,
-            radius: inner_radius,
-            fill: Some(if state.display_status.is_active() {
-                surface_variant
-            } else {
-                surface_container
-            }),
-            stroke: if state.display_status.is_active() {
-                Some(primary)
-            } else {
-                None
-            },
-            stroke_width: 1.0,
-        });
+        // 3. End cluster: Status slots laid out left-to-right anchored to right edge
+        let slot_w = cell_h.max(26.0);
+        let total_slots_w =
+            end_slots.len() as f32 * slot_w + (end_slots.len().saturating_sub(1)) as f32 * spacing;
+        let mut slot_x =
+            (bw - pad - bar.border_width - total_slots_w).max(clock_rect.x + clock_rect.w + 8.0);
 
-        let icon_w = (slot_w * 0.56).clamp(12.0, 18.0);
-        let icon_h = (cell_h * 0.54).clamp(10.0, 15.0);
-        let icon_rect = Rect::new(
-            slot_rect.x + (slot_rect.w - icon_w) * 0.5,
-            slot_rect.y + (slot_rect.h - icon_h) * 0.5,
-            icon_w,
-            icon_h,
-        );
-        commands.push(PaintCmd::MonitorIcon {
-            rect: icon_rect,
-            color: if state.display_status.is_active() {
-                primary
-            } else {
-                on_surface
-            },
-            stroke_width: 1.6,
-        });
-
-        if let Some(dot_color) =
-            status_dot_color(&state.display_status, primary, secondary, error_col)
-        {
-            commands.push(PaintCmd::Circle {
-                cx: slot_rect.x + slot_rect.w - 5.0,
-                cy: slot_rect.y + 5.0,
-                radius: 3.0,
-                fill: dot_color,
+        for slot in end_slots {
+            let slot_rect = Rect::new(slot_x, pad, slot_w, cell_h);
+            commands.push(PaintCmd::RoundedRect {
+                rect: slot_rect,
+                radius: inner_radius,
+                fill: Some(slot.fill),
+                stroke: slot.stroke,
+                stroke_width: if slot.stroke.is_some() { 1.0 } else { 0.0 },
             });
+            let icon_w = (slot_w * 0.56).clamp(12.0, 17.0);
+            let icon_h = (cell_h * 0.54).clamp(10.0, 15.0);
+            let icon_rect = Rect::new(
+                slot_rect.x + (slot_rect.w - icon_w) * 0.5,
+                slot_rect.y + (slot_rect.h - icon_h) * 0.5,
+                icon_w,
+                icon_h,
+            );
+            commands.push(PaintCmd::Icon {
+                rect: icon_rect,
+                kind: slot.icon,
+                color: slot.icon_color,
+                stroke_width: 1.5,
+                level: slot.level,
+            });
+            if let Some(dot_color) = slot.dot {
+                commands.push(PaintCmd::Circle {
+                    cx: slot_rect.x + slot_rect.w - 5.0,
+                    cy: slot_rect.y + 5.0,
+                    radius: 3.0,
+                    fill: dot_color,
+                });
+            }
+            hit_targets.push(HitTarget {
+                rect: slot_rect,
+                id: slot.id,
+            });
+            slot_x += slot_w + spacing;
         }
-
-        hit_targets.push(HitTarget {
-            rect: slot_rect,
-            id: "display".to_string(),
-        });
     }
 
     SurfaceSpec {
@@ -636,6 +854,7 @@ fn build_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
         namespace,
         output: Some(output.name.clone()),
         layer: Layer::Top,
+        keyboard_interactivity: KeyboardMode::None,
         anchor,
         exclusive_zone,
         width,
@@ -652,10 +871,10 @@ fn build_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
 
 fn status_dot_color(
     status: &DisplayStatus,
-    primary: kaze_core::Color,
-    secondary: kaze_core::Color,
-    error: kaze_core::Color,
-) -> Option<kaze_core::Color> {
+    primary: Color,
+    secondary: Color,
+    error: Color,
+) -> Option<Color> {
     match status {
         DisplayStatus::Idle => None,
         DisplayStatus::Present { .. } | DisplayStatus::VirtualControl { .. } => Some(primary),
@@ -716,7 +935,7 @@ mod tests {
     }
 
     #[test]
-    fn pointer_clicks_emit_workspace_dispatch_and_display_commands() {
+    fn pointer_clicks_and_scroll_emit_expected_actions() {
         let mut state = AppState::new(Config::default());
         let mut ext = BarExtension::new();
         let mut ctx = ShellContext::new(&mut state);
@@ -738,35 +957,40 @@ mod tests {
         ext.on_event(
             &SystemEvent::PointerClick {
                 surface_id: "bar:Virtual-1".into(),
-                target_id: "display".into(),
+                target_id: "net".into(),
                 button: PointerButton::Left,
             },
             &mut ctx,
         );
         assert_eq!(
             ctx.actions,
-            vec![ShellAction::SpawnCommand {
-                program: "kaze-display".into(),
-                args: vec!["--menu".into()],
+            vec![ShellAction::SpawnDetachedApp {
+                program: "kaze-tui".into(),
+                args: vec!["wifi".into()],
             }]
         );
 
         ctx.actions.clear();
         ext.on_event(
+            &SystemEvent::PointerScroll {
+                surface_id: "bar:Virtual-1".into(),
+                target_id: "vol".into(),
+                delta_y: -1.0,
+            },
+            &mut ctx,
+        );
+        assert_eq!(ctx.actions, vec![ShellAction::AudioStepVolume(5)]);
+
+        ctx.actions.clear();
+        ext.on_event(
             &SystemEvent::PointerClick {
                 surface_id: "bar:Virtual-1".into(),
-                target_id: "display".into(),
+                target_id: "vol".into(),
                 button: PointerButton::Right,
             },
             &mut ctx,
         );
-        assert_eq!(
-            ctx.actions,
-            vec![ShellAction::SpawnCommand {
-                program: "kaze-display".into(),
-                args: vec!["toggle-window-share".into()],
-            }]
-        );
+        assert_eq!(ctx.actions, vec![ShellAction::AudioToggleMute]);
     }
 
     #[test]
@@ -802,5 +1026,38 @@ mod tests {
         assert_eq!(specs[0].height, 36);
         assert_eq!(specs[0].corner_radius, 18.0);
         assert_eq!(specs[0].exclusive_zone, 0);
+    }
+
+    #[test]
+    fn hides_battery_slot_on_desktop_or_vm_without_battery() {
+        let mut state = AppState::new(Config::default());
+        state.outputs.insert(
+            "Virtual-1".into(),
+            OutputInfo {
+                name: "Virtual-1".into(),
+                width: 1920,
+                height: 1080,
+                scale: 1,
+            },
+        );
+        let mut ext = BarExtension::new();
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_init(&mut ctx);
+        }
+        let has_bat = ext.surfaces()[0].hit_targets.iter().any(|t| t.id == "bat");
+        assert!(!has_bat);
+
+        state.battery.present = true;
+        state.battery.percentage = 82;
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_event(
+                &SystemEvent::BatteryChanged(ctx.state.battery.clone()),
+                &mut ctx,
+            );
+        }
+        let has_bat_after = ext.surfaces()[0].hit_targets.iter().any(|t| t.id == "bat");
+        assert!(has_bat_after);
     }
 }

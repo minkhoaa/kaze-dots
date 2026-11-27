@@ -20,6 +20,14 @@ pub enum Layer {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyboardMode {
+    #[default]
+    None,
+    OnDemand,
+    Exclusive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EdgeInsets {
     pub top: i32,
     pub right: i32,
@@ -121,6 +129,22 @@ pub enum TextAlign {
     Right,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconKind {
+    Display,
+    Wifi,
+    Ethernet,
+    WifiOff,
+    Volume,
+    VolumeMuted,
+    MicMuted,
+    Battery,
+    BatteryCharging,
+    Brightness,
+    Bell,
+    BellOff,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum PaintCmd {
     RoundedRect {
@@ -136,6 +160,7 @@ pub enum PaintCmd {
         radius: f32,
         fill: Color,
     },
+    /// Fast ASCII/numeric text rendered via `ab_glyph` + `memmap2` (zero cosmic-text overhead at T0).
     Text {
         rect: Rect,
         text: String,
@@ -144,10 +169,27 @@ pub enum PaintCmd {
         bold: bool,
         align: TextAlign,
     },
+    /// Shaped Unicode text (Vietnamese diacritics + Color Emoji + font fallback) via lazy `cosmic-text`.
+    RichText {
+        rect: Rect,
+        text: String,
+        color: Color,
+        size: f32,
+        bold: bool,
+        align: TextAlign,
+        max_lines: u8,
+    },
     MonitorIcon {
         rect: Rect,
         color: Color,
         stroke_width: f32,
+    },
+    Icon {
+        rect: Rect,
+        kind: IconKind,
+        color: Color,
+        stroke_width: f32,
+        level: Option<u8>,
     },
 }
 
@@ -163,6 +205,7 @@ pub struct SurfaceSpec {
     pub namespace: String,
     pub output: Option<String>,
     pub layer: Layer,
+    pub keyboard_interactivity: KeyboardMode,
     pub anchor: Anchor,
     pub exclusive_zone: i32,
     pub width: u32,
@@ -181,6 +224,7 @@ impl SurfaceSpec {
         self.namespace == other.namespace
             && self.output == other.output
             && self.layer == other.layer
+            && self.keyboard_interactivity == other.keyboard_interactivity
             && self.anchor == other.anchor
             && self.exclusive_zone == other.exclusive_zone
             && self.width == other.width

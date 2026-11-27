@@ -1,3 +1,5 @@
+#![deny(clippy::unwrap_used)]
+
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -8,7 +10,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const MAX_LINE_BYTES: usize = 64 * 1024;
+/// Raised to 2 MiB so interactive `dmenu` lists from `kaze-keys`/`kaze-project` never truncate.
+const MAX_LINE_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IpcRequest {
@@ -47,6 +50,25 @@ impl IpcResponse {
             ok: false,
             message: message.into(),
             data: None,
+        }
+    }
+}
+
+/// Deferred responder handle allowing the daemon to either reply immediately
+/// or hold a client connection open across event-loop ticks (e.g. `kaze-shell dmenu`).
+pub struct IpcResponder {
+    stream: UnixStream,
+}
+
+impl IpcResponder {
+    pub fn send(mut self, resp: &IpcResponse) {
+        let _ = self
+            .stream
+            .set_write_timeout(Some(Duration::from_millis(500)));
+        if let Ok(mut line) = serde_json::to_string(resp) {
+            line.push('\n');
+            let _ = self.stream.write_all(line.as_bytes());
+            let _ = self.stream.flush();
         }
     }
 }
@@ -100,15 +122,21 @@ impl IpcServer {
         &self.path
     }
 
-    /// Accepts all queued client connections without blocking and handles each request via `handler`.
-    pub fn accept_and_dispatch<F>(&self, mut handler: F)
+    /// Accepts all queued client connections without blocking and invokes `handler`
+    /// with the parsed request and an `IpcResponder` (immediate or deferred).
+    pub fn accept_with_responder<F>(&self, mut handler: F)
     where
-        F: FnMut(IpcRequest) -> IpcResponse,
+        F: FnMut(IpcRequest, IpcResponder),
     {
         loop {
             match self.listener.accept() {
                 Ok((stream, _addr)) => {
-                    handle_connection(stream, &mut handler);
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+                    match read_request_line(&stream) {
+                        Ok(req) => handler(req, IpcResponder { stream }),
+                        Err(msg) => IpcResponder { stream }.send(&IpcResponse::err(msg)),
+                    }
                 }
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => break,
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
@@ -118,6 +146,17 @@ impl IpcServer {
                 }
             }
         }
+    }
+
+    /// Convenience synchronous dispatcher for immediate request/response handlers.
+    pub fn accept_and_dispatch<F>(&self, mut handler: F)
+    where
+        F: FnMut(IpcRequest) -> IpcResponse,
+    {
+        self.accept_with_responder(|req, responder| {
+            let resp = handler(req);
+            responder.send(&resp);
+        });
     }
 }
 
@@ -130,26 +169,6 @@ impl AsFd for IpcServer {
 impl Drop for IpcServer {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
-    }
-}
-
-fn handle_connection<F>(mut stream: UnixStream, handler: &mut F)
-where
-    F: FnMut(IpcRequest) -> IpcResponse,
-{
-    let _ = stream.set_nonblocking(false);
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
-
-    let resp = match read_request_line(&stream) {
-        Ok(req) => handler(req),
-        Err(msg) => IpcResponse::err(msg),
-    };
-
-    if let Ok(mut line) = serde_json::to_string(&resp) {
-        line.push('\n');
-        let _ = stream.write_all(line.as_bytes());
-        let _ = stream.flush();
     }
 }
 
@@ -167,10 +186,18 @@ fn read_request_line(stream: &UnixStream) -> Result<IpcRequest, String> {
 }
 
 pub fn send_request(path: &Path, req: &IpcRequest) -> Result<IpcResponse, String> {
+    send_request_with_timeout(path, req, Some(Duration::from_secs(3)))
+}
+
+pub fn send_request_with_timeout(
+    path: &Path,
+    req: &IpcRequest,
+    read_timeout: Option<Duration>,
+) -> Result<IpcResponse, String> {
     let mut stream = UnixStream::connect(path)
         .map_err(|e| format!("cannot connect to {}: {e}", path.display()))?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+    let _ = stream.set_read_timeout(read_timeout);
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
 
     let mut payload = serde_json::to_string(req).map_err(|e| format!("encode IPC request: {e}"))?;
     payload.push('\n');
@@ -181,7 +208,7 @@ pub fn send_request(path: &Path, req: &IpcRequest) -> Result<IpcResponse, String
         .flush()
         .map_err(|e| format!("flush IPC request: {e}"))?;
 
-    let mut reader = BufReader::new(stream.take((MAX_LINE_BYTES * 4) as u64));
+    let mut reader = BufReader::new(stream.take(MAX_LINE_BYTES as u64));
     let mut line = String::new();
     let n = reader
         .read_line(&mut line)
@@ -196,17 +223,13 @@ pub fn send_request(path: &Path, req: &IpcRequest) -> Result<IpcResponse, String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::DirBuilderExt;
     use std::thread;
 
     #[test]
     fn round_trips_ipc_request_and_response() {
         let dir = env::temp_dir().join(format!("kaze-ipc-test-{}", std::process::id()));
         let sock = dir.join("shell.sock");
-        fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&dir)
-            .expect("private IPC fixture");
+        let _ = fs::remove_dir_all(&dir);
 
         let server = IpcServer::bind(sock.clone()).expect("bind server");
         let sock_client = sock.clone();
@@ -242,6 +265,51 @@ mod tests {
 
         drop(server);
         assert!(!sock.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deferred_responder_replies_asynchronously() {
+        let dir = env::temp_dir().join(format!("kaze-ipc-defer-{}", std::process::id()));
+        let sock = dir.join("shell.sock");
+        let _ = fs::remove_dir_all(&dir);
+
+        let server = IpcServer::bind(sock.clone()).expect("bind server");
+        let sock_client = sock.clone();
+        let client_handle = thread::spawn(move || {
+            send_request_with_timeout(
+                &sock_client,
+                &IpcRequest {
+                    cmd: "dmenu".into(),
+                    args: vec!["A\nB".into()],
+                },
+                None,
+            )
+        });
+
+        let mut saved: Option<IpcResponder> = None;
+        for _ in 0..50 {
+            server.accept_with_responder(|req, responder| {
+                assert_eq!(req.cmd, "dmenu");
+                saved = Some(responder);
+            });
+            if saved.is_some() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        let responder = saved.expect("captured deferred responder");
+        responder.send(&IpcResponse::ok("B"));
+
+        let resp = client_handle
+            .join()
+            .expect("client thread")
+            .expect("client response");
+        assert!(resp.ok);
+        assert_eq!(resp.message, "B");
+
+        drop(server);
         let _ = fs::remove_dir_all(&dir);
     }
 }

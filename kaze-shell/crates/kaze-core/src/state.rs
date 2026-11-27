@@ -60,6 +60,72 @@ pub struct WorkspaceState {
     pub urgent: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkKind {
+    #[default]
+    Disconnected,
+    Ethernet,
+    Wifi,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct NetworkState {
+    pub available: bool,
+    pub connected: bool,
+    pub kind: NetworkKind,
+    pub ssid: String,
+    pub strength: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct BatteryState {
+    pub present: bool,
+    pub percentage: u8,
+    pub charging: bool,
+    pub low: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AudioState {
+    pub available: bool,
+    pub volume_pct: u8,
+    pub muted: bool,
+    pub mic_muted: bool,
+    pub sink_name: String,
+    pub source_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct BacklightState {
+    pub present: bool,
+    pub percentage: u8,
+    pub device: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaPlayback {
+    #[default]
+    Stopped,
+    Paused,
+    Playing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct MediaState {
+    pub active: bool,
+    pub player: String,
+    pub title: String,
+    pub artist: String,
+    pub status: MediaPlayback,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum DisplayStatus {
     #[default]
@@ -169,6 +235,13 @@ pub struct AppState {
     pub hidden_bars: BTreeSet<String>,
     pub hide_all_bars: bool,
     pub display_status: DisplayStatus,
+    pub network: NetworkState,
+    pub battery: BatteryState,
+    pub audio: AudioState,
+    pub backlight: BacklightState,
+    pub media: MediaState,
+    pub dnd: bool,
+    pub unread_notifications: u32,
     pub clock: ClockTime,
     pub hypr_connected: bool,
 }
@@ -191,6 +264,13 @@ impl AppState {
             hidden_bars: BTreeSet::new(),
             hide_all_bars: false,
             display_status: DisplayStatus::Idle,
+            network: NetworkState::default(),
+            battery: BatteryState::default(),
+            audio: AudioState::default(),
+            backlight: BacklightState::default(),
+            media: MediaState::default(),
+            dnd: false,
+            unread_notifications: 0,
             clock,
             hypr_connected: false,
         }

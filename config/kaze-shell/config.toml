@@ -19,6 +19,16 @@ background_opacity = 0.94
 exclusive = true
 persistent_workspaces = 5
 font = "JetBrainsMono Nerd Font"
+end_slots = ["display", "net", "vol", "bat", "notifications"]
+
+[osd]
+enabled = true
+position = "top_right"
+width = 224
+height = 48
+offset_x = 12
+offset_y = 12
+timeout_ms = 1500
 
 [display]
 left_click_cmd = ["kaze-display", "--menu"]
