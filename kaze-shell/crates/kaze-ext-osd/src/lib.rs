@@ -30,8 +30,8 @@ impl OsdExtension {
     }
 
     fn show(&mut self, kind: OsdKind, ctx: &mut ShellContext) -> DirtyFlags {
-        if !ctx.state.config.osd.enabled {
-            return DirtyFlags::NONE;
+        if !ctx.state.config.osd.enabled || ctx.state.island_absorbs_osd() {
+            return self.hide(ctx);
         }
         self.active_kind = Some(kind);
         self.cached_spec = Some(build_osd_surface(ctx.state, kind));
@@ -76,7 +76,7 @@ impl KazeExtension for OsdExtension {
             | SystemEvent::ThemeChanged(_)
             | SystemEvent::LayoutPresetChanged(_) => {
                 if let Some(kind) = self.active_kind {
-                    if ctx.state.config.osd.enabled {
+                    if ctx.state.config.osd.enabled && !ctx.state.island_absorbs_osd() {
                         self.cached_spec = Some(build_osd_surface(ctx.state, kind));
                         return DirtyFlags::OSD | DirtyFlags::THEME;
                     }

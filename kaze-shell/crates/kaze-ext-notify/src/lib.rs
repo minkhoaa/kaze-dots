@@ -128,6 +128,16 @@ impl NotifyExtension {
             return DirtyFlags::NONE;
         }
 
+        // When Dynamic Island absorbs notifications, low/normal toasts render inside the Island
+        // instead of opening a separate top-right stack; critical alerts remain standalone & prominent.
+        if ctx.state.island_absorbs_notify() && item.urgency != NotificationUrgency::Critical {
+            if !item.transient {
+                ctx.state.unread_notifications = ctx.state.unread_notifications.saturating_add(1);
+            }
+            self.sync_counts(ctx.state);
+            return DirtyFlags::NONE;
+        }
+
         let existing_idx = self.visible.iter().position(|n| {
             n.id == item.id || (item.sync_tag.is_some() && n.sync_tag == item.sync_tag)
         });

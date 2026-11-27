@@ -143,6 +143,13 @@ pub enum IconKind {
     Brightness,
     Bell,
     BellOff,
+    Play,
+    Pause,
+    Prev,
+    Next,
+    Record,
+    Cast,
+    Close,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -151,6 +158,15 @@ pub enum PaintCmd {
         rect: Rect,
         radius: f32,
         fill: Option<Color>,
+        stroke: Option<Color>,
+        stroke_width: f32,
+    },
+    /// Hardware-notch pill flushed to the top edge with concave upper ear flares.
+    NotchPill {
+        rect: Rect,
+        bottom_radius: f32,
+        flare_radius: f32,
+        fill: Color,
         stroke: Option<Color>,
         stroke_width: f32,
     },

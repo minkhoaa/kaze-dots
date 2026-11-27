@@ -125,6 +125,66 @@ pub struct MediaState {
     pub title: String,
     pub artist: String,
     pub status: MediaPlayback,
+    pub position_us: i64,
+    pub length_us: i64,
+    /// Playback rate scaled by 1000 (`1000` = 1.0x) to preserve `Eq`.
+    pub rate_milli: i32,
+    pub updated_at_epoch_ms: u64,
+}
+
+impl MediaState {
+    /// Computes interpolated playback progress `0.0..=1.0` without polling MPRIS.
+    pub fn interpolated_progress(&self, now_epoch_ms: u64) -> Option<f32> {
+        if self.length_us <= 0 {
+            return None;
+        }
+        let elapsed_us = if self.status == MediaPlayback::Playing
+            && self.updated_at_epoch_ms > 0
+            && now_epoch_ms >= self.updated_at_epoch_ms
+        {
+            let dt_ms = (now_epoch_ms - self.updated_at_epoch_ms).min(3_600_000) as i64;
+            let rate = if self.rate_milli > 0 {
+                i64::from(self.rate_milli)
+            } else {
+                1000
+            };
+            dt_ms.saturating_mul(rate)
+        } else {
+            0
+        };
+        let pos = self
+            .position_us
+            .saturating_add(elapsed_us)
+            .clamp(0, self.length_us);
+        Some((pos as f64 / self.length_us as f64).clamp(0.0, 1.0) as f32)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct DisplayActivity {
+    pub mode: String,
+    pub ws: Option<i32>,
+    pub control: bool,
+    pub output: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct RecordActivity {
+    pub active: bool,
+    pub started_at: u64,
+    pub audio: bool,
+    pub gif: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct CustomActivity {
+    pub id: String,
+    pub badge: String,
+    pub title: String,
+    pub subtitle: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -268,6 +328,10 @@ pub struct AppState {
     pub hidden_bars: BTreeSet<String>,
     pub hide_all_bars: bool,
     pub display_status: DisplayStatus,
+    pub display_activity: Option<DisplayActivity>,
+    pub record_activity: Option<RecordActivity>,
+    pub custom_activities: BTreeMap<String, CustomActivity>,
+    pub island_expanded: bool,
     pub network: NetworkState,
     pub battery: BatteryState,
     pub audio: AudioState,
@@ -302,6 +366,10 @@ impl AppState {
             hidden_bars: BTreeSet::new(),
             hide_all_bars: false,
             display_status: DisplayStatus::Idle,
+            display_activity: None,
+            record_activity: None,
+            custom_activities: BTreeMap::new(),
+            island_expanded: false,
             network: NetworkState::default(),
             battery: BatteryState::default(),
             audio: AudioState::default(),
@@ -328,5 +396,34 @@ impl AppState {
             .map(|m| m.active_workspace_id)
             .filter(|&id| id > 0)
             .unwrap_or(self.active_workspace_id)
+    }
+
+    pub fn island_always_visible(&self) -> bool {
+        self.layout_preset == LayoutPreset::Island || self.config.island.enabled
+    }
+
+    pub fn island_absorbs_osd(&self) -> bool {
+        self.island_always_visible() && self.config.island.absorb_osd
+    }
+
+    pub fn island_absorbs_notify(&self) -> bool {
+        self.island_always_visible() && self.config.island.absorb_notify
+    }
+
+    pub fn active_live_activity_ids(&self) -> Vec<String> {
+        let mut ids = Vec::new();
+        if self.record_activity.as_ref().is_some_and(|r| r.active) {
+            ids.push("record".to_string());
+        }
+        if self.display_activity.is_some() || self.display_status.is_active() {
+            ids.push("display".to_string());
+        }
+        if self.media.active {
+            ids.push("media".to_string());
+        }
+        for key in self.custom_activities.keys() {
+            ids.push(key.clone());
+        }
+        ids
     }
 }

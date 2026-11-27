@@ -11,6 +11,7 @@ use kaze_core::{
     ResolvedPalette, ShellAction, ShellContext, SystemEvent, ThemePaths,
 };
 use kaze_ext_bar::BarExtension;
+use kaze_ext_island::IslandExtension;
 use kaze_ext_launcher::{desktop as launcher_desktop, LauncherExtension};
 use kaze_ext_notify::NotifyExtension;
 use kaze_ext_osd::OsdExtension;
@@ -624,6 +625,8 @@ impl Daemon {
                     "hypr_connected": self.state.hypr_connected,
                     "active_workspace_id": self.state.active_workspace_id,
                     "display_status": self.state.display_status.kind_name(),
+                    "island_expanded": self.state.island_expanded,
+                    "live_activities": self.state.active_live_activity_ids(),
                     "dnd": self.state.dnd,
                     "unread_notifications": self.state.unread_notifications,
                     "active_notifications": self.state.active_notifications,
@@ -948,6 +951,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     let theme_paths = ThemePaths::default_paths()?;
     let extensions: Vec<Box<dyn KazeExtension>> = vec![
         Box::new(BarExtension::new()),
+        Box::new(IslandExtension::new()),
         Box::new(OsdExtension::new()),
         Box::new(NotifyExtension::new()),
         Box::new(LauncherExtension::new()),

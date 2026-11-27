@@ -2,9 +2,10 @@ use calloop::channel::Sender as CalloopSender;
 use futures_util::StreamExt;
 use kaze_core::{MediaPlayback, MediaState, SystemEvent};
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use zbus::fdo::DBusProxy;
-use zbus::zvariant::OwnedValue;
+use zbus::zvariant::{OwnedValue, Value};
 use zbus::{Connection, MatchRule, MessageStream, Proxy};
 
 const MPRIS_PREFIX: &str = "org.mpris.MediaPlayer2.";
@@ -153,6 +154,7 @@ async fn query_player(conn: &Connection, dest: &str) -> Option<MediaState> {
 
     let mut title = String::new();
     let mut artist = String::new();
+    let mut length_us = 0i64;
     if let Ok(meta) = proxy
         .get_property::<HashMap<String, OwnedValue>>("Metadata")
         .await
@@ -167,7 +169,28 @@ async fn query_player(conn: &Connection, dest: &str) -> Option<MediaState> {
                 artist = arr.join(", ");
             }
         }
+        if let Some(v) = meta.get("mpris:length") {
+            length_us = match &**v {
+                Value::I64(n) => *n,
+                Value::U64(n) => i64::try_from(*n).unwrap_or(0),
+                Value::I32(n) => i64::from(*n),
+                Value::U32(n) => i64::from(*n),
+                _ => 0,
+            };
+        }
     }
+
+    let position_us: i64 = proxy.get_property("Position").await.unwrap_or(0).max(0);
+    let rate_f: f64 = proxy.get_property("Rate").await.unwrap_or(1.0);
+    let rate_milli = if rate_f.is_finite() && rate_f > 0.0 {
+        (rate_f * 1000.0).round().clamp(100.0, 4000.0) as i32
+    } else {
+        1000
+    };
+    let updated_at_epoch_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
 
     Some(MediaState {
         active: status != MediaPlayback::Stopped || !title.is_empty(),
@@ -175,5 +198,9 @@ async fn query_player(conn: &Connection, dest: &str) -> Option<MediaState> {
         title,
         artist,
         status,
+        position_us,
+        length_us,
+        rate_milli,
+        updated_at_epoch_ms,
     })
 }

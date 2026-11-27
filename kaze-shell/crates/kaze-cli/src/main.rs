@@ -26,6 +26,10 @@ IPC Commands (via `kaze-shell msg`):\n\
   layout-set <omarchy|island|swiss|ghost>  Switch active layout preset live\n\
   layout-next                       Cycle to the next layout preset\n\
   layout-list | layout-status       List available presets or print active preset\n\
+  island-toggle                     Expand or collapse Dynamic Island\n\
+  island-activity <id> <json>       Update a Dynamic Island Live Activity (display|record|<id>)\n\
+  island-clear <id|all>             Clear a Dynamic Island Live Activity\n\
+  island-style <floating|notch>     Switch Dynamic Island geometry style\n\
   theme-mode-toggle                 Toggle Dark/Light mode & regenerate templates\n\
   templates-apply                   Regenerate Hyprland, Foot, GTK3/4, btop themes\n\
   display-status <mode> [detail]    Update Display Slot dot (idle|present|virtual-share|virtual-control|recording)\n\

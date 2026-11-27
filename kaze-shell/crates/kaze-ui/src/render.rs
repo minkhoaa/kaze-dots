@@ -409,6 +409,51 @@ impl Renderer {
                         }
                     }
                 }
+                PaintCmd::NotchPill {
+                    rect,
+                    bottom_radius,
+                    flare_radius,
+                    fill,
+                    stroke,
+                    stroke_width,
+                } => {
+                    let rx = rect.x * s;
+                    let ry = rect.y * s;
+                    let rw = rect.w * s;
+                    let rh = rect.h * s;
+                    let br = (*bottom_radius * s).min(rh * 0.85).min(rw * 0.4);
+                    let fr = (*flare_radius * s).min(rh * 0.5).min(rw * 0.25);
+                    if let Some(path) = notch_pill_path(rx, ry, rw, rh, br, fr) {
+                        let mut paint = Paint::default();
+                        paint.set_color(to_skia_color(*fill));
+                        paint.anti_alias = true;
+                        pixmap.fill_path(
+                            &path,
+                            &paint,
+                            FillRule::Winding,
+                            Transform::identity(),
+                            None,
+                        );
+                        if let Some(stroke_col) = stroke {
+                            if *stroke_width > 0.0 {
+                                let mut spaint = Paint::default();
+                                spaint.set_color(to_skia_color(*stroke_col));
+                                spaint.anti_alias = true;
+                                let st = Stroke {
+                                    width: *stroke_width * s,
+                                    ..Stroke::default()
+                                };
+                                pixmap.stroke_path(
+                                    &path,
+                                    &spaint,
+                                    &st,
+                                    Transform::identity(),
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                }
                 PaintCmd::Circle {
                     cx,
                     cy,
@@ -723,6 +768,50 @@ fn rounded_rect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<Path> {
     pb.finish()
 }
 
+/// Hardware-notch silhouette flushed to `y` with concave top-left / top-right ear flares
+/// (extending `fr` horizontally into the bezel) and convex rounded bottom corners (`br`).
+fn notch_pill_path(x: f32, y: f32, w: f32, h: f32, br: f32, fr: f32) -> Option<Path> {
+    if w <= fr * 2.0 + 4.0 || h <= 4.0 {
+        return rounded_rect_path(x, y, w, h, br);
+    }
+    let inner_x0 = x + fr;
+    let inner_x1 = x + w - fr;
+    let fk = fr * KAPPA;
+    let bk = br * KAPPA;
+
+    let mut pb = PathBuilder::new();
+    // Top flush bezel span including both concave ears
+    pb.move_to(x, y);
+    pb.line_to(x + w, y);
+    // Right concave ear curving downward into right side wall
+    pb.cubic_to(x + w - fk, y, inner_x1, y + fr - fk, inner_x1, y + fr);
+    pb.line_to(inner_x1, y + h - br);
+    // Bottom-right convex corner
+    pb.cubic_to(
+        inner_x1,
+        y + h - br + bk,
+        inner_x1 - br + bk,
+        y + h,
+        inner_x1 - br,
+        y + h,
+    );
+    pb.line_to(inner_x0 + br, y + h);
+    // Bottom-left convex corner
+    pb.cubic_to(
+        inner_x0 + br - bk,
+        y + h,
+        inner_x0,
+        y + h - br + bk,
+        inner_x0,
+        y + h - br,
+    );
+    pb.line_to(inner_x0, y + fr);
+    // Left concave ear curving outward back to top-left bezel corner
+    pb.cubic_to(inner_x0, y + fr - fk, x + fk, y, x, y);
+    pb.close();
+    pb.finish()
+}
+
 fn draw_icon(
     pixmap: &mut Pixmap,
     kind: IconKind,
@@ -985,6 +1074,94 @@ fn draw_icon(
                 }
             }
         }
+        IconKind::Play => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.22, y + h * 0.14);
+            pb.line_to(x + w * 0.86, y + h * 0.50);
+            pb.line_to(x + w * 0.22, y + h * 0.86);
+            pb.close();
+            if let Some(tri) = pb.finish() {
+                pixmap.fill_path(&tri, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        }
+        IconKind::Pause => {
+            let bw = (w * 0.24).max(2.0);
+            if let Some(r1) = SkiaRect::from_xywh(x + w * 0.20, y + h * 0.16, bw, h * 0.68) {
+                pixmap.fill_rect(r1, &paint, Transform::identity(), None);
+            }
+            if let Some(r2) = SkiaRect::from_xywh(x + w * 0.58, y + h * 0.16, bw, h * 0.68) {
+                pixmap.fill_rect(r2, &paint, Transform::identity(), None);
+            }
+        }
+        IconKind::Prev => {
+            if let Some(bar) =
+                SkiaRect::from_xywh(x + w * 0.14, y + h * 0.20, (w * 0.14).max(1.8), h * 0.60)
+            {
+                pixmap.fill_rect(bar, &paint, Transform::identity(), None);
+            }
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.84, y + h * 0.18);
+            pb.line_to(x + w * 0.34, y + h * 0.50);
+            pb.line_to(x + w * 0.84, y + h * 0.82);
+            pb.close();
+            if let Some(tri) = pb.finish() {
+                pixmap.fill_path(&tri, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        }
+        IconKind::Next => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.16, y + h * 0.18);
+            pb.line_to(x + w * 0.66, y + h * 0.50);
+            pb.line_to(x + w * 0.16, y + h * 0.82);
+            pb.close();
+            if let Some(tri) = pb.finish() {
+                pixmap.fill_path(&tri, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+            if let Some(bar) =
+                SkiaRect::from_xywh(x + w * 0.72, y + h * 0.20, (w * 0.14).max(1.8), h * 0.60)
+            {
+                pixmap.fill_rect(bar, &paint, Transform::identity(), None);
+            }
+        }
+        IconKind::Record => {
+            let cx = x + w * 0.5;
+            let cy = y + h * 0.5;
+            if let Some(ring) = PathBuilder::from_circle(cx, cy, w.min(h) * 0.42) {
+                pixmap.stroke_path(&ring, &paint, &round_stroke, Transform::identity(), None);
+            }
+            if let Some(dot) = PathBuilder::from_circle(cx, cy, w.min(h) * 0.22) {
+                pixmap.fill_path(&dot, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        }
+        IconKind::Cast => {
+            if let Some(frame) = rounded_rect_path(
+                x + sw * 0.5,
+                y + sw * 0.5,
+                (w - sw).max(2.0),
+                (h - sw).max(2.0),
+                1.5 * s,
+            ) {
+                pixmap.stroke_path(&frame, &paint, &round_stroke, Transform::identity(), None);
+            }
+            for frac in [0.24f32, 0.46] {
+                let mut pb = PathBuilder::new();
+                pb.move_to(x + sw, y + h - h * frac);
+                pb.quad_to(x + w * frac, y + h - h * frac, x + w * frac, y + h - sw);
+                if let Some(arc) = pb.finish() {
+                    pixmap.stroke_path(&arc, &paint, &round_stroke, Transform::identity(), None);
+                }
+            }
+        }
+        IconKind::Close => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.20, y + h * 0.20);
+            pb.line_to(x + w * 0.80, y + h * 0.80);
+            pb.move_to(x + w * 0.80, y + h * 0.20);
+            pb.line_to(x + w * 0.20, y + h * 0.80);
+            if let Some(x_path) = pb.finish() {
+                pixmap.stroke_path(&x_path, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
     }
 }
 
@@ -1157,5 +1334,30 @@ mod tests {
             .filter(|px| px[0] != 0x28 || px[1] != 0x1f || px[2] != 0x1f)
             .count();
         assert!(fg_pixels > 50, "expected shaped Vietnamese/Emoji pixels");
+    }
+
+    #[test]
+    fn notch_pill_renders_concave_ears_with_transparent_lower_outer_corners() {
+        let mut renderer = Renderer::new("JetBrainsMono Nerd Font");
+        let mut spec = make_spec(vec![PaintCmd::NotchPill {
+            rect: Rect::new(0.0, 0.0, 240.0, 44.0),
+            bottom_radius: 18.0,
+            flare_radius: 12.0,
+            fill: Color::rgba(0x1f, 0x1f, 0x28, 0xff),
+            stroke: None,
+            stroke_width: 0.0,
+        }]);
+        spec.height = 44;
+        spec.background = Color::TRANSPARENT;
+        spec.border_width = 0.0;
+        let mut buf = vec![0u8; 240 * 44 * 4];
+        renderer.render_spec(&spec, 240, 44, 1, &mut buf);
+
+        // Center of notch body must be opaque.
+        let center_idx = (22 * 240 + 120) * 4;
+        assert_eq!(buf[center_idx + 3], 255);
+        // Bottom-left outside the flare (x=2, y=38) must remain transparent.
+        let outside_idx = (38 * 240 + 2) * 4;
+        assert_eq!(buf[outside_idx + 3], 0);
     }
 }

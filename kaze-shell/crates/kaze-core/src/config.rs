@@ -185,6 +185,58 @@ impl Default for DisplayConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum IslandStyle {
+    #[default]
+    Floating,
+    Notch,
+}
+
+impl IslandStyle {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Floating => "floating",
+            Self::Notch => "notch",
+        }
+    }
+
+    pub fn from_name(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "floating" | "pill" => Some(Self::Floating),
+            "notch" | "concave" => Some(Self::Notch),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IslandConfig {
+    /// Forces Dynamic Island visible even outside the `island` layout preset.
+    pub enabled: bool,
+    pub style: IslandStyle,
+    pub corner_radius: f32,
+    pub margin_top: i32,
+    pub absorb_osd: bool,
+    pub absorb_notify: bool,
+    pub auto_collapse_ms: u64,
+}
+
+impl Default for IslandConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            style: IslandStyle::Floating,
+            corner_radius: 20.0,
+            margin_top: 8,
+            absorb_osd: true,
+            absorb_notify: true,
+            auto_collapse_ms: 4500,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct LayoutConfig {
@@ -197,6 +249,7 @@ pub struct Config {
     pub layout: LayoutConfig,
     pub theme: ThemeConfig,
     pub bar: BarConfig,
+    pub island: IslandConfig,
     pub osd: OsdConfig,
     pub notifications: NotifyConfig,
     pub launcher: LauncherConfig,
@@ -274,6 +327,11 @@ impl Config {
         self.launcher.width = self.launcher.width.clamp(320, 960);
         self.launcher.max_rows = self.launcher.max_rows.clamp(4, 16);
         self.launcher.offset_y = self.launcher.offset_y.clamp(0, 600);
+        if !self.island.corner_radius.is_finite() {
+            self.island.corner_radius = 20.0;
+        }
+        self.island.corner_radius = self.island.corner_radius.clamp(12.0, 26.0);
+        self.island.margin_top = self.island.margin_top.clamp(0, 32);
         Ok(())
     }
 }

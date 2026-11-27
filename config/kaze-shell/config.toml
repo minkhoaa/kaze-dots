@@ -24,6 +24,15 @@ persistent_workspaces = 5
 font = "JetBrainsMono Nerd Font"
 end_slots = ["display", "net", "vol", "bat", "notifications"]
 
+[island]
+enabled = false
+style = "floating"
+corner_radius = 20.0
+margin_top = 8
+absorb_osd = true
+absorb_notify = true
+auto_collapse_ms = 4500
+
 [osd]
 enabled = true
 position = "top_right"
