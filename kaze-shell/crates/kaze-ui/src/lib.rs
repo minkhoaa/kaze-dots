@@ -4,10 +4,10 @@ pub mod render;
 
 use kaze_core::{
     Anchor, DirtyFlags, ImeEvent, KeyEvent as CoreKeyEvent, KeyModifiers, KeyboardMode, Layer,
-    OutputInfo, PointerButton, SurfaceSpec, SystemEvent,
+    OutputInfo, PointerButton, Rect, SurfaceSpec, SystemEvent, SPRING_MAX_DT_SECS,
 };
 use render::Renderer;
-use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
+use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::client::backend::ObjectId;
 use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
@@ -43,10 +43,49 @@ use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::{
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 const BTN_MIDDLE: u32 = 0x112;
+const DEFAULT_REFRESH_MHZ: i32 = 60_000;
+
+/// Per-surface frame clock driven exclusively by Wayland `wl_surface.frame()` callbacks.
+/// Computes refresh-rate-accurate `dt` (clamped to `<= 33ms`) and cleans up all entries
+/// immediately once animations converge so idle surfaces generate 0 wakeups.
+#[derive(Default)]
+pub struct AnimationClock {
+    last_frame_ms: HashMap<String, u32>,
+}
+
+impl AnimationClock {
+    pub fn tick(&mut self, surface_id: &str, time_ms: u32, refresh_mhz: i32) -> f32 {
+        let fallback_dt = if refresh_mhz > 0 {
+            (1000.0 / (refresh_mhz as f32)).clamp(0.004, SPRING_MAX_DT_SECS)
+        } else {
+            1.0 / 60.0
+        };
+        match self.last_frame_ms.insert(surface_id.to_string(), time_ms) {
+            Some(prev_ms) => {
+                let delta_ms = time_ms.wrapping_sub(prev_ms);
+                if delta_ms == 0 {
+                    fallback_dt
+                } else {
+                    (delta_ms as f32 / 1000.0).clamp(0.001, SPRING_MAX_DT_SECS)
+                }
+            }
+            None => fallback_dt,
+        }
+    }
+
+    pub fn stop(&mut self, surface_id: &str) {
+        self.last_frame_ms.remove(surface_id);
+    }
+
+    pub fn active_count(&self) -> usize {
+        self.last_frame_ms.len()
+    }
+}
 
 struct TrackedOutput {
     wl_output: wl_output::WlOutput,
     info: Option<OutputInfo>,
+    refresh_mhz: i32,
 }
 
 struct ManagedSurface {
@@ -96,6 +135,7 @@ pub struct UiState {
     output_obj_by_name: HashMap<String, ObjectId>,
     surfaces: HashMap<String, ManagedSurface>,
     surface_key_by_obj: HashMap<ObjectId, String>,
+    anim_clock: AnimationClock,
     renderer: Renderer,
     pending_events: Vec<SystemEvent>,
 }
@@ -139,6 +179,7 @@ impl UiState {
             output_obj_by_name: HashMap::new(),
             surfaces: HashMap::new(),
             surface_key_by_obj: HashMap::new(),
+            anim_clock: AnimationClock::default(),
             renderer: Renderer::new(font_hint),
             pending_events: Vec::new(),
         };
@@ -156,6 +197,10 @@ impl UiState {
 
     pub fn surface_count(&self) -> usize {
         self.surfaces.len()
+    }
+
+    pub fn animating_surface_count(&self) -> usize {
+        self.surfaces.values().filter(|s| s.spec.animating).count()
     }
 
     pub fn active_namespaces(&self) -> Vec<String> {
@@ -184,7 +229,8 @@ impl UiState {
 
         // Create new surfaces or update existing ones selectively.
         for spec in specs {
-            if let Some(existing) = self.surfaces.get_mut(&spec.id) {
+            let id_key = spec.id.clone();
+            if let Some(existing) = self.surfaces.get_mut(&id_key) {
                 let geom_changed = !existing.spec.geometry_eq(&spec);
                 let content_changed = existing.spec != spec;
                 let force_redraw = dirty.intersects(
@@ -208,7 +254,15 @@ impl UiState {
                 if geom_changed {
                     let size_changed =
                         existing.spec.width != spec.width || existing.spec.height != spec.height;
+                    let input_changed = existing.spec.input_regions != spec.input_regions;
                     apply_layer_geometry(&existing.layer, &spec);
+                    if input_changed {
+                        apply_input_regions(
+                            &self.compositor_state,
+                            existing.layer.wl_surface(),
+                            spec.input_regions.as_deref(),
+                        );
+                    }
                     existing.spec = spec;
                     existing.dirty = true;
                     if size_changed {
@@ -216,9 +270,14 @@ impl UiState {
                         existing.configured = false;
                     }
                     existing.layer.commit();
-                } else if content_changed || force_redraw {
+                } else if content_changed || force_redraw || spec.animating {
                     existing.spec = spec;
                     existing.dirty = true;
+                }
+                if let Some(s) = self.surfaces.get(&id_key) {
+                    if !s.spec.animating {
+                        self.anim_clock.stop(&id_key);
+                    }
                 }
             } else {
                 self.create_surface(spec);
@@ -265,6 +324,11 @@ impl UiState {
             wl_out.as_ref(),
         );
         apply_layer_geometry(&layer, &spec);
+        apply_input_regions(
+            &self.compositor_state,
+            layer.wl_surface(),
+            spec.input_regions.as_deref(),
+        );
         layer.commit();
 
         let init_w = spec.width.max(42);
@@ -298,6 +362,7 @@ impl UiState {
     }
 
     fn remove_surface(&mut self, id: &str) {
+        self.anim_clock.stop(id);
         if let Some(surface) = self.surfaces.remove(id) {
             let obj_id = surface.surface_id_obj();
             self.surface_key_by_obj.remove(&obj_id);
@@ -370,18 +435,22 @@ impl UiState {
         surface.frame_in_flight = true;
     }
 
-    fn extract_output_info(&self, output: &wl_output::WlOutput) -> Option<OutputInfo> {
+    fn extract_output_info(&self, output: &wl_output::WlOutput) -> Option<(OutputInfo, i32)> {
         let info = self.output_state.info(output)?;
         let name = info.name.clone()?;
         let scale = info.scale_factor.max(1);
-        let (width, height) = if let Some((w, h)) = info.logical_size {
-            (w.max(1), h.max(1))
-        } else if let Some(mode) = info
+        let current_mode = info
             .modes
             .iter()
             .find(|m| m.current)
-            .or_else(|| info.modes.first())
-        {
+            .or_else(|| info.modes.first());
+        let refresh_mhz = current_mode
+            .map(|m| m.refresh_rate)
+            .filter(|&r| r > 0)
+            .unwrap_or(DEFAULT_REFRESH_MHZ);
+        let (width, height) = if let Some((w, h)) = info.logical_size {
+            (w.max(1), h.max(1))
+        } else if let Some(mode) = current_mode {
             (
                 (mode.dimensions.0 / scale).max(1),
                 (mode.dimensions.1 / scale).max(1),
@@ -389,12 +458,30 @@ impl UiState {
         } else {
             (1920, 1080)
         };
-        Some(OutputInfo {
-            name,
-            width,
-            height,
-            scale,
-        })
+        Some((
+            OutputInfo {
+                name,
+                width,
+                height,
+                scale,
+            },
+            refresh_mhz,
+        ))
+    }
+
+    fn refresh_mhz_for_surface(&self, output_name: Option<&str>) -> i32 {
+        if let Some(name) = output_name {
+            if let Some(obj_id) = self.output_obj_by_name.get(name) {
+                if let Some(tracked) = self.outputs_by_obj.get(obj_id) {
+                    return tracked.refresh_mhz;
+                }
+            }
+        }
+        self.outputs_by_obj
+            .values()
+            .map(|o| o.refresh_mhz)
+            .max()
+            .unwrap_or(DEFAULT_REFRESH_MHZ)
     }
 
     fn surface_accepts_keyboard(&self, obj_id: &ObjectId) -> bool {
@@ -472,6 +559,32 @@ fn to_layer_anchor(anchor: Anchor) -> LayerAnchor {
     out
 }
 
+fn apply_input_regions(
+    compositor: &CompositorState,
+    wl_surface: &wl_surface::WlSurface,
+    regions: Option<&[Rect]>,
+) {
+    match regions {
+        Some(rects) => {
+            if let Ok(region) = Region::new(compositor) {
+                for r in rects {
+                    let x = r.x.floor() as i32;
+                    let y = r.y.floor() as i32;
+                    let w = r.w.ceil().max(0.0) as i32;
+                    let h = r.h.ceil().max(0.0) as i32;
+                    if w > 0 && h > 0 {
+                        region.add(x, y, w, h);
+                    }
+                }
+                wl_surface.set_input_region(Some(region.wl_region()));
+            }
+        }
+        None => {
+            wl_surface.set_input_region(None);
+        }
+    }
+}
+
 fn apply_layer_geometry(layer: &LayerSurface, spec: &SurfaceSpec) {
     layer.set_layer(to_wlr_layer(spec.layer));
     layer.set_anchor(to_layer_anchor(spec.anchor));
@@ -523,18 +636,34 @@ impl CompositorHandler for UiState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         surface: &wl_surface::WlSurface,
-        _time: u32,
+        time: u32,
     ) {
         let obj_id = surface.id();
         if let Some(id) = self.surface_key_by_obj.get(&obj_id).cloned() {
-            let should_redraw = if let Some(managed) = self.surfaces.get_mut(&id) {
-                managed.frame_in_flight = false;
-                managed.configured && managed.dirty
+            let (animating, should_redraw, output_name) =
+                if let Some(managed) = self.surfaces.get_mut(&id) {
+                    managed.frame_in_flight = false;
+                    (
+                        managed.spec.animating,
+                        managed.configured && managed.dirty,
+                        managed.spec.output.clone(),
+                    )
+                } else {
+                    (false, false, None)
+                };
+
+            if animating {
+                let refresh_mhz = self.refresh_mhz_for_surface(output_name.as_deref());
+                let dt_secs = self.anim_clock.tick(&id, time, refresh_mhz);
+                self.pending_events.push(SystemEvent::FrameTick {
+                    surface_id: id,
+                    dt_secs,
+                });
             } else {
-                false
-            };
-            if should_redraw {
-                self.draw_surface(&id);
+                self.anim_clock.stop(&id);
+                if should_redraw {
+                    self.draw_surface(&id);
+                }
             }
         }
     }
@@ -570,7 +699,11 @@ impl OutputHandler for UiState {
         output: wl_output::WlOutput,
     ) {
         let obj_id = output.id();
-        let info = self.extract_output_info(&output);
+        let extracted = self.extract_output_info(&output);
+        let (info, refresh_mhz) = match extracted {
+            Some((i, r)) => (Some(i), r),
+            None => (None, DEFAULT_REFRESH_MHZ),
+        };
         if let Some(ref parsed) = info {
             self.output_obj_by_name
                 .insert(parsed.name.clone(), obj_id.clone());
@@ -582,6 +715,7 @@ impl OutputHandler for UiState {
             TrackedOutput {
                 wl_output: output,
                 info,
+                refresh_mhz,
             },
         );
     }
@@ -593,7 +727,7 @@ impl OutputHandler for UiState {
         output: wl_output::WlOutput,
     ) {
         let obj_id = output.id();
-        let Some(new_info) = self.extract_output_info(&output) else {
+        let Some((new_info, refresh_mhz)) = self.extract_output_info(&output) else {
             return;
         };
 
@@ -607,12 +741,14 @@ impl OutputHandler for UiState {
 
         if let Some(tracked) = self.outputs_by_obj.get_mut(&obj_id) {
             tracked.info = Some(new_info.clone());
+            tracked.refresh_mhz = refresh_mhz;
         } else {
             self.outputs_by_obj.insert(
                 obj_id,
                 TrackedOutput {
                     wl_output: output,
                     info: Some(new_info.clone()),
+                    refresh_mhz,
                 },
             );
         }
@@ -1039,3 +1175,30 @@ delegate_keyboard!(UiState);
 delegate_pointer!(UiState);
 delegate_layer!(UiState);
 delegate_registry!(UiState);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn animation_clock_paces_60_to_144hz_clamps_33ms_and_stops_cleanly() {
+        let mut clock = AnimationClock::default();
+        let dt_first_144 = clock.tick("island:main", 1000, 144_000);
+        assert!((dt_first_144 - (1.0 / 144.0)).abs() < 0.001);
+
+        let dt_next = clock.tick("island:main", 1007, 144_000);
+        assert!((dt_next - 0.007).abs() < 0.0005);
+
+        let dt_clamped = clock.tick("island:main", 1500, 60_000);
+        assert_eq!(dt_clamped, SPRING_MAX_DT_SECS);
+
+        // u32 wraparound handling
+        clock.tick("wrap", u32::MAX - 5, 60_000);
+        let dt_wrap = clock.tick("wrap", 10, 60_000);
+        assert!((dt_wrap - 0.016).abs() < 0.001);
+
+        clock.stop("island:main");
+        clock.stop("wrap");
+        assert_eq!(clock.active_count(), 0);
+    }
+}

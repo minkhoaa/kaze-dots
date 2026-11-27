@@ -428,6 +428,28 @@ impl Renderer {
                         );
                     }
                 }
+                PaintCmd::Line {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    color,
+                    width,
+                } => {
+                    let mut pb = PathBuilder::new();
+                    pb.move_to(*x1 * s, *y1 * s);
+                    pb.line_to(*x2 * s, *y2 * s);
+                    if let Some(path) = pb.finish() {
+                        let mut paint = Paint::default();
+                        paint.set_color(to_skia_color(*color));
+                        paint.anti_alias = false;
+                        let st = Stroke {
+                            width: (*width * s).max(1.0),
+                            ..Stroke::default()
+                        };
+                        pixmap.stroke_path(&path, &paint, &st, Transform::identity(), None);
+                    }
+                }
                 PaintCmd::MonitorIcon {
                     rect,
                     color,
@@ -1092,6 +1114,8 @@ mod tests {
             border_width: 2.0,
             commands,
             hit_targets: vec![],
+            animating: false,
+            input_regions: None,
         }
     }
 

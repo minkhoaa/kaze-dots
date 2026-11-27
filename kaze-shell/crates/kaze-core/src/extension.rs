@@ -1,5 +1,6 @@
 use bitflags::bitflags;
 
+use crate::layout::LayoutPreset;
 use crate::state::{
     AppState, AudioState, BacklightState, BatteryState, ClockTime, MediaState, MonitorState,
     NetworkState, NotificationItem, OutputInfo, ThemeMode, WorkspaceState,
@@ -90,6 +91,11 @@ pub enum SystemEvent {
         connected: bool,
     },
     ClockTick(ClockTime),
+    FrameTick {
+        surface_id: String,
+        dt_secs: f32,
+    },
+    LayoutPresetChanged(LayoutPreset),
     ConfigReloaded,
     ThemeChanged(ThemeMode),
     PointerClick {

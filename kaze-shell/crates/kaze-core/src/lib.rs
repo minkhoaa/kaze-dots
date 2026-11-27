@@ -1,18 +1,25 @@
 #![deny(clippy::unwrap_used)]
 
+pub mod anim;
 pub mod config;
 pub mod extension;
+pub mod layout;
 pub mod state;
 pub mod surface;
 pub mod theme;
 
+pub use anim::{Spring, SPRING_MAX_DT_SECS, SPRING_POS_EPSILON, SPRING_VEL_EPSILON};
 pub use config::{
-    BarConfig, BarPosition, Config, DisplayConfig, LauncherConfig, NotifyConfig, OsdConfig,
-    ThemeConfig,
+    BarConfig, BarPosition, Config, DisplayConfig, LauncherConfig, LayoutConfig, NotifyConfig,
+    OsdConfig, ThemeConfig,
 };
 pub use extension::{
     DirtyFlags, ImeEvent, IpcResult, KazeExtension, KeyEvent, KeyModifiers, OsdKind, PointerButton,
     ShellAction, ShellContext, SystemEvent,
+};
+pub use layout::{
+    layout_state_path, load_persisted_preset, save_persisted_preset, xdg_state_home,
+    HyprGeometrySpec, LayoutPreset,
 };
 pub use state::{
     AppState, AudioState, BacklightState, BatteryState, ClockTime, DisplayStatus, MediaPlayback,

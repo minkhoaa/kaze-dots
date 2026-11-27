@@ -1,6 +1,9 @@
 # Kaze Shell default configuration (Omarchy 42px vertical left rail)
 # Hot-reloaded automatically on save; syntax errors keep the active config running.
 
+[layout]
+preset = "omarchy"
+
 [theme]
 mode = "dark"
 palette = "Kanagawa"

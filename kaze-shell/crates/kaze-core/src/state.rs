@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
+use crate::layout::LayoutPreset;
 use crate::theme::ResolvedPalette;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -256,6 +257,7 @@ impl ClockTime {
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub config: Config,
+    pub layout_preset: LayoutPreset,
     pub theme_mode: ThemeMode,
     pub palette: ResolvedPalette,
     pub outputs: BTreeMap<String, OutputInfo>,
@@ -282,12 +284,14 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: Config) -> Self {
+        let layout_preset = config.layout.preset;
         let theme_mode = config.theme.mode;
         let palette =
             ResolvedPalette::load(&config.theme.palette, config.theme.palettes_dir.as_deref());
         let (clock, _) = ClockTime::now_and_duration_to_next_minute();
         Self {
             config,
+            layout_preset,
             theme_mode,
             palette,
             outputs: BTreeMap::new(),

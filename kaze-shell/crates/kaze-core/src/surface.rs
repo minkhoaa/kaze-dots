@@ -160,6 +160,14 @@ pub enum PaintCmd {
         radius: f32,
         fill: Color,
     },
+    Line {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        color: Color,
+        width: f32,
+    },
     /// Fast ASCII/numeric text rendered via `ab_glyph` + `memmap2` (zero cosmic-text overhead at T0).
     Text {
         rect: Rect,
@@ -217,6 +225,11 @@ pub struct SurfaceSpec {
     pub border_width: f32,
     pub commands: Vec<PaintCmd>,
     pub hit_targets: Vec<HitTarget>,
+    /// When `true`, `kaze-ui` drives `SystemEvent::FrameTick` via `wl_surface.frame()`
+    /// until all springs settle and flip this back to `false` (returning idle CPU to 0.00%).
+    pub animating: bool,
+    /// Optional explicit pointer input regions (click-through outside these rects).
+    pub input_regions: Option<Vec<Rect>>,
 }
 
 impl SurfaceSpec {
@@ -230,5 +243,6 @@ impl SurfaceSpec {
             && self.width == other.width
             && self.height == other.height
             && self.margin == other.margin
+            && self.input_regions == other.input_regions
     }
 }

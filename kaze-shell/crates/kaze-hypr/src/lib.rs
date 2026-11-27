@@ -1,4 +1,4 @@
-use kaze_core::{MonitorState, WorkspaceState};
+use kaze_core::{HyprGeometrySpec, MonitorState, WorkspaceState};
 use serde::Deserialize;
 use std::env;
 use std::fmt;
@@ -157,6 +157,20 @@ impl HyprClient {
         }
     }
 
+    /// Applies layout preset geometry in a single batched Hyprland Lua `/eval` call
+    /// (with keyword fallback), strictly scoped to gaps/border/rounding/blur so
+    /// `hypr/user.lua` monitor/input settings and edge-to-edge workspace rules remain intact.
+    pub fn apply_layout_geometry(&self, geom: &HyprGeometrySpec) -> Result<String, HyprError> {
+        let lua = format_layout_geometry_lua(geom);
+        match self.eval(&lua) {
+            Ok(resp) if !resp.contains("unknown request") && !resp.contains("error") => Ok(resp),
+            _ => {
+                let batch = format_layout_geometry_batch(geom);
+                self.request(&batch)
+            }
+        }
+    }
+
     pub fn snapshot(&self) -> Result<HyprSnapshot, HyprError> {
         let monitors_raw = self.request("j/monitors")?;
         let workspaces_raw = self.request("j/workspaces")?;
@@ -167,6 +181,22 @@ impl HyprClient {
     pub fn connect_event_stream(&self) -> Result<HyprEventStream, HyprError> {
         HyprEventStream::connect(&self.paths.event_sock)
     }
+}
+
+pub fn format_layout_geometry_lua(geom: &HyprGeometrySpec) -> String {
+    let blur = if geom.blur_enabled { "true" } else { "false" };
+    format!(
+        "hl.config({{ general = {{ gaps_in = {}, gaps_out = {}, border_size = {} }}, decoration = {{ rounding = {}, blur = {{ enabled = {} }} }} }})",
+        geom.gaps_in, geom.gaps_out, geom.border_size, geom.rounding, blur
+    )
+}
+
+pub fn format_layout_geometry_batch(geom: &HyprGeometrySpec) -> String {
+    let blur = if geom.blur_enabled { 1 } else { 0 };
+    format!(
+        "[[BATCH]]keyword general:gaps_in {};keyword general:gaps_out {};keyword general:border_size {};keyword decoration:rounding {};keyword decoration:blur:enabled {}",
+        geom.gaps_in, geom.gaps_out, geom.border_size, geom.rounding, blur
+    )
 }
 
 pub fn parse_snapshot(
@@ -506,5 +536,19 @@ mod tests {
         assert_eq!(backoff.next_delay(), Duration::from_millis(2000));
         backoff.reset();
         assert_eq!(backoff.next_delay(), Duration::from_millis(100));
+    }
+
+    #[test]
+    fn layout_geometry_lua_only_touches_allowed_visual_keys() {
+        let geom = kaze_core::LayoutPreset::Island.hypr_geometry();
+        let lua = format_layout_geometry_lua(&geom);
+        assert!(lua.contains("gaps_in = 6"));
+        assert!(lua.contains("gaps_out = 10"));
+        assert!(lua.contains("border_size = 2"));
+        assert!(lua.contains("rounding = 12"));
+        assert!(lua.contains("enabled = true"));
+        assert!(!lua.contains("monitor"));
+        assert!(!lua.contains("input"));
+        assert!(!lua.contains("workspace_rule"));
     }
 }

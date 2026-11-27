@@ -661,9 +661,15 @@ pub async fn run_audio_task(
 
 fn compute_osd_trigger(prev: Option<&AudioState>, next: &AudioState) -> Option<OsdKind> {
     let prev = prev?;
-    if prev.volume_pct != next.volume_pct || prev.muted != next.muted {
+    if prev.sink_name == next.sink_name
+        && !next.sink_name.is_empty()
+        && (prev.volume_pct != next.volume_pct || prev.muted != next.muted)
+    {
         Some(OsdKind::Volume)
-    } else if prev.mic_muted != next.mic_muted {
+    } else if prev.source_name == next.source_name
+        && !next.source_name.is_empty()
+        && prev.mic_muted != next.mic_muted
+    {
         Some(OsdKind::Mic)
     } else {
         None

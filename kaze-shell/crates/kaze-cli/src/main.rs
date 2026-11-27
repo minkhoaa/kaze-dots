@@ -22,6 +22,10 @@ IPC Commands (via `kaze-shell msg`):\n\
   ping                              Check daemon liveness\n\
   bar-hide [bar] [monitor]          Hide bar globally or on a specific output\n\
   bar-show [bar] [monitor]          Show bar globally or on a specific output\n\
+  bar-peek [on|off]                 Temporarily reveal Ghost-mode bar with spring animation\n\
+  layout-set <omarchy|island|swiss|ghost>  Switch active layout preset live\n\
+  layout-next                       Cycle to the next layout preset\n\
+  layout-list | layout-status       List available presets or print active preset\n\
   theme-mode-toggle                 Toggle Dark/Light mode & regenerate templates\n\
   templates-apply                   Regenerate Hyprland, Foot, GTK3/4, btop themes\n\
   display-status <mode> [detail]    Update Display Slot dot (idle|present|virtual-share|virtual-control|recording)\n\

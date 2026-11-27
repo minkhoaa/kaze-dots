@@ -505,7 +505,9 @@ impl KazeExtension for LauncherExtension {
                 }
                 DirtyFlags::NONE
             }
-            SystemEvent::ConfigReloaded | SystemEvent::ThemeChanged(_) => {
+            SystemEvent::ConfigReloaded
+            | SystemEvent::ThemeChanged(_)
+            | SystemEvent::LayoutPresetChanged(_) => {
                 if !ctx.state.config.launcher.enabled {
                     return self.close_cancel(ctx);
                 }
@@ -934,12 +936,16 @@ fn build_launcher_surface(
             top: cfg.offset_y,
             ..EdgeInsets::default()
         },
-        corner_radius: bar.corner_radius,
+        corner_radius: bar
+            .corner_radius
+            .max(state.layout_preset.overlay_corner_radius()),
         background: bg,
         border_color: primary,
         border_width: border_w,
         commands,
         hit_targets,
+        animating: false,
+        input_regions: None,
     }
 }
 

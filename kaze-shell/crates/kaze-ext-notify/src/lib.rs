@@ -311,7 +311,9 @@ impl KazeExtension for NotifyExtension {
                 target_id,
                 button,
             } if surface_id == SURFACE_ID => self.handle_click(target_id, *button, ctx),
-            SystemEvent::ConfigReloaded | SystemEvent::ThemeChanged(_) => {
+            SystemEvent::ConfigReloaded
+            | SystemEvent::ThemeChanged(_)
+            | SystemEvent::LayoutPresetChanged(_) => {
                 if !ctx.state.config.notifications.enabled {
                     return self.clear_all(ctx);
                 }
@@ -456,8 +458,12 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
 
     let card_w = cfg.width.clamp(220, 640) as f32;
     let gap = cfg.gap.max(0) as f32;
-    let border_w = bar.border_width.max(2.0);
-    let radius = bar.corner_radius;
+    let border_w = bar
+        .border_width
+        .max(state.layout_preset.overlay_border_width());
+    let radius = bar
+        .corner_radius
+        .max(state.layout_preset.overlay_corner_radius());
     let inner_r = if radius > 0.0 {
         (radius * 0.4).min(6.0)
     } else {
@@ -689,6 +695,8 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
         border_width: 0.0,
         commands,
         hit_targets,
+        animating: false,
+        input_regions: None,
     })
 }
 

@@ -2,16 +2,23 @@
 
 use kaze_core::{
     Anchor, AppState, BarPosition, Color, DirtyFlags, DisplayStatus, EdgeInsets, HitTarget,
-    IconKind, IpcResult, KazeExtension, KeyboardMode, Layer, NetworkKind, OutputInfo, PaintCmd,
-    PointerButton, Rect, ShellAction, ShellContext, SurfaceSpec, SystemEvent, TextAlign,
+    IconKind, IpcResult, KazeExtension, KeyboardMode, Layer, LayoutPreset, NetworkKind, OutputInfo,
+    PaintCmd, PointerButton, Rect, ShellAction, ShellContext, Spring, SurfaceSpec, SystemEvent,
+    TextAlign,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+
+const GHOST_PEEK_TIMER_ID: &str = "bar:ghost-peek-hide";
+const GHOST_PEEK_MS: u64 = 2500;
 
 /// Production bar extension built strictly against the `KazeExtension` contract:
-/// Workspaces, minute-boundary Clock, and configurable end status slots
-/// (`display`, `net`, `vol`, `bat`, `notifications`).
+/// adapts live across all 4 layout presets (`omarchy`, `island`, `swiss`, `ghost`)
+/// with spring-animated workspace/peek transitions that auto-stop on convergence.
 pub struct BarExtension {
     cached_specs: Vec<SurfaceSpec>,
+    ws_springs: HashMap<String, Spring>,
+    ghost_peeking: bool,
+    ghost_spring: Spring,
 }
 
 impl Default for BarExtension {
@@ -24,6 +31,46 @@ impl BarExtension {
     pub fn new() -> Self {
         Self {
             cached_specs: Vec::new(),
+            ws_springs: HashMap::new(),
+            ghost_peeking: false,
+            ghost_spring: Spring::snappy(-42.0),
+        }
+    }
+
+    fn ghost_should_show(&self, state: &AppState) -> bool {
+        self.ghost_peeking || state.display_status.is_active() || state.active_notifications > 0
+    }
+
+    fn sync_springs(&mut self, state: &AppState, snap: bool) {
+        let hide_offset = -(state.config.bar.thickness as f32);
+        let ghost_target = if self.ghost_should_show(state) {
+            0.0
+        } else {
+            hide_offset
+        };
+        if state.layout_preset == LayoutPreset::Ghost {
+            if snap {
+                self.ghost_spring.snap(ghost_target);
+            } else {
+                self.ghost_spring.set_target(ghost_target);
+            }
+        } else {
+            self.ghost_spring.snap(hide_offset);
+        }
+
+        self.ws_springs
+            .retain(|name, _| state.outputs.contains_key(name));
+        for output in state.outputs.values() {
+            let target_idx = workspace_focus_index(state, &output.name) as f32;
+            let entry = self
+                .ws_springs
+                .entry(output.name.clone())
+                .or_insert_with(|| Spring::snappy(target_idx));
+            if snap {
+                entry.snap(target_idx);
+            } else {
+                entry.set_target(target_idx);
+            }
         }
     }
 
@@ -33,11 +80,31 @@ impl BarExtension {
             return;
         }
 
+        if state.layout_preset == LayoutPreset::Ghost {
+            let hide_offset = -(state.config.bar.thickness as f32);
+            let show_now = self.ghost_should_show(state);
+            if !show_now
+                && self.ghost_spring.is_settled()
+                && self.ghost_spring.value <= hide_offset + 0.5
+            {
+                return;
+            }
+        }
+
         for output in state.outputs.values() {
             if state.is_bar_hidden(&output.name) {
                 continue;
             }
-            self.cached_specs.push(build_bar_surface(state, output));
+            let ws_spring = self.ws_springs.get(&output.name).copied();
+            let spec = match state.layout_preset {
+                LayoutPreset::Omarchy => build_bar_surface(state, output, ws_spring, None),
+                LayoutPreset::Island => build_island_bar_surface(state, output),
+                LayoutPreset::Swiss => build_swiss_bar_surface(state, output),
+                LayoutPreset::Ghost => {
+                    build_bar_surface(state, output, ws_spring, Some(&self.ghost_spring))
+                }
+            };
+            self.cached_specs.push(spec);
         }
     }
 }
@@ -48,6 +115,7 @@ impl KazeExtension for BarExtension {
     }
 
     fn on_init(&mut self, ctx: &mut ShellContext) {
+        self.sync_springs(ctx.state, true);
         self.rebuild(ctx.state);
     }
 
@@ -56,13 +124,53 @@ impl KazeExtension for BarExtension {
             SystemEvent::OutputAdded(_)
             | SystemEvent::OutputUpdated(_)
             | SystemEvent::OutputRemoved { .. } => {
+                self.sync_springs(ctx.state, true);
+                self.rebuild(ctx.state);
+                DirtyFlags::BAR | DirtyFlags::LAYOUT
+            }
+            SystemEvent::FrameTick {
+                surface_id,
+                dt_secs,
+            } => {
+                let Some(out_name) = surface_id.strip_prefix("bar:") else {
+                    return DirtyFlags::NONE;
+                };
+                let mut changed = false;
+                if let Some(sp) = self.ws_springs.get_mut(out_name) {
+                    if !sp.is_settled() {
+                        sp.step(*dt_secs);
+                        changed = true;
+                    }
+                }
+                if ctx.state.layout_preset == LayoutPreset::Ghost && !self.ghost_spring.is_settled()
+                {
+                    self.ghost_spring.step(*dt_secs);
+                    changed = true;
+                }
+                if changed {
+                    self.rebuild(ctx.state);
+                    DirtyFlags::BAR
+                } else {
+                    DirtyFlags::NONE
+                }
+            }
+            SystemEvent::LayoutPresetChanged(_) => {
+                self.ghost_peeking = false;
+                ctx.push_action(ShellAction::CancelTimer {
+                    id: GHOST_PEEK_TIMER_ID.to_string(),
+                });
+                self.sync_springs(ctx.state, true);
                 self.rebuild(ctx.state);
                 DirtyFlags::BAR | DirtyFlags::LAYOUT
             }
             SystemEvent::HyprSynced { .. }
             | SystemEvent::HyprWorkspaceChanged { .. }
-            | SystemEvent::HyprFocusedMonitor { .. }
-            | SystemEvent::HyprConnectionChanged { .. }
+            | SystemEvent::HyprFocusedMonitor { .. } => {
+                self.sync_springs(ctx.state, false);
+                self.rebuild(ctx.state);
+                DirtyFlags::BAR
+            }
+            SystemEvent::HyprConnectionChanged { .. }
             | SystemEvent::ClockTick(_)
             | SystemEvent::NetworkChanged(_)
             | SystemEvent::BatteryChanged(_)
@@ -71,10 +179,22 @@ impl KazeExtension for BarExtension {
             | SystemEvent::DndChanged(_)
             | SystemEvent::NotificationsCountChanged(_)
             | SystemEvent::NotificationClearAll => {
+                self.sync_springs(ctx.state, false);
                 self.rebuild(ctx.state);
                 DirtyFlags::BAR
             }
+            SystemEvent::TimerFired { id } if id == GHOST_PEEK_TIMER_ID => {
+                if self.ghost_peeking {
+                    self.ghost_peeking = false;
+                    self.sync_springs(ctx.state, false);
+                    self.rebuild(ctx.state);
+                    DirtyFlags::BAR | DirtyFlags::LAYOUT
+                } else {
+                    DirtyFlags::NONE
+                }
+            }
             SystemEvent::ConfigReloaded | SystemEvent::ThemeChanged(_) => {
+                self.sync_springs(ctx.state, true);
                 self.rebuild(ctx.state);
                 DirtyFlags::BAR | DirtyFlags::LAYOUT | DirtyFlags::THEME
             }
@@ -235,6 +355,45 @@ impl KazeExtension for BarExtension {
                     }
                 }
             },
+            "bar-peek" => {
+                if ctx.state.layout_preset != LayoutPreset::Ghost {
+                    return IpcResult::Handled {
+                        ok: true,
+                        message: format!(
+                            "bar visible in {} preset",
+                            ctx.state.layout_preset.as_str()
+                        ),
+                        dirty: DirtyFlags::NONE,
+                    };
+                }
+                let next = match args.first().map(String::as_str) {
+                    Some("on" | "show") => true,
+                    Some("off" | "hide") => false,
+                    _ => !self.ghost_peeking,
+                };
+                self.ghost_peeking = next;
+                if next {
+                    ctx.push_action(ShellAction::ScheduleTimer {
+                        id: GHOST_PEEK_TIMER_ID.to_string(),
+                        after_ms: GHOST_PEEK_MS,
+                    });
+                } else {
+                    ctx.push_action(ShellAction::CancelTimer {
+                        id: GHOST_PEEK_TIMER_ID.to_string(),
+                    });
+                }
+                self.sync_springs(ctx.state, false);
+                self.rebuild(ctx.state);
+                IpcResult::Handled {
+                    ok: true,
+                    message: if next {
+                        "peeking".into()
+                    } else {
+                        "hidden".into()
+                    },
+                    dirty: DirtyFlags::BAR | DirtyFlags::LAYOUT,
+                }
+            }
             "display-status" => {
                 let mode = args.first().map(String::as_str).unwrap_or("idle");
                 let detail = args.get(1).cloned().unwrap_or_default();
@@ -254,6 +413,7 @@ impl KazeExtension for BarExtension {
                         };
                     }
                 };
+                self.sync_springs(ctx.state, false);
                 self.rebuild(ctx.state);
                 IpcResult::Handled {
                     ok: true,
@@ -440,11 +600,25 @@ fn active_end_slots(state: &AppState) -> Vec<SlotVisual> {
     slots
 }
 
-fn build_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
+fn workspace_focus_index(state: &AppState, output_name: &str) -> usize {
+    collect_workspaces(state, output_name)
+        .iter()
+        .position(|(_, focused, _)| *focused)
+        .unwrap_or(0)
+}
+
+fn build_bar_surface(
+    state: &AppState,
+    output: &OutputInfo,
+    ws_spring: Option<Spring>,
+    ghost_spring: Option<&Spring>,
+) -> SurfaceSpec {
     let bar = &state.config.bar;
     let colors = state.palette.for_mode(state.theme_mode);
-    let is_vertical = bar.position.is_vertical();
-    let is_island = bar.island_mode || bar.length > 0;
+    let is_ghost = ghost_spring.is_some();
+    let is_vertical = is_ghost || bar.position.is_vertical();
+    let is_island = !is_ghost && (bar.island_mode || bar.length > 0);
+    let shift_x = ghost_spring.map_or(0.0, |s| s.value);
 
     let (anchor, width, height, margin, logical_w, logical_h) = match bar.position {
         BarPosition::Left => {
@@ -581,13 +755,15 @@ fn build_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
         }
     };
 
-    let exclusive_zone = if bar.exclusive && !is_island {
+    let exclusive_zone = if is_ghost {
+        0
+    } else if bar.exclusive && !is_island {
         bar.thickness as i32
     } else {
         0
     };
 
-    let namespace = if bar.island_mode {
+    let namespace = if !is_ghost && bar.island_mode {
         "kaze-island".to_string()
     } else {
         format!("kaze-bar-{}", output.name)
@@ -622,10 +798,21 @@ fn build_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
         let cell_w = (bw - pad * 2.0).max(16.0);
         let cell_h = cell_w.min(30.0);
 
+        if is_ghost {
+            commands.push(PaintCmd::RoundedRect {
+                rect: Rect::new(shift_x, 0.0, bw, bh),
+                radius: 0.0,
+                fill: Some(bg),
+                stroke: Some(border_color),
+                stroke_width: bar.border_width.max(1.0),
+            });
+        }
+
         // 1. Start cluster: Workspaces
-        let mut cur_y = pad + bar.border_width;
+        let ws_start_y = pad + bar.border_width;
+        let mut cur_y = ws_start_y;
         for (ws_id, focused, occupied) in &workspaces {
-            let rect = Rect::new(pad, cur_y, cell_w, cell_h);
+            let rect = Rect::new(pad + shift_x, cur_y, cell_w, cell_h);
             let (fill, text_col, stroke) = if *focused {
                 (Some(primary), on_primary, None)
             } else if *occupied {
@@ -655,10 +842,27 @@ fn build_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
             cur_y += cell_h + spacing;
         }
 
+        // Spring-animated crisp active-workspace indicator rail along the inner left edge
+        if let Some(sp) = ws_spring {
+            let ind_y = ws_start_y + sp.value * (cell_h + spacing) + 4.0;
+            commands.push(PaintCmd::RoundedRect {
+                rect: Rect::new(
+                    shift_x + bar.border_width,
+                    ind_y,
+                    2.5,
+                    (cell_h - 8.0).max(8.0),
+                ),
+                radius: inner_radius.min(1.5),
+                fill: Some(primary),
+                stroke: None,
+                stroke_width: 0.0,
+            });
+        }
+
         // 2. Center cluster: Stacked vertical 24h Clock (HH / MM)
         let center_y = bh * 0.5;
-        let hh_rect = Rect::new(pad, center_y - 18.0, cell_w, 17.0);
-        let mm_rect = Rect::new(pad, center_y + 1.0, cell_w, 17.0);
+        let hh_rect = Rect::new(pad + shift_x, center_y - 18.0, cell_w, 17.0);
+        let mm_rect = Rect::new(pad + shift_x, center_y + 1.0, cell_w, 17.0);
         commands.push(PaintCmd::Text {
             rect: hh_rect,
             text: state.clock.format_hh(),
@@ -683,7 +887,7 @@ fn build_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
         let mut slot_y = (bh - pad - bar.border_width - total_slots_h).max(center_y + 24.0);
 
         for slot in end_slots {
-            let slot_rect = Rect::new(pad, slot_y, cell_w, slot_h);
+            let slot_rect = Rect::new(pad + shift_x, slot_y, cell_w, slot_h);
             commands.push(PaintCmd::RoundedRect {
                 rect: slot_rect,
                 radius: inner_radius,
@@ -822,23 +1026,408 @@ fn build_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
         }
     }
 
+    let animating =
+        ws_spring.is_some_and(|s| !s.is_settled()) || ghost_spring.is_some_and(|s| !s.is_settled());
+
     SurfaceSpec {
         id: format!("bar:{}", output.name),
         namespace,
         output: Some(output.name.clone()),
-        layer: Layer::Top,
+        layer: if is_ghost { Layer::Overlay } else { Layer::Top },
         keyboard_interactivity: KeyboardMode::None,
         anchor,
         exclusive_zone,
         width,
         height,
-        margin,
-        corner_radius: bar.corner_radius,
-        background: bg,
-        border_color,
-        border_width: bar.border_width,
+        margin: if is_ghost {
+            EdgeInsets {
+                top: 8,
+                bottom: 8,
+                left: 0,
+                right: 0,
+            }
+        } else {
+            margin
+        },
+        corner_radius: if is_ghost { 0.0 } else { bar.corner_radius },
+        background: if is_ghost { Color::TRANSPARENT } else { bg },
+        border_color: if is_ghost {
+            Color::TRANSPARENT
+        } else {
+            border_color
+        },
+        border_width: if is_ghost { 0.0 } else { bar.border_width },
         commands,
         hit_targets,
+        animating,
+        input_regions: None,
+    }
+}
+
+/// Minimal split-corner top bar paired with Dynamic Island in the `island` preset.
+/// Leaves the top-center completely open and click-through via explicit `input_regions`.
+fn build_island_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
+    let colors = state.palette.for_mode(state.theme_mode);
+    let bg = colors
+        .surface_color()
+        .with_opacity(state.config.bar.background_opacity);
+    let border_color = colors.outline_variant_color();
+    let primary = colors.primary_color();
+    let on_primary = colors.on_primary_color();
+    let secondary = colors.secondary_color();
+    let on_surface = colors.on_surface_color();
+    let muted = colors.on_surface_variant_color();
+    let surface_container = colors.surface_container_color();
+    let surface_variant = colors.surface_variant_color();
+
+    let bar_h = 34u32;
+    let margin_x = 10i32;
+    let margin_top = 8i32;
+    let logical_w = (output.width - margin_x * 2).max(400) as f32;
+    let bh = bar_h as f32;
+    let pill_r = bh * 0.5;
+    let pad = 6.0f32;
+    let spacing = 4.0f32;
+
+    let workspaces = collect_workspaces(state, &output.name);
+    let end_slots = active_end_slots(state);
+
+    let mut commands = Vec::new();
+    let mut hit_targets = Vec::new();
+    let mut input_regions = Vec::new();
+
+    // Left pill: Workspaces
+    let ws_size = 24.0f32;
+    let left_w = pad * 2.0
+        + workspaces.len() as f32 * ws_size
+        + workspaces.len().saturating_sub(1) as f32 * spacing;
+    let left_pill = Rect::new(0.0, 0.0, left_w, bh);
+    commands.push(PaintCmd::RoundedRect {
+        rect: left_pill,
+        radius: pill_r,
+        fill: Some(bg),
+        stroke: Some(border_color),
+        stroke_width: 1.5,
+    });
+    input_regions.push(left_pill);
+
+    let mut cur_x = pad;
+    let cell_y = (bh - ws_size) * 0.5;
+    for (ws_id, focused, occupied) in &workspaces {
+        let rect = Rect::new(cur_x, cell_y, ws_size, ws_size);
+        let (fill, text_col, stroke) = if *focused {
+            (Some(primary), on_primary, None)
+        } else if *occupied {
+            (Some(surface_variant), on_surface, Some(secondary))
+        } else {
+            (Some(surface_container), muted, None)
+        };
+        commands.push(PaintCmd::RoundedRect {
+            rect,
+            radius: ws_size * 0.5,
+            fill,
+            stroke,
+            stroke_width: if stroke.is_some() { 1.0 } else { 0.0 },
+        });
+        commands.push(PaintCmd::Text {
+            rect,
+            text: ws_id.to_string(),
+            color: text_col,
+            size: 11.5,
+            bold: *focused,
+            align: TextAlign::Center,
+        });
+        hit_targets.push(HitTarget {
+            rect,
+            id: format!("ws:{ws_id}"),
+        });
+        cur_x += ws_size + spacing;
+    }
+
+    // Right pill: Status slots (top center remains untouched for Dynamic Island)
+    let slot_size = 24.0f32;
+    let right_w = pad * 2.0
+        + end_slots.len().max(1) as f32 * slot_size
+        + end_slots.len().saturating_sub(1) as f32 * spacing;
+    let right_x = (logical_w - right_w).max(left_w + 160.0);
+    let right_pill = Rect::new(right_x, 0.0, right_w, bh);
+    commands.push(PaintCmd::RoundedRect {
+        rect: right_pill,
+        radius: pill_r,
+        fill: Some(bg),
+        stroke: Some(border_color),
+        stroke_width: 1.5,
+    });
+    input_regions.push(right_pill);
+
+    let mut sx = right_x + pad;
+    let sy = (bh - slot_size) * 0.5;
+    for slot in end_slots {
+        let slot_rect = Rect::new(sx, sy, slot_size, slot_size);
+        commands.push(PaintCmd::RoundedRect {
+            rect: slot_rect,
+            radius: slot_size * 0.5,
+            fill: Some(slot.fill),
+            stroke: slot.stroke,
+            stroke_width: if slot.stroke.is_some() { 1.0 } else { 0.0 },
+        });
+        let icon_w = 13.0f32;
+        let icon_h = 12.0f32;
+        commands.push(PaintCmd::Icon {
+            rect: Rect::new(
+                slot_rect.x + (slot_rect.w - icon_w) * 0.5,
+                slot_rect.y + (slot_rect.h - icon_h) * 0.5,
+                icon_w,
+                icon_h,
+            ),
+            kind: slot.icon,
+            color: slot.icon_color,
+            stroke_width: 1.5,
+            level: slot.level,
+        });
+        if let Some(dot_color) = slot.dot {
+            commands.push(PaintCmd::Circle {
+                cx: slot_rect.x + slot_rect.w - 4.0,
+                cy: slot_rect.y + 4.0,
+                radius: 2.8,
+                fill: dot_color,
+            });
+        }
+        hit_targets.push(HitTarget {
+            rect: slot_rect,
+            id: slot.id,
+        });
+        sx += slot_size + spacing;
+    }
+
+    SurfaceSpec {
+        id: format!("bar:{}", output.name),
+        namespace: format!("kaze-bar-{}", output.name),
+        output: Some(output.name.clone()),
+        layer: Layer::Top,
+        keyboard_interactivity: KeyboardMode::None,
+        anchor: Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
+        exclusive_zone: (bar_h as i32) + 4,
+        width: 0,
+        height: bar_h,
+        margin: EdgeInsets {
+            top: margin_top,
+            bottom: 0,
+            left: margin_x,
+            right: margin_x,
+        },
+        corner_radius: 0.0,
+        background: Color::TRANSPARENT,
+        border_color: Color::TRANSPARENT,
+        border_width: 0.0,
+        commands,
+        hit_targets,
+        animating: false,
+        input_regions: Some(input_regions),
+    }
+}
+
+/// Slim 30px top text-only typographic bar (`swiss` preset):
+/// pure monospace labels and 1px hairline rules (`01 / 02 / 03 — 10:06 — VOL 72% | BAT 84%`).
+fn build_swiss_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec {
+    let colors = state.palette.for_mode(state.theme_mode);
+    let bg = colors
+        .surface_color()
+        .with_opacity(state.config.bar.background_opacity);
+    let hairline = colors.outline_variant_color();
+    let primary = colors.primary_color();
+    let secondary = colors.secondary_color();
+    let tertiary = colors.tertiary_color();
+    let error_col = colors.error_color();
+    let on_surface = colors.on_surface_color();
+    let muted = colors.on_surface_variant_color();
+
+    let bar_h = 30u32;
+    let bh = bar_h as f32;
+    let bw = output.width.max(480) as f32;
+
+    let mut commands = Vec::new();
+    let mut hit_targets = Vec::new();
+
+    // 1px bottom structural rule
+    commands.push(PaintCmd::Line {
+        x1: 0.0,
+        y1: bh - 0.5,
+        x2: bw,
+        y2: bh - 0.5,
+        color: hairline,
+        width: 1.0,
+    });
+
+    // Left: `01 / 02 / 03 / ...`
+    let workspaces = collect_workspaces(state, &output.name);
+    let mut cur_x = 14.0f32;
+    for (idx, (ws_id, focused, occupied)) in workspaces.iter().enumerate() {
+        if idx > 0 {
+            let sep_rect = Rect::new(cur_x, 0.0, 14.0, bh - 1.0);
+            commands.push(PaintCmd::Text {
+                rect: sep_rect,
+                text: "/".to_string(),
+                color: hairline,
+                size: 11.5,
+                bold: false,
+                align: TextAlign::Center,
+            });
+            cur_x += 14.0;
+        }
+        let label = format!("{ws_id:02}");
+        let cell_w = 24.0f32;
+        let rect = Rect::new(cur_x, 0.0, cell_w, bh - 1.0);
+        let color = if *focused {
+            primary
+        } else if *occupied {
+            on_surface
+        } else {
+            muted
+        };
+        commands.push(PaintCmd::Text {
+            rect,
+            text: label,
+            color,
+            size: 12.0,
+            bold: *focused,
+            align: TextAlign::Center,
+        });
+        if *focused {
+            commands.push(PaintCmd::Line {
+                x1: cur_x + 2.0,
+                y1: bh - 2.0,
+                x2: cur_x + cell_w - 2.0,
+                y2: bh - 2.0,
+                color: primary,
+                width: 2.0,
+            });
+        }
+        hit_targets.push(HitTarget {
+            rect,
+            id: format!("ws:{ws_id}"),
+        });
+        cur_x += cell_w;
+    }
+
+    // Center: crisp typographic clock (`— HH:MM —`)
+    let clock_w = 96.0f32;
+    let clock_rect = Rect::new((bw - clock_w) * 0.5, 0.0, clock_w, bh - 1.0);
+    commands.push(PaintCmd::Text {
+        rect: clock_rect,
+        text: state.clock.format_hh_mm(),
+        color: on_surface,
+        size: 12.5,
+        bold: true,
+        align: TextAlign::Center,
+    });
+
+    // Right: text-only status cells separated by 1px vertical rules
+    let mut tokens: Vec<(String, String, Color)> = Vec::new();
+    if state.display_status.is_active() {
+        let (txt, col) = match &state.display_status {
+            DisplayStatus::Present { .. } => ("LIVE", primary),
+            DisplayStatus::VirtualShare { .. } => ("SHARE", secondary),
+            DisplayStatus::VirtualControl { .. } => ("CTRL", primary),
+            DisplayStatus::Recording { .. } => ("REC", error_col),
+            DisplayStatus::Idle => ("", muted),
+        };
+        if !txt.is_empty() {
+            tokens.push(("display".into(), txt.into(), col));
+        }
+    }
+    if state.network.available && state.network.connected {
+        let txt = match state.network.kind {
+            NetworkKind::Wifi => format!("WIFI {}%", state.network.strength),
+            NetworkKind::Ethernet => "ETH".into(),
+            NetworkKind::Disconnected => "OFFLINE".into(),
+        };
+        tokens.push(("net".into(), txt, on_surface));
+    } else {
+        tokens.push(("net".into(), "NET OFF".into(), muted));
+    }
+    if state.audio.muted {
+        tokens.push(("vol".into(), "VOL MUTE".into(), error_col));
+    } else {
+        tokens.push((
+            "vol".into(),
+            format!("VOL {}%", state.audio.volume_pct),
+            on_surface,
+        ));
+    }
+    if state.battery.present {
+        let col = if state.battery.charging {
+            secondary
+        } else if state.battery.low {
+            error_col
+        } else {
+            on_surface
+        };
+        let chg = if state.battery.charging { "+" } else { "" };
+        tokens.push((
+            "bat".into(),
+            format!("BAT {}%{chg}", state.battery.percentage),
+            col,
+        ));
+    }
+    if state.dnd {
+        tokens.push(("notifications".into(), "DND".into(), tertiary));
+    } else if state.unread_notifications > 0 {
+        tokens.push((
+            "notifications".into(),
+            format!("MSG {}", state.unread_notifications),
+            primary,
+        ));
+    }
+
+    let mut right_edge = bw - 14.0;
+    for (idx, (id, text, color)) in tokens.into_iter().rev().enumerate() {
+        if idx > 0 {
+            right_edge -= 8.0;
+            commands.push(PaintCmd::Line {
+                x1: right_edge,
+                y1: 7.0,
+                x2: right_edge,
+                y2: bh - 8.0,
+                color: hairline,
+                width: 1.0,
+            });
+            right_edge -= 8.0;
+        }
+        let token_w = (text.len() as f32 * 7.6 + 6.0).max(34.0);
+        let x = (right_edge - token_w).max(clock_rect.x + clock_rect.w + 8.0);
+        let rect = Rect::new(x, 0.0, token_w, bh - 1.0);
+        commands.push(PaintCmd::Text {
+            rect,
+            text,
+            color,
+            size: 11.5,
+            bold: id == "display",
+            align: TextAlign::Center,
+        });
+        hit_targets.push(HitTarget { rect, id });
+        right_edge = x;
+    }
+
+    SurfaceSpec {
+        id: format!("bar:{}", output.name),
+        namespace: format!("kaze-bar-{}", output.name),
+        output: Some(output.name.clone()),
+        layer: Layer::Top,
+        keyboard_interactivity: KeyboardMode::None,
+        anchor: Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
+        exclusive_zone: bar_h as i32,
+        width: 0,
+        height: bar_h,
+        margin: EdgeInsets::default(),
+        corner_radius: 0.0,
+        background: bg,
+        border_color: Color::TRANSPARENT,
+        border_width: 0.0,
+        commands,
+        hit_targets,
+        animating: false,
+        input_regions: None,
     }
 }
 
@@ -1032,5 +1621,146 @@ mod tests {
         }
         let has_bat_after = ext.surfaces()[0].hit_targets.iter().any(|t| t.id == "bat");
         assert!(has_bat_after);
+    }
+
+    #[test]
+    fn swiss_preset_renders_30px_text_only_bar_without_icons() {
+        let mut state = AppState::new(Config::default());
+        state.layout_preset = LayoutPreset::Swiss;
+        state.battery.present = true;
+        state.battery.percentage = 84;
+        state.outputs.insert(
+            "Virtual-1".into(),
+            OutputInfo {
+                name: "Virtual-1".into(),
+                width: 1920,
+                height: 1080,
+                scale: 1,
+            },
+        );
+        let mut ext = BarExtension::new();
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_init(&mut ctx);
+        }
+        let specs = ext.surfaces();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].height, 30);
+        assert_eq!(specs[0].exclusive_zone, 30);
+        assert_eq!(specs[0].corner_radius, 0.0);
+        assert!(
+            !specs[0]
+                .commands
+                .iter()
+                .any(|c| matches!(c, PaintCmd::Icon { .. })),
+            "swiss preset must be strictly text-only without icons"
+        );
+        assert!(specs[0]
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCmd::Text { text, .. } if text == "BAT 84%")));
+    }
+
+    #[test]
+    fn island_preset_leaves_center_click_through_with_two_corner_pills() {
+        let mut state = AppState::new(Config::default());
+        state.layout_preset = LayoutPreset::Island;
+        state.outputs.insert(
+            "Virtual-1".into(),
+            OutputInfo {
+                name: "Virtual-1".into(),
+                width: 1920,
+                height: 1080,
+                scale: 1,
+            },
+        );
+        let mut ext = BarExtension::new();
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_init(&mut ctx);
+        }
+        let specs = ext.surfaces();
+        assert_eq!(specs.len(), 1);
+        let regions = specs[0]
+            .input_regions
+            .as_ref()
+            .expect("island bar splits input regions");
+        assert_eq!(regions.len(), 2);
+        assert!(!regions.iter().any(|r| r.contains(960.0, 17.0)));
+    }
+
+    #[test]
+    fn ghost_preset_hides_bar_at_idle_and_peeks_with_converging_spring() {
+        let mut state = AppState::new(Config::default());
+        state.layout_preset = LayoutPreset::Ghost;
+        state.outputs.insert(
+            "Virtual-1".into(),
+            OutputInfo {
+                name: "Virtual-1".into(),
+                width: 1920,
+                height: 1080,
+                scale: 1,
+            },
+        );
+        let mut ext = BarExtension::new();
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_init(&mut ctx);
+        }
+        assert!(ext.surfaces().is_empty(), "ghost idle must have 0 surfaces");
+
+        // Trigger bar-peek
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            let res = ext.on_ipc("bar-peek", &[], &mut ctx);
+            assert!(matches!(res, IpcResult::Handled { ok: true, .. }));
+        }
+        assert_eq!(ext.surfaces().len(), 1);
+        assert_eq!(ext.surfaces()[0].exclusive_zone, 0);
+        assert!(ext.surfaces()[0].animating);
+
+        // Advance frame ticks until spring settles
+        for _ in 0..120 {
+            if !ext.surfaces()[0].animating {
+                break;
+            }
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_event(
+                &SystemEvent::FrameTick {
+                    surface_id: "bar:Virtual-1".into(),
+                    dt_secs: 1.0 / 60.0,
+                },
+                &mut ctx,
+            );
+        }
+        assert!(!ext.surfaces()[0].animating, "peek reveal must converge");
+
+        // Fire auto-hide timer -> slides back out and drops surface completely
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_event(
+                &SystemEvent::TimerFired {
+                    id: GHOST_PEEK_TIMER_ID.into(),
+                },
+                &mut ctx,
+            );
+        }
+        for _ in 0..120 {
+            if ext.surfaces().is_empty() {
+                break;
+            }
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_event(
+                &SystemEvent::FrameTick {
+                    surface_id: "bar:Virtual-1".into(),
+                    dt_secs: 1.0 / 60.0,
+                },
+                &mut ctx,
+            );
+        }
+        assert!(
+            ext.surfaces().is_empty(),
+            "ghost bar must destroy surface once hide spring settles"
+        );
     }
 }

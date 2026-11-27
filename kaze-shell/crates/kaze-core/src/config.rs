@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::layout::LayoutPreset;
 use crate::state::ThemeMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -184,9 +185,16 @@ impl Default for DisplayConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct LayoutConfig {
+    pub preset: LayoutPreset,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
+    pub layout: LayoutConfig,
     pub theme: ThemeConfig,
     pub bar: BarConfig,
     pub osd: OsdConfig,

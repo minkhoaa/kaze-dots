@@ -4,10 +4,11 @@ use calloop::signals::{Signal, Signals};
 use calloop::timer::{TimeoutAction, Timer};
 use calloop::{EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, RegistrationToken};
 use calloop_wayland_source::WaylandSource;
+use kaze_core::layout::{layout_state_path, load_persisted_preset, save_persisted_preset};
 use kaze_core::theme::generate_all_templates;
 use kaze_core::{
-    AppState, ClockTime, Config, DirtyFlags, IpcResult, KazeExtension, ResolvedPalette,
-    ShellAction, ShellContext, SystemEvent, ThemePaths,
+    AppState, ClockTime, Config, DirtyFlags, IpcResult, KazeExtension, LayoutPreset,
+    ResolvedPalette, ShellAction, ShellContext, SystemEvent, ThemePaths,
 };
 use kaze_ext_bar::BarExtension;
 use kaze_ext_launcher::{desktop as launcher_desktop, LauncherExtension};
@@ -39,6 +40,7 @@ struct Daemon {
     ui: UiState,
     state: AppState,
     config_path: PathBuf,
+    layout_state_file: Option<PathBuf>,
     backlight_dir: Option<PathBuf>,
     theme_paths: ThemePaths,
     extensions: Vec<Box<dyn KazeExtension>>,
@@ -123,6 +125,9 @@ impl Daemon {
             SystemEvent::ThemeChanged(mode) => {
                 self.state.theme_mode = *mode;
             }
+            SystemEvent::LayoutPresetChanged(preset) => {
+                self.state.layout_preset = *preset;
+            }
             SystemEvent::NetworkChanged(net) => {
                 self.state.network = net.clone();
             }
@@ -145,6 +150,7 @@ impl Daemon {
                 self.state.dnd = *dnd;
             }
             SystemEvent::ConfigReloaded
+            | SystemEvent::FrameTick { .. }
             | SystemEvent::PointerClick { .. }
             | SystemEvent::PointerScroll { .. }
             | SystemEvent::KeyInput { .. }
@@ -404,6 +410,30 @@ impl Daemon {
         }
     }
 
+    fn apply_layout_preset(&mut self, preset: LayoutPreset, persist: bool) -> Result<(), String> {
+        self.state.layout_preset = preset;
+        if persist {
+            if let Some(ref path) = self.layout_state_file {
+                if let Err(err) = save_persisted_preset(path, preset) {
+                    eprintln!("kaze-shell: failed persisting layout preset: {err}");
+                }
+            }
+        }
+        self.push_live_hypr_layout(preset);
+        self.dispatch_system_event(SystemEvent::LayoutPresetChanged(preset));
+        Ok(())
+    }
+
+    fn push_live_hypr_layout(&self, preset: LayoutPreset) {
+        let Some(ref client) = self.hypr_client else {
+            return;
+        };
+        let geom = preset.hypr_geometry();
+        if let Err(err) = client.apply_layout_geometry(&geom) {
+            eprintln!("kaze-shell: applying Hyprland layout geometry failed: {err}");
+        }
+    }
+
     fn reload_config(&mut self) -> Result<(), String> {
         match Config::load_from_path(&self.config_path) {
             Ok(new_cfg) => {
@@ -488,6 +518,45 @@ impl Daemon {
                 Ok(()) => IpcResponse::ok("reloaded"),
                 Err(err) => IpcResponse::err(err),
             },
+            "layout-set" => {
+                let Some(name) = req.args.first().map(String::as_str) else {
+                    responder.send(&IpcResponse::err(
+                        "usage: layout-set <omarchy|island|swiss|ghost>",
+                    ));
+                    return;
+                };
+                match LayoutPreset::from_name(name) {
+                    Some(preset) => match self.apply_layout_preset(preset, true) {
+                        Ok(()) => IpcResponse::ok(preset.as_str()),
+                        Err(err) => IpcResponse::err(err),
+                    },
+                    None => IpcResponse::err(format!(
+                        "unknown layout preset '{name}' (expected omarchy|island|swiss|ghost)"
+                    )),
+                }
+            }
+            "layout-next" => {
+                let next = self.state.layout_preset.next();
+                match self.apply_layout_preset(next, true) {
+                    Ok(()) => IpcResponse::ok(next.as_str()),
+                    Err(err) => IpcResponse::err(err),
+                }
+            }
+            "layout-list" => {
+                let lines: Vec<String> = LayoutPreset::ALL
+                    .iter()
+                    .map(|p| {
+                        let mark = if *p == self.state.layout_preset {
+                            "*"
+                        } else {
+                            " "
+                        };
+                        format!("{mark} {:<8} {}", p.as_str(), p.label())
+                    })
+                    .collect();
+                IpcResponse::ok(lines.join("\n"))
+            }
+            "layout-status" => IpcResponse::ok(self.state.layout_preset.as_str()),
             "volume-up" => {
                 let step = parse_step(&req.args, 5);
                 self.execute_actions(vec![ShellAction::AudioStepVolume(step)]);
@@ -549,6 +618,7 @@ impl Daemon {
                 let hidden: Vec<&String> = self.state.hidden_bars.iter().collect();
                 let data = serde_json::json!({
                     "pid": std::process::id(),
+                    "layout_preset": self.state.layout_preset.as_str(),
                     "theme_mode": self.state.theme_mode.as_str(),
                     "palette": self.state.palette.name,
                     "hypr_connected": self.state.hypr_connected,
@@ -568,6 +638,7 @@ impl Daemon {
                     "hidden_bars": hidden,
                     "hide_all_bars": self.state.hide_all_bars,
                     "surface_count": self.ui.surface_count(),
+                    "animating_surfaces": self.ui.animating_surface_count(),
                     "namespaces": self.ui.active_namespaces(),
                 });
                 IpcResponse::ok_data("ok", data)
@@ -764,6 +835,11 @@ impl Daemon {
             let colors = self.state.palette.for_mode(self.state.theme_mode);
             let (_, active, inactive, eval_lua) = kaze_core::theme::render_hyprland_lua(colors);
             self.push_live_hypr_colors(&active, &inactive, &eval_lua);
+            if self.state.layout_preset != LayoutPreset::Omarchy
+                || self.layout_state_file.as_ref().is_some_and(|p| p.exists())
+            {
+                self.push_live_hypr_layout(self.state.layout_preset);
+            }
         }
     }
 
@@ -852,7 +928,18 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         }
     };
 
+    let layout_state_file = layout_state_path().ok();
     let mut state = AppState::new(config);
+    let has_persisted_layout = if let Some(ref path) = layout_state_file {
+        if let Some(saved) = load_persisted_preset(path) {
+            state.layout_preset = saved;
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
     if let Some(ref dir) = backlight_dir {
         if let Some(bl) = backlight::read_backlight_from_dir(dir) {
             state.backlight = bl;
@@ -873,6 +960,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         ui,
         state,
         config_path,
+        layout_state_file,
         backlight_dir,
         theme_paths,
         extensions,
@@ -963,6 +1051,9 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
 
     if let Err(err) = daemon.apply_templates() {
         eprintln!("kaze-shell: initial template apply warning: {err}");
+    }
+    if has_persisted_layout || daemon.state.layout_preset != LayoutPreset::Omarchy {
+        daemon.push_live_hypr_layout(daemon.state.layout_preset);
     }
     for ev in initial_events {
         daemon.dispatch_system_event(ev);

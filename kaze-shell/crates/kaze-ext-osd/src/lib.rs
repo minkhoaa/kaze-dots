@@ -72,7 +72,9 @@ impl KazeExtension for OsdExtension {
                 trigger_osd: true, ..
             } => self.show(OsdKind::Brightness, ctx),
             SystemEvent::TimerFired { id } if id == OSD_TIMER_ID => self.hide(ctx),
-            SystemEvent::ConfigReloaded | SystemEvent::ThemeChanged(_) => {
+            SystemEvent::ConfigReloaded
+            | SystemEvent::ThemeChanged(_)
+            | SystemEvent::LayoutPresetChanged(_) => {
                 if let Some(kind) = self.active_kind {
                     if ctx.state.config.osd.enabled {
                         self.cached_spec = Some(build_osd_surface(ctx.state, kind));
@@ -191,7 +193,11 @@ fn build_osd_surface(state: &AppState, kind: OsdKind) -> SurfaceSpec {
     let bar_w = (w - bar_x - label_w - pad - 6.0).max(40.0);
     let bar_h = 8.0f32;
     let bar_y = (h - bar_h) * 0.5;
-    let inner_r = if bar.corner_radius > 0.0 { 3.0 } else { 0.0 };
+    let radius = bar
+        .corner_radius
+        .max(state.layout_preset.overlay_corner_radius());
+    let border_w = state.layout_preset.overlay_border_width();
+    let inner_r = if radius > 0.0 { 4.0 } else { 0.0 };
 
     let mut commands = Vec::with_capacity(4);
     commands.push(PaintCmd::Icon {
@@ -246,12 +252,14 @@ fn build_osd_surface(state: &AppState, kind: OsdKind) -> SurfaceSpec {
         width: osd.width.max(160),
         height: osd.height.max(36),
         margin,
-        corner_radius: bar.corner_radius,
+        corner_radius: radius,
         background: bg,
         border_color,
-        border_width: bar.border_width,
+        border_width: border_w,
         commands,
         hit_targets: Vec::new(),
+        animating: false,
+        input_regions: None,
     }
 }
 
