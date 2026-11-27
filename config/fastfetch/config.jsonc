@@ -3,86 +3,91 @@
   "logo": {
     "type": "small",
     "padding": {
-      "top": 1,
-      "left": 1,
+      "top": 2,
+      "left": 2,
       "right": 3
     }
   },
   "display": {
     "separator": "  ",
     "color": {
-      "keys": "blue",
       "title": "cyan",
+      "keys": "blue",
       "separator": "dim_white"
     }
   },
   "modules": [
-    "title",
     {
-      "type": "separator",
-      "string": "─"
+      "type": "title",
+      "format": "{#dim_white}┌─{#} {user-name-colored}{at-symbol-colored}{host-name-colored}"
     },
     {
       "type": "os",
-      "key": "󰣇 OS",
-      "keyColor": "cyan"
+      "key": "{#dim_white}│{#} {#cyan}󰣇 OS    {#}",
+      "format": "{pretty-name} {arch}"
     },
     {
       "type": "kernel",
-      "key": "󰒋 Kernel",
-      "keyColor": "blue"
-    },
-    {
-      "type": "uptime",
-      "key": "󰅐 Uptime",
-      "keyColor": "blue"
+      "key": "{#dim_white}│{#} {#cyan}󰒋 Kernel{#}",
+      "format": "{release}"
     },
     {
       "type": "packages",
-      "key": "󰏖 Pkgs",
-      "keyColor": "blue"
+      "key": "{#dim_white}│{#} {#cyan}󰏖 Pkgs  {#}"
     },
     {
-      "type": "shell",
-      "key": "󰆍 Shell",
-      "keyColor": "magenta"
+      "type": "uptime",
+      "key": "{#dim_white}│{#} {#cyan}󰅐 Uptime{#}"
+    },
+    {
+      "type": "custom",
+      "format": "{#dim_white}├──────────────────────────────────────────{#}"
     },
     {
       "type": "wm",
-      "key": "󱂬 WM",
-      "keyColor": "magenta"
+      "key": "{#dim_white}│{#} {#magenta}󱂬 WM    {#}",
+      "format": "{pretty-name}{?version} {version}{?}"
+    },
+    {
+      "type": "shell",
+      "key": "{#dim_white}│{#} {#magenta}󰆍 Shell {#}",
+      "format": "{pretty-name}{?version} {version}{?}"
     },
     {
       "type": "terminal",
-      "key": "󰞷 Term",
-      "keyColor": "magenta"
+      "key": "{#dim_white}│{#} {#magenta}󰞷 Term  {#}",
+      "format": "{pretty-name}{?version} {version}{?}"
+    },
+    {
+      "type": "custom",
+      "format": "{#dim_white}├──────────────────────────────────────────{#}"
     },
     {
       "type": "cpu",
-      "key": "󰻠 CPU",
-      "keyColor": "green",
+      "key": "{#dim_white}│{#} {#green}󰻠 CPU   {#}",
       "format": "{name} ({cores-logical})"
     },
     {
       "type": "gpu",
-      "key": "󰢮 GPU",
-      "keyColor": "green",
+      "key": "{#dim_white}│{#} {#green}󰢮 GPU   {#}",
       "format": "{name}"
     },
     {
       "type": "memory",
-      "key": "󰍛 Memory",
-      "keyColor": "yellow"
+      "key": "{#dim_white}│{#} {#yellow}󰍛 Memory{#}"
     },
     {
       "type": "disk",
-      "key": "󰋊 Disk",
-      "keyColor": "yellow",
+      "key": "{#dim_white}│{#} {#yellow}󰋊 Disk  {#}",
       "folders": "/"
     },
-    "break",
+    {
+      "type": "custom",
+      "format": "{#dim_white}└──────────────────────────────────────────{#}"
+    },
     {
       "type": "colors",
+      "paddingLeft": 2,
       "symbol": "circle"
     }
   ]
