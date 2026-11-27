@@ -224,6 +224,9 @@ backup_and_link "$REPO_DIR/config/zathura/zathurarc" "$CONFIG_HOME/zathura/zathu
 backup_and_link "$REPO_DIR/config/imv/config" "$CONFIG_HOME/imv/config"
 backup_and_link "$REPO_DIR/config/mimeapps.list" "$CONFIG_HOME/mimeapps.list"
 backup_and_link "$REPO_DIR/config/xdg-terminals.list" "$CONFIG_HOME/xdg-terminals.list"
+for browser_flags in chrome-flags.conf chromium-flags.conf brave-flags.conf microsoft-edge-stable-flags.conf vivaldi-stable.conf; do
+    backup_and_link "$REPO_DIR/config/browsers/chromium-flags.conf" "$CONFIG_HOME/$browser_flags"
+done
 backup_and_link "$REPO_DIR/config/applications/yazi.desktop" "$DATA_HOME/applications/yazi.desktop"
 
 backup_and_link "$REPO_DIR/config/gtk-3.0/settings.ini" "$CONFIG_HOME/gtk-3.0/settings.ini"

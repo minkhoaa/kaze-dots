@@ -195,6 +195,11 @@ test("native configs: config/noctalia/config.toml and config/foot/foot.ini valid
     assert_contains(xdg_term, "footclient.desktop\n", "xdg-terminals.list prefers footclient.desktop")
     assert_contains(xdg_term, "foot.desktop\n", "xdg-terminals.list includes foot.desktop fallback")
 
+    local browser_flags = assert(fs.read_file(repo_dir .. "/config/browsers/chromium-flags.conf"))
+    assert_contains(browser_flags, "--enable-features=ParallelDownloading\n", "chromium-flags enables parallel downloading")
+    assert_contains(browser_flags, "--enable-quic\n", "chromium-flags enables QUIC/HTTP3")
+    assert_true(not browser_flags:find("#", 1, true), "chromium-flags must be comment-free for raw-cat wrappers like microsoft-edge-stable")
+
     local gtk_ini = assert(fs.read_file(repo_dir .. "/config/gtk-3.0/settings.ini"))
     assert_contains(gtk_ini, "gtk-theme-name=adw-gtk3-dark\n", "GTK3 pairs adw-gtk3-dark with Noctalia CSS")
     assert_contains(gtk_ini, "gtk-icon-theme-name=Papirus-Dark\n", "GTK3 uses Papirus-Dark icon theme")
@@ -364,6 +369,11 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         assert_contains(manifest, cfg .. "/imv/config\n")
         assert_contains(manifest, cfg .. "/mimeapps.list\n")
         assert_contains(manifest, cfg .. "/xdg-terminals.list\n")
+        assert_contains(manifest, cfg .. "/chrome-flags.conf\n")
+        assert_contains(manifest, cfg .. "/chromium-flags.conf\n")
+        assert_contains(manifest, cfg .. "/brave-flags.conf\n")
+        assert_contains(manifest, cfg .. "/microsoft-edge-stable-flags.conf\n")
+        assert_contains(manifest, cfg .. "/vivaldi-stable.conf\n")
         assert_contains(manifest, cfg .. "/gtk-3.0/settings.ini\n")
         assert_contains(manifest, cfg .. "/gtk-3.0/kaze-thunar.css\n")
         assert_contains(manifest, cfg .. "/gtk-3.0/kaze-style.css\n")
@@ -421,6 +431,11 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
             cfg .. "/fastfetch/config.jsonc",
             cfg .. "/mimeapps.list",
             cfg .. "/xdg-terminals.list",
+            cfg .. "/chrome-flags.conf",
+            cfg .. "/chromium-flags.conf",
+            cfg .. "/brave-flags.conf",
+            cfg .. "/microsoft-edge-stable-flags.conf",
+            cfg .. "/vivaldi-stable.conf",
             cfg .. "/gtk-3.0/settings.ini",
             cfg .. "/gtk-3.0/kaze-thunar.css",
             cfg .. "/gtk-3.0/kaze-style.css",

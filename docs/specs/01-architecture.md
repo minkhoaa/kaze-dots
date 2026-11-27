@@ -106,6 +106,7 @@ lua/kaze/
 | `$XDG_CONFIG_HOME/imv/config` | Symlink → `<repo>/config/imv/config` |
 | `$XDG_CONFIG_HOME/mimeapps.list` | Symlink → `<repo>/config/mimeapps.list` |
 | `$XDG_CONFIG_HOME/xdg-terminals.list` | Symlink → `<repo>/config/xdg-terminals.list` |
+| `$XDG_CONFIG_HOME/{chrome,chromium,brave,microsoft-edge-stable}-flags.conf`, `vivaldi-stable.conf` | Symlinks → `<repo>/config/browsers/chromium-flags.conf` (comment-free `ParallelDownloading` + `QUIC`) |
 | `~/.zshrc`, `~/.zprofile`, `$XDG_CONFIG_HOME/zsh/conf.d` | Symlinks → `<repo>/config/zsh/{zshrc,zprofile,conf.d}` |
 | `$XDG_CONFIG_HOME/systemd/user/` | Symlinks → `<repo>/config/systemd/user/` units and `foot-server` drop-ins |
 | `~/.local/bin/kaze-*` | Symlinks → `<repo>/bin/kaze-*` (11 helper CLIs) |

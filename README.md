@@ -76,6 +76,7 @@ config/zathura/          Minimal flat Zathura PDF viewer config
 config/imv/              Minimal Wayland imv image viewer config
 config/mimeapps.list     Default XDG file associations (thunar, imv, zathura)
 config/xdg-terminals.list Default XDG terminal priority (footclient, foot)
+config/browsers/         Shared Chromium-family download/QUIC flags (Chrome, Chromium, Brave, Edge, Vivaldi)
 config/starship/         Single-line ANSI Starship prompt config
 config/fastfetch/        Minimal ANSI-colored Fastfetch system info config
 config/zsh/              Modular Zsh config (~/.zprofile, ~/.zshrc, conf.d/*.zsh)
