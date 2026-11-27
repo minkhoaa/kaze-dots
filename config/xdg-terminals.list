@@ -1,0 +1,3 @@
+# XDG Terminal Execution default order (Foot daemon client first, standalone fallback)
+footclient.desktop
+foot.desktop

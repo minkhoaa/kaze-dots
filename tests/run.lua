@@ -191,8 +191,13 @@ test("native configs: config/noctalia/config.toml and config/foot/foot.ini valid
     assert_contains(mime_src, "application/pdf=org.pwmt.zathura.desktop;\n", "mimeapps routes PDFs to zathura")
     assert_contains(mime_src, "image/png=imv.desktop;\n", "mimeapps routes PNGs to imv")
 
+    local xdg_term = assert(fs.read_file(repo_dir .. "/config/xdg-terminals.list"))
+    assert_contains(xdg_term, "footclient.desktop\n", "xdg-terminals.list prefers footclient.desktop")
+    assert_contains(xdg_term, "foot.desktop\n", "xdg-terminals.list includes foot.desktop fallback")
+
     local gtk_ini = assert(fs.read_file(repo_dir .. "/config/gtk-3.0/settings.ini"))
     assert_contains(gtk_ini, "gtk-theme-name=adw-gtk3-dark\n", "GTK3 pairs adw-gtk3-dark with Noctalia CSS")
+    assert_contains(gtk_ini, "gtk-icon-theme-name=Papirus-Dark\n", "GTK3 uses Papirus-Dark icon theme")
     assert_contains(gtk_ini, "gtk-enable-animations=0\n", "GTK3 disables animations for snappy Thunar UI")
 
     local thunar_css = assert(fs.read_file(repo_dir .. "/config/gtk-3.0/kaze-thunar.css"))
@@ -358,6 +363,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
         assert_contains(manifest, cfg .. "/zathura/zathurarc\n")
         assert_contains(manifest, cfg .. "/imv/config\n")
         assert_contains(manifest, cfg .. "/mimeapps.list\n")
+        assert_contains(manifest, cfg .. "/xdg-terminals.list\n")
         assert_contains(manifest, cfg .. "/gtk-3.0/settings.ini\n")
         assert_contains(manifest, cfg .. "/gtk-3.0/kaze-thunar.css\n")
         assert_contains(manifest, cfg .. "/gtk-3.0/kaze-style.css\n")
@@ -414,6 +420,7 @@ test("apply: reapply preserves user Noctalia GUI edits, uninstall baseline, and 
             cfg .. "/imv/config",
             cfg .. "/fastfetch/config.jsonc",
             cfg .. "/mimeapps.list",
+            cfg .. "/xdg-terminals.list",
             cfg .. "/gtk-3.0/settings.ini",
             cfg .. "/gtk-3.0/kaze-thunar.css",
             cfg .. "/gtk-3.0/kaze-style.css",

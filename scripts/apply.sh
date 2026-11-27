@@ -223,6 +223,7 @@ done
 backup_and_link "$REPO_DIR/config/zathura/zathurarc" "$CONFIG_HOME/zathura/zathurarc"
 backup_and_link "$REPO_DIR/config/imv/config" "$CONFIG_HOME/imv/config"
 backup_and_link "$REPO_DIR/config/mimeapps.list" "$CONFIG_HOME/mimeapps.list"
+backup_and_link "$REPO_DIR/config/xdg-terminals.list" "$CONFIG_HOME/xdg-terminals.list"
 backup_and_link "$REPO_DIR/config/applications/yazi.desktop" "$DATA_HOME/applications/yazi.desktop"
 
 backup_and_link "$REPO_DIR/config/gtk-3.0/settings.ini" "$CONFIG_HOME/gtk-3.0/settings.ini"

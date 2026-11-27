@@ -444,6 +444,15 @@ kaze_run_system_setup() {
             _kaze_msg_warn "fc-cache -f returned non-zero; continuing"
         fi
     fi
+
+    # 6. XDG user directories (~/Downloads, ~/Pictures, ~/Documents, ...)
+    if command -v xdg-user-dirs-update >/dev/null 2>&1; then
+        if xdg-user-dirs-update >/dev/null 2>&1; then
+            _kaze_msg_ok "XDG user directories initialized (xdg-user-dirs-update)"
+        else
+            _kaze_msg_warn "xdg-user-dirs-update returned non-zero; continuing"
+        fi
+    fi
 }
 
 kaze_detect_existing_dm() {

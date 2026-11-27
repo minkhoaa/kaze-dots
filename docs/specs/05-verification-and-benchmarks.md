@@ -31,7 +31,7 @@ What Gate 1 covers:
    - `fs` quoting/atomic writes, `hypr_user` profile + `user.lua` merge/fallback, `json` strict decode/encode, `toml_diff` Noctalia config drift detection.
    - Native config invariants (`config/noctalia/config.toml` offline/zero-telemetry/sharp settings, `foot.ini` Noctalia include, `xdph.conf`, Zsh `conf.d` guards, ANSI-only `starship.toml` & `fastfetch/config.jsonc`, plus live `noctalia config validate`, `foot --check-config`, and `zsh -n` when installed).
    - `scripts/apply.sh` reapply & rollback with spaces in XDG paths, Noctalia GUI edit preservation, and `hypr/user.lua` preservation.
-   - `scripts/install.sh`, `scripts/install-packages.sh`, and `scripts/bootstrap.sh` dry-run checks, package manifest parity (`minimal` = 27 pkgs, `full` = 52 pkgs, 0 AUR core), `install-lib.sh` GPU/conflict/system-setup/DM/AUR/logging stubs, root/sh guards, and rollback.
+   - `scripts/install.sh`, `scripts/install-packages.sh`, and `scripts/bootstrap.sh` dry-run checks, package manifest parity (`minimal` = 27 pkgs, `full` = 55 pkgs, 0 AUR core), `install-lib.sh` GPU/conflict/system-setup/DM/AUR/logging stubs, root/sh guards, and rollback.
    - `kaze-keys`, `kaze-tui`, `kaze-footclient`, `kaze-session`, `kaze-doctor` (including `--diff`), and `kaze-display` (monitor/workspace parsers, hotplug guards, Present Workspace, 1080p Virtual Share).
 3. **Python sampler tests (`tests/vm/test_idle_sampler.py`)**: validates process classification, thread stability checks, and budget attribution without requiring a running VM.
 4. **Shell checks (`bash -n` / `shellcheck`)**: verifies all scripts in `scripts/` and `tests/vm/`.
