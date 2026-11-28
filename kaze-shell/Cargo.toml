@@ -8,6 +8,8 @@ members = [
     "crates/kaze-ui",
     "crates/kaze-ext-bar",
     "crates/kaze-ext-dock",
+    "crates/kaze-ext-switcher",
+    "crates/kaze-ext-corners",
     "crates/kaze-ext-osd",
     "crates/kaze-ext-notify",
     "crates/kaze-ext-launcher",
@@ -69,6 +71,8 @@ kaze-sys = { path = "crates/kaze-sys" }
 kaze-ui = { path = "crates/kaze-ui" }
 kaze-ext-bar = { path = "crates/kaze-ext-bar" }
 kaze-ext-dock = { path = "crates/kaze-ext-dock" }
+kaze-ext-switcher = { path = "crates/kaze-ext-switcher" }
+kaze-ext-corners = { path = "crates/kaze-ext-corners" }
 kaze-ext-osd = { path = "crates/kaze-ext-osd" }
 kaze-ext-notify = { path = "crates/kaze-ext-notify" }
 kaze-ext-launcher = { path = "crates/kaze-ext-launcher" }

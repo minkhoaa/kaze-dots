@@ -4,10 +4,12 @@ pub mod data_control;
 pub mod idle_power;
 pub mod render;
 pub mod screencopy;
+pub mod toplevel_capture;
 
 use data_control::{ClipboardPipeRead, ClipboardPipeWrite, DataControlState};
 use idle_power::IdlePowerState;
 use screencopy::{OutputTransform, ScreencopyFrameTag, ScreencopyState};
+use toplevel_capture::ToplevelCaptureState;
 
 use kaze_core::{
     Anchor, DirtyFlags, ImeEvent, KeyEvent as CoreKeyEvent, KeyModifiers, KeyboardMode, Layer,
@@ -180,6 +182,7 @@ pub struct UiState {
     data_control: DataControlState,
     idle_power: IdlePowerState,
     screencopy: ScreencopyState,
+    toplevel_capture: ToplevelCaptureState,
     pending_events: Vec<SystemEvent>,
 }
 
@@ -208,6 +211,7 @@ impl UiState {
         let data_control = DataControlState::bind_globals(&globals, &qh);
         let idle_power = IdlePowerState::bind_globals(&globals, &qh);
         let screencopy = ScreencopyState::bind_globals(&globals, &qh);
+        let toplevel_capture = ToplevelCaptureState::bind_globals(&globals, &qh);
 
         let state = Self {
             registry_state: RegistryState::new(&globals),
@@ -247,6 +251,7 @@ impl UiState {
             data_control,
             idle_power,
             screencopy,
+            toplevel_capture,
             pending_events: Vec::new(),
         };
 
@@ -295,6 +300,20 @@ impl UiState {
 
     pub fn has_screencopy(&self) -> bool {
         self.screencopy.has_screencopy()
+    }
+
+    pub fn has_toplevel_capture(&self) -> bool {
+        self.toplevel_capture.is_available()
+    }
+
+    pub fn request_window_previews(
+        &mut self,
+        request_id: u64,
+        windows: &[(String, String, String)],
+        max_width: u32,
+    ) {
+        self.toplevel_capture
+            .request_previews(request_id, windows, max_width, &self.qh);
     }
 
     pub fn request_screencopy(&mut self, request_id: u64) -> Result<(), String> {

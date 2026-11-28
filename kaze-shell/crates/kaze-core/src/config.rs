@@ -267,6 +267,8 @@ pub struct OsdConfig {
     pub offset_x: i32,
     pub offset_y: i32,
     pub timeout_ms: u64,
+    pub show_keyboard_layout: bool,
+    pub show_lock_keys: bool,
 }
 
 impl Default for OsdConfig {
@@ -279,6 +281,8 @@ impl Default for OsdConfig {
             offset_x: 12,
             offset_y: 12,
             timeout_ms: 1500,
+            show_keyboard_layout: true,
+            show_lock_keys: true,
         }
     }
 }
@@ -296,6 +300,9 @@ pub struct NotifyConfig {
     pub history_limit: usize,
     pub default_timeout_ms: u64,
     pub low_timeout_ms: u64,
+    pub group_by_app: bool,
+    pub newest_on_edge: bool,
+    pub show_progress_bar: bool,
 }
 
 impl Default for NotifyConfig {
@@ -311,6 +318,83 @@ impl Default for NotifyConfig {
             history_limit: 50,
             default_timeout_ms: 5000,
             low_timeout_ms: 3500,
+            group_by_app: false,
+            newest_on_edge: true,
+            show_progress_bar: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SwitcherConfig {
+    pub enabled: bool,
+    pub layout: String,
+    pub hold_mode: bool,
+    pub show_previews: bool,
+    pub current_workspace_only: bool,
+    pub current_monitor_only: bool,
+    pub max_preview_width: u32,
+}
+
+impl Default for SwitcherConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            layout: "carousel".to_string(),
+            hold_mode: true,
+            show_previews: true,
+            current_workspace_only: false,
+            current_monitor_only: false,
+            max_preview_width: 260,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HotCornerActionConfig {
+    pub command: String,
+    pub ipc: String,
+    pub dwell_ms: u64,
+    pub cooldown_ms: u64,
+    pub disable_in_fullscreen: bool,
+}
+
+impl Default for HotCornerActionConfig {
+    fn default() -> Self {
+        Self {
+            command: String::new(),
+            ipc: String::new(),
+            dwell_ms: 180,
+            cooldown_ms: 600,
+            disable_in_fullscreen: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CornersConfig {
+    pub hot_enabled: bool,
+    pub top_left: HotCornerActionConfig,
+    pub top_right: HotCornerActionConfig,
+    pub bottom_left: HotCornerActionConfig,
+    pub bottom_right: HotCornerActionConfig,
+    pub screen_corners_enabled: bool,
+    pub screen_corners_radius: f32,
+}
+
+impl Default for CornersConfig {
+    fn default() -> Self {
+        Self {
+            hot_enabled: false,
+            top_left: HotCornerActionConfig::default(),
+            top_right: HotCornerActionConfig::default(),
+            bottom_left: HotCornerActionConfig::default(),
+            bottom_right: HotCornerActionConfig::default(),
+            screen_corners_enabled: false,
+            screen_corners_radius: 12.0,
         }
     }
 }
@@ -850,6 +934,8 @@ pub struct Config {
     pub session: SessionConfig,
     pub capture: CaptureConfig,
     pub dock: DockConfig,
+    pub switcher: SwitcherConfig,
+    pub corners: CornersConfig,
     pub widget: BTreeMap<String, WidgetInstanceConfig>,
 }
 
@@ -1154,6 +1240,20 @@ impl Config {
             self.dock.background_opacity = 0.9;
         }
         self.dock.background_opacity = self.dock.background_opacity.clamp(0.0, 1.0);
+        self.switcher.max_preview_width = self.switcher.max_preview_width.clamp(96, 640);
+        if !matches!(
+            self.switcher.layout.trim().to_ascii_lowercase().as_str(),
+            "carousel" | "compact" | "grid" | "icons"
+        ) {
+            return Err(format!(
+                "switcher.layout='{}' must be carousel|compact|grid|icons",
+                self.switcher.layout
+            ));
+        }
+        if !self.corners.screen_corners_radius.is_finite() {
+            self.corners.screen_corners_radius = 12.0;
+        }
+        self.corners.screen_corners_radius = self.corners.screen_corners_radius.clamp(0.0, 64.0);
         for (id, w) in &self.widget {
             if w.exec_interval_secs > 0 && w.exec_interval_secs < 5 {
                 return Err(format!(

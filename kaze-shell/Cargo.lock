@@ -645,6 +645,7 @@ dependencies = [
  "kaze-ext-capture",
  "kaze-ext-cc",
  "kaze-ext-clipboard",
+ "kaze-ext-corners",
  "kaze-ext-dock",
  "kaze-ext-idle",
  "kaze-ext-island",
@@ -653,6 +654,7 @@ dependencies = [
  "kaze-ext-osd",
  "kaze-ext-polkit",
  "kaze-ext-session",
+ "kaze-ext-switcher",
  "kaze-ext-tray",
  "kaze-ext-wallpaper",
  "kaze-hypr",
@@ -720,6 +722,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kaze-ext-corners"
+version = "0.1.0"
+dependencies = [
+ "kaze-core",
+]
+
+[[package]]
 name = "kaze-ext-dock"
 version = "0.1.0"
 dependencies = [
@@ -778,6 +787,14 @@ dependencies = [
 name = "kaze-ext-session"
 version = "0.1.0"
 dependencies = [
+ "kaze-core",
+]
+
+[[package]]
+name = "kaze-ext-switcher"
+version = "0.1.0"
+dependencies = [
+ "image",
  "kaze-core",
 ]
 

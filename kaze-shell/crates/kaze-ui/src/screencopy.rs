@@ -211,12 +211,12 @@ pub struct ScreencopyFrameTag {
     pub transform: OutputTransform,
 }
 
-struct TransientShmBuffer {
+pub(crate) struct TransientShmBuffer {
     _file: File,
-    mmap: MmapMut,
-    wl_buf: wl_buffer::WlBuffer,
+    pub(crate) mmap: MmapMut,
+    pub(crate) wl_buf: wl_buffer::WlBuffer,
     wl_pool: wl_shm_pool::WlShmPool,
-    byte_len: usize,
+    pub(crate) byte_len: usize,
 }
 
 impl Drop for TransientShmBuffer {
@@ -226,7 +226,7 @@ impl Drop for TransientShmBuffer {
     }
 }
 
-fn create_transient_shm_buffer(
+pub(crate) fn create_transient_shm_buffer(
     shm: &Shm,
     qh: &QueueHandle<UiState>,
     width: u32,

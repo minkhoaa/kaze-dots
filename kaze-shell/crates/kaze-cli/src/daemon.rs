@@ -17,6 +17,7 @@ use kaze_ext_bar::BarExtension;
 use kaze_ext_capture::CaptureExtension;
 use kaze_ext_cc::ControlCenterExtension;
 use kaze_ext_clipboard::{default_clipboard_store_path, ClipboardExtension};
+use kaze_ext_corners::CornersExtension;
 use kaze_ext_dock::DockExtension;
 use kaze_ext_idle::IdleExtension;
 use kaze_ext_island::IslandExtension;
@@ -25,6 +26,7 @@ use kaze_ext_notify::NotifyExtension;
 use kaze_ext_osd::OsdExtension;
 use kaze_ext_polkit::PolkitExtension;
 use kaze_ext_session::SessionMenuExtension;
+use kaze_ext_switcher::SwitcherExtension;
 use kaze_ext_tray::TrayExtension;
 use kaze_ext_wallpaper::{
     expand_tilde, load_wallpaper_job, validate_wallpaper_file, WallpaperExtension,
@@ -996,8 +998,18 @@ impl Daemon {
                         },
                     ));
                 }
-                ShellAction::RequestWindowPreviews { .. }
-                | ShellAction::NetworkRequestScan
+                ShellAction::RequestWindowPreviews {
+                    request_id,
+                    windows,
+                } => {
+                    self.ui.request_window_previews(
+                        request_id,
+                        &windows,
+                        self.state.config.switcher.max_preview_width,
+                    );
+                    let _ = self.wayland_conn.flush();
+                }
+                ShellAction::NetworkRequestScan
                 | ShellAction::WifiConnect { .. }
                 | ShellAction::WifiDisconnect
                 | ShellAction::WifiForget(_)
@@ -2121,6 +2133,10 @@ impl Daemon {
                         serde_json::json!(self.ui.has_screencopy()),
                     );
                     obj.insert(
+                        "has_toplevel_capture".into(),
+                        serde_json::json!(self.ui.has_toplevel_capture()),
+                    );
+                    obj.insert(
                         "spectrum_subscribers".into(),
                         serde_json::json!(self.state.spectrum_subscribers.len()),
                     );
@@ -2580,6 +2596,8 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     let extensions: Vec<Box<dyn KazeExtension>> = vec![
         Box::new(BarExtension::new()),
         Box::new(DockExtension::new()),
+        Box::new(SwitcherExtension::new()),
+        Box::new(CornersExtension::new()),
         Box::new(IslandExtension::new()),
         Box::new(ControlCenterExtension::new()),
         Box::new(TrayExtension::new()),

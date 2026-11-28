@@ -18,11 +18,11 @@ pub use anim::{Spring, SPRING_MAX_DT_SECS, SPRING_POS_EPSILON, SPRING_VEL_EPSILO
 pub use config::{
     AccessibilityConfig, AudioConfig, BarConfig, BarInstanceConfig, BarLayerMode,
     BarMonitorOverride, BarPosition, BrightnessConfig, CaptureConfig, ClipboardConfig, Config,
-    DisplayConfig, DockConfig, DockHideMode, GeneralConfig, HooksConfig, IdleConfig, InputConfig,
-    InputKeybindsConfig, IslandConfig, IslandStyle, LauncherConfig, LayoutConfig, LocationConfig,
-    LockscreenConfig, NetworkConfig, NotifyConfig, OsdConfig, PrivacyConfig, SessionConfig,
-    SettingsStore, ThemeConfig, ValidationIssue, ValidationReport, ValidationSeverity,
-    WallpaperConfig, WidgetInstanceConfig,
+    CornersConfig, DisplayConfig, DockConfig, DockHideMode, GeneralConfig, HooksConfig,
+    HotCornerActionConfig, IdleConfig, InputConfig, InputKeybindsConfig, IslandConfig, IslandStyle,
+    LauncherConfig, LayoutConfig, LocationConfig, LockscreenConfig, NetworkConfig, NotifyConfig,
+    OsdConfig, PrivacyConfig, SessionConfig, SettingsStore, SwitcherConfig, ThemeConfig,
+    ValidationIssue, ValidationReport, ValidationSeverity, WallpaperConfig, WidgetInstanceConfig,
 };
 pub use crypto::{check_network_allowed, EncryptedRecordStore, MasterKey};
 pub use dconf_read::read_gnome_text_scaling_factor;

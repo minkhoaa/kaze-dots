@@ -5,7 +5,8 @@ use kaze_core::{
     KeyboardMode, Layer, NotificationItem, NotificationUrgency, PaintCmd, PointerButton, Rect,
     ShellAction, ShellContext, SurfaceSpec, SystemEvent, TextAlign,
 };
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Instant;
 
 const SURFACE_ID: &str = "notify:stack";
 const NAMESPACE: &str = "kaze-notify";
@@ -23,10 +24,21 @@ const REASON_UNDEFINED: u32 = 4;
 ///
 /// When no popup is visible, `surfaces()` returns `Vec::new()` so `kaze-ui` immediately
 /// drops the Wayland layer surface and frees its SHM `SlotPool` down to 0 KiB.
+#[derive(Debug, Clone)]
+struct TimerBookkeeping {
+    started_at: Instant,
+    total_ms: u64,
+    remaining_ms: u64,
+}
+
 pub struct NotifyExtension {
     visible: Vec<NotificationItem>,
     history: VecDeque<NotificationItem>,
     cached_spec: Option<SurfaceSpec>,
+    timers: HashMap<u32, TimerBookkeeping>,
+    hovered_card_id: Option<u32>,
+    expanded_groups: HashSet<String>,
+    now_override: Option<Instant>,
 }
 
 impl Default for NotifyExtension {
@@ -41,7 +53,15 @@ impl NotifyExtension {
             visible: Vec::new(),
             history: VecDeque::new(),
             cached_spec: None,
+            timers: HashMap::new(),
+            hovered_card_id: None,
+            expanded_groups: HashSet::new(),
+            now_override: None,
         }
+    }
+
+    fn current_time(&self) -> Instant {
+        self.now_override.unwrap_or_else(Instant::now)
     }
 
     pub fn visible_items(&self) -> &[NotificationItem] {
@@ -64,7 +84,14 @@ impl NotifyExtension {
 
     fn rebuild(&mut self, state: &mut AppState) {
         self.sync_counts(state);
-        self.cached_spec = build_notify_surface(state, &self.visible);
+        self.cached_spec = build_notify_surface(
+            state,
+            &self.visible,
+            &self.timers,
+            self.hovered_card_id,
+            &self.expanded_groups,
+            self.current_time(),
+        );
     }
 
     fn record_history(&mut self, item: &NotificationItem, limit: usize) {
@@ -82,7 +109,7 @@ impl NotifyExtension {
         }
     }
 
-    fn schedule_expiry(&self, item: &NotificationItem, ctx: &mut ShellContext) {
+    fn schedule_expiry(&mut self, item: &NotificationItem, ctx: &mut ShellContext) {
         let timer_id = Self::timer_id(item.id);
         let timeout_ms: Option<u64> = if item.expire_timeout_ms == 0 {
             None
@@ -102,13 +129,59 @@ impl NotifyExtension {
             }
         };
 
+        let now = self.current_time();
         match timeout_ms {
-            Some(after_ms) => ctx.push_action(ShellAction::ScheduleTimer {
-                id: timer_id,
-                after_ms,
-            }),
-            None => ctx.push_action(ShellAction::CancelTimer { id: timer_id }),
+            Some(after_ms) => {
+                self.timers.insert(
+                    item.id,
+                    TimerBookkeeping {
+                        started_at: now,
+                        total_ms: after_ms,
+                        remaining_ms: after_ms,
+                    },
+                );
+                if self.hovered_card_id != Some(item.id) {
+                    ctx.push_action(ShellAction::ScheduleTimer {
+                        id: timer_id,
+                        after_ms,
+                    });
+                }
+            }
+            None => {
+                self.timers.remove(&item.id);
+                ctx.push_action(ShellAction::CancelTimer { id: timer_id });
+            }
         }
+    }
+
+    fn pause_hover(&mut self, next_id: Option<u32>, ctx: &mut ShellContext) -> DirtyFlags {
+        if self.hovered_card_id == next_id {
+            return DirtyFlags::NONE;
+        }
+        let now = self.current_time();
+        if let Some(prev_id) = self.hovered_card_id.take() {
+            if let Some(tb) = self.timers.get_mut(&prev_id) {
+                if tb.remaining_ms > 0 {
+                    tb.started_at = now;
+                    ctx.push_action(ShellAction::ScheduleTimer {
+                        id: Self::timer_id(prev_id),
+                        after_ms: tb.remaining_ms.max(250),
+                    });
+                }
+            }
+        }
+        if let Some(id) = next_id {
+            if let Some(tb) = self.timers.get_mut(&id) {
+                let elapsed = now.saturating_duration_since(tb.started_at).as_millis() as u64;
+                tb.remaining_ms = tb.remaining_ms.saturating_sub(elapsed).max(250);
+                ctx.push_action(ShellAction::CancelTimer {
+                    id: Self::timer_id(id),
+                });
+            }
+            self.hovered_card_id = Some(id);
+        }
+        self.rebuild(ctx.state);
+        DirtyFlags::NOTIFY
     }
 
     fn handle_received(&mut self, item: &NotificationItem, ctx: &mut ShellContext) -> DirtyFlags {
@@ -194,6 +267,10 @@ impl NotifyExtension {
             return DirtyFlags::NONE;
         };
         let removed = self.visible.remove(pos);
+        self.timers.remove(&removed.id);
+        if self.hovered_card_id == Some(removed.id) {
+            self.hovered_card_id = None;
+        }
         ctx.push_action(ShellAction::CancelTimer {
             id: Self::timer_id(removed.id),
         });
@@ -220,6 +297,9 @@ impl NotifyExtension {
             });
         }
         self.history.clear();
+        self.timers.clear();
+        self.hovered_card_id = None;
+        self.expanded_groups.clear();
         ctx.state.unread_notifications = 0;
         self.rebuild(ctx.state);
         if had_any {
@@ -248,6 +328,31 @@ impl NotifyExtension {
         button: PointerButton,
         ctx: &mut ShellContext,
     ) -> DirtyFlags {
+        if let Some(app_key) = target_id.strip_prefix("notify:group:") {
+            match button {
+                PointerButton::Left => {
+                    if !self.expanded_groups.insert(app_key.to_string()) {
+                        self.expanded_groups.remove(app_key);
+                    }
+                    self.rebuild(ctx.state);
+                    return DirtyFlags::NOTIFY | DirtyFlags::LAYOUT;
+                }
+                PointerButton::Right => {
+                    let ids: Vec<u32> = self
+                        .visible
+                        .iter()
+                        .filter(|n| n.app_name == app_key)
+                        .map(|n| n.id)
+                        .collect();
+                    let mut dirty = DirtyFlags::NONE;
+                    for id in ids {
+                        dirty |= self.dismiss_by_id(id, REASON_DISMISSED, true, ctx);
+                    }
+                    return dirty;
+                }
+                PointerButton::Middle => return DirtyFlags::NONE,
+            }
+        }
         if let Some(rest) = target_id.strip_prefix("notify:action:") {
             let Some((id_str, action_key)) = rest.split_once(':') else {
                 return DirtyFlags::NONE;
@@ -331,6 +436,28 @@ impl KazeExtension for NotifyExtension {
                     }
                 }
                 DirtyFlags::NONE
+            }
+            SystemEvent::PointerEnter { surface_id, x, y }
+            | SystemEvent::PointerMotion { surface_id, x, y }
+                if surface_id == SURFACE_ID =>
+            {
+                let hovered = self.cached_spec.as_ref().and_then(|spec| {
+                    spec.hit_targets
+                        .iter()
+                        .find(|t| t.rect.contains(*x, *y))
+                        .and_then(|t| {
+                            t.id.strip_prefix("notify:card:")
+                                .or_else(|| {
+                                    t.id.strip_prefix("notify:action:")
+                                        .and_then(|r| r.split(':').next())
+                                })
+                                .and_then(|s| s.parse::<u32>().ok())
+                        })
+                });
+                self.pause_hover(hovered, ctx)
+            }
+            SystemEvent::PointerLeave { surface_id } if surface_id == SURFACE_ID => {
+                self.pause_hover(None, ctx)
             }
             SystemEvent::PointerClick {
                 surface_id,
@@ -464,7 +591,14 @@ fn estimate_lines(text: &str, inner_width: f32, font_size: f32, max_lines: u8) -
     (lines as u32).clamp(1, u32::from(max_lines))
 }
 
-fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Option<SurfaceSpec> {
+fn build_notify_surface(
+    state: &AppState,
+    visible: &[NotificationItem],
+    timers: &HashMap<u32, TimerBookkeeping>,
+    hovered_id: Option<u32>,
+    expanded_groups: &HashSet<String>,
+    now: Instant,
+) -> Option<SurfaceSpec> {
     if visible.is_empty() || !state.config.notifications.enabled {
         return None;
     }
@@ -481,6 +615,37 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
     let muted = colors.on_surface_variant_color();
     let outline_variant = colors.outline_variant_color();
     let surface_container = colors.surface_container_color();
+
+    let mut display_items: Vec<(NotificationItem, Option<(String, usize)>)> = Vec::new();
+    if cfg.group_by_app {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for item in visible {
+            if !item.app_name.is_empty() {
+                *counts.entry(item.app_name.clone()).or_insert(0) += 1;
+            }
+        }
+        let mut seen_groups: HashSet<String> = HashSet::new();
+        for item in visible {
+            let count = counts.get(&item.app_name).copied().unwrap_or(1);
+            if !item.app_name.is_empty() && count >= 2 && !expanded_groups.contains(&item.app_name)
+            {
+                if seen_groups.insert(item.app_name.clone()) {
+                    display_items.push((item.clone(), Some((item.app_name.clone(), count))));
+                }
+            } else {
+                display_items.push((item.clone(), None));
+            }
+        }
+    } else {
+        for item in visible {
+            display_items.push((item.clone(), None));
+        }
+    }
+
+    let is_bottom = cfg.position.starts_with("bottom");
+    if is_bottom == cfg.newest_on_edge {
+        display_items.reverse();
+    }
 
     let card_w = cfg.width.clamp(220, 640) as f32;
     let gap = cfg.gap.max(0) as f32;
@@ -502,11 +667,11 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
     let pad_bottom = border_w + 10.0;
     let content_w = (card_w - pad_left - pad_right).max(120.0);
 
-    let mut commands = Vec::with_capacity(visible.len() * 6);
-    let mut hit_targets = Vec::with_capacity(visible.len() * 2);
+    let mut commands = Vec::with_capacity(display_items.len() * 6);
+    let mut hit_targets = Vec::with_capacity(display_items.len() * 2);
     let mut cur_y = 0.0f32;
 
-    for (idx, item) in visible.iter().enumerate() {
+    for (idx, (item, group_info)) in display_items.iter().enumerate() {
         if idx > 0 {
             cur_y += gap;
         }
@@ -517,7 +682,9 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
             NotificationUrgency::Critical => (error_col, error_col),
         };
 
-        let show_meta = !item.app_name.is_empty() || item.urgency == NotificationUrgency::Critical;
+        let show_meta = !item.app_name.is_empty()
+            || item.urgency == NotificationUrgency::Critical
+            || group_info.is_some();
         let meta_h = if show_meta { 17.0f32 } else { 0.0 };
 
         let summary_text = if item.summary.trim().is_empty() {
@@ -547,7 +714,30 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
             30.0
         };
 
-        let mut inner_h = summary_h;
+        let bar_frac: Option<f32> = if cfg.show_progress_bar {
+            if let Some(val) = item.progress_value {
+                Some(f32::from(val.min(100)) / 100.0)
+            } else if let Some(tb) = timers.get(&item.id) {
+                let rem = if hovered_id == Some(item.id) {
+                    tb.remaining_ms
+                } else {
+                    let elapsed = now.saturating_duration_since(tb.started_at).as_millis() as u64;
+                    tb.remaining_ms.saturating_sub(elapsed)
+                };
+                if tb.total_ms > 0 {
+                    Some((rem as f32 / tb.total_ms as f32).clamp(0.0, 1.0))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let prog_h = if bar_frac.is_some() { 5.0 } else { 0.0 };
+
+        let mut inner_h = summary_h + prog_h;
         if show_meta {
             inner_h += meta_h + 2.0;
         }
@@ -561,7 +751,6 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
         let card_h = (pad_top + inner_h + pad_bottom).ceil();
         let card_rect = Rect::new(0.0, cur_y, card_w, card_h);
 
-        // Card background + urgency border
         commands.push(PaintCmd::RoundedRect {
             rect: card_rect,
             radius,
@@ -570,7 +759,6 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
             stroke_width: border_w,
         });
 
-        // Inner left urgency accent stripe
         commands.push(PaintCmd::RoundedRect {
             rect: Rect::new(
                 border_w,
@@ -587,8 +775,8 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
         let mut row_y = cur_y + pad_top;
 
         if show_meta {
-            let badge_w = if item.urgency == NotificationUrgency::Critical {
-                64.0f32
+            let badge_w = if item.urgency == NotificationUrgency::Critical || group_info.is_some() {
+                72.0f32
             } else {
                 0.0
             };
@@ -628,11 +816,27 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
                     bold: true,
                     align: TextAlign::Center,
                 });
+            } else if let Some((_, count)) = group_info {
+                let badge_rect = Rect::new(pad_left + content_w - badge_w, row_y, badge_w, 15.0);
+                commands.push(PaintCmd::RoundedRect {
+                    rect: badge_rect,
+                    radius: inner_r,
+                    fill: Some(surface_container),
+                    stroke: Some(primary),
+                    stroke_width: 1.0,
+                });
+                commands.push(PaintCmd::Text {
+                    rect: badge_rect,
+                    text: format!("+{} more", count - 1),
+                    color: primary,
+                    size: 9.5,
+                    bold: true,
+                    align: TextAlign::Center,
+                });
             }
             row_y += meta_h + 2.0;
         }
 
-        // Summary (RichText for Vietnamese HarfBuzz shaping + Color Emoji)
         commands.push(PaintCmd::RichText {
             rect: Rect::new(pad_left, row_y, content_w, summary_h),
             text: summary_text.to_string(),
@@ -644,7 +848,6 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
         });
         row_y += summary_h;
 
-        // Body
         if body_h > 0.0 {
             row_y += 4.0;
             commands.push(PaintCmd::RichText {
@@ -659,7 +862,6 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
             row_y += body_h;
         }
 
-        // Explicit action buttons (hit targets pushed BEFORE enclosing card target)
         if !visible_actions.is_empty() {
             row_y += 6.0;
             let btn_gap = 6.0f32;
@@ -692,11 +894,38 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
             }
         }
 
-        // Whole-card hit target (fallback when click wasn't on a specific action button)
-        hit_targets.push(HitTarget {
-            rect: card_rect,
-            id: format!("notify:card:{}", item.id),
-        });
+        if let Some(frac) = bar_frac {
+            let track_rect = Rect::new(pad_left, cur_y + card_h - pad_bottom + 2.0, content_w, 3.0);
+            commands.push(PaintCmd::RoundedRect {
+                rect: track_rect,
+                radius: 1.5,
+                fill: Some(surface_container),
+                stroke: None,
+                stroke_width: 0.0,
+            });
+            let fw = (content_w * frac).round();
+            if fw >= 1.0 {
+                commands.push(PaintCmd::RoundedRect {
+                    rect: Rect::new(track_rect.x, track_rect.y, fw, 3.0),
+                    radius: 1.5,
+                    fill: Some(accent_col),
+                    stroke: None,
+                    stroke_width: 0.0,
+                });
+            }
+        }
+
+        if let Some((ref app_name, _)) = group_info {
+            hit_targets.push(HitTarget {
+                rect: card_rect,
+                id: format!("notify:group:{app_name}"),
+            });
+        } else {
+            hit_targets.push(HitTarget {
+                rect: card_rect,
+                id: format!("notify:card:{}", item.id),
+            });
+        }
 
         cur_y += card_h;
     }
@@ -724,7 +953,7 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
         animating: false,
         input_regions: None,
         ime_cursor_rect: None,
-        track_pointer_motion: false,
+        track_pointer_motion: true,
     })
 }
 
@@ -935,5 +1164,101 @@ mod tests {
         assert_eq!(ext.history_items().len(), 5);
         assert_eq!(ext.history_items()[0].id, 12);
         assert_eq!(ext.history_items()[4].id, 8);
+    }
+
+    #[test]
+    fn group_by_app_newest_on_edge_progress_bar_and_hover_pause() {
+        use std::time::Duration;
+        let mut cfg = Config::default();
+        cfg.notifications.group_by_app = true;
+        cfg.notifications.position = "bottom_right".into();
+        cfg.notifications.newest_on_edge = true;
+        cfg.notifications.show_progress_bar = true;
+
+        let mut state = AppState::new(cfg);
+        let t0 = Instant::now();
+        let mut ext = NotifyExtension::new();
+        ext.now_override = Some(t0);
+
+        let mut n1 = sample_notif(1, NotificationUrgency::Normal, "First");
+        n1.app_name = "chat".into();
+        n1.progress_value = Some(40);
+        let mut n2 = sample_notif(2, NotificationUrgency::Normal, "Second");
+        n2.app_name = "chat".into();
+        let n3 = sample_notif(3, NotificationUrgency::Normal, "Latest other");
+
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_event(&SystemEvent::NotificationReceived(n1), &mut ctx);
+            ext.on_event(&SystemEvent::NotificationReceived(n2), &mut ctx);
+            ext.on_event(&SystemEvent::NotificationReceived(n3), &mut ctx);
+        }
+
+        // Grouped chat (+1 more) + n3 => 2 top-level cards, newest (n3) at bottom for bottom_right newest_on_edge
+        let spec = ext.surfaces();
+        let card_targets: Vec<&HitTarget> = spec[0]
+            .hit_targets
+            .iter()
+            .filter(|t| t.id.starts_with("notify:card:") || t.id.starts_with("notify:group:"))
+            .collect();
+        assert_eq!(card_targets.len(), 2);
+        assert_eq!(card_targets[0].id, "notify:group:chat");
+        assert_eq!(card_targets[1].id, "notify:card:3");
+
+        // Expand group on click -> renders 3 cards
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_event(
+                &SystemEvent::PointerClick {
+                    surface_id: SURFACE_ID.into(),
+                    target_id: "notify:group:chat".into(),
+                    button: PointerButton::Left,
+                },
+                &mut ctx,
+            );
+        }
+        assert_eq!(
+            ext.surfaces()[0]
+                .hit_targets
+                .iter()
+                .filter(|t| t.id.starts_with("notify:card:"))
+                .count(),
+            3
+        );
+
+        // Hover pauses timer and leave resumes with remaining duration
+        let card3_rect = ext.surfaces()[0]
+            .hit_targets
+            .iter()
+            .find(|t| t.id == "notify:card:3")
+            .expect("card 3")
+            .rect;
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.now_override = Some(t0 + Duration::from_millis(1200));
+            ext.on_event(
+                &SystemEvent::PointerEnter {
+                    surface_id: SURFACE_ID.into(),
+                    x: card3_rect.x + 10.0,
+                    y: card3_rect.y + 10.0,
+                },
+                &mut ctx,
+            );
+            assert!(ctx.actions.contains(&ShellAction::CancelTimer {
+                id: "notify:expire:3".into(),
+            }));
+            ctx.actions.clear();
+            ext.on_event(
+                &SystemEvent::PointerLeave {
+                    surface_id: SURFACE_ID.into(),
+                },
+                &mut ctx,
+            );
+            assert!(ctx.actions.iter().any(|a| matches!(
+                a,
+                ShellAction::ScheduleTimer { id, after_ms }
+                    if id == "notify:expire:3" && *after_ms <= 3800 && *after_ms >= 3700
+            )));
+        }
     }
 }

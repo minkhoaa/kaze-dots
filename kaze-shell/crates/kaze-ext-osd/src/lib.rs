@@ -13,6 +13,7 @@ const OSD_TIMER_ID: &str = "osd:hide";
 pub struct OsdExtension {
     active_kind: Option<OsdKind>,
     cached_spec: Option<SurfaceSpec>,
+    last_lock_bits: Option<(bool, bool, bool)>,
 }
 
 impl Default for OsdExtension {
@@ -26,6 +27,7 @@ impl OsdExtension {
         Self {
             active_kind: None,
             cached_spec: None,
+            last_lock_bits: None,
         }
     }
 
@@ -71,6 +73,39 @@ impl KazeExtension for OsdExtension {
             SystemEvent::BacklightChanged {
                 trigger_osd: true, ..
             } => self.show(OsdKind::Brightness, ctx),
+            SystemEvent::KeyboardLayoutChanged { raw_name, .. } => {
+                if ctx.state.config.osd.show_keyboard_layout && !raw_name.trim().is_empty() {
+                    self.show(OsdKind::KeyboardLayout, ctx)
+                } else {
+                    DirtyFlags::NONE
+                }
+            }
+            SystemEvent::LockKeysChanged {
+                caps_lock,
+                num_lock,
+                scroll_lock,
+            } => {
+                self.last_lock_bits = Some((*caps_lock, *num_lock, *scroll_lock));
+                if ctx.state.config.osd.show_lock_keys {
+                    self.show(OsdKind::LockKeys, ctx)
+                } else {
+                    DirtyFlags::NONE
+                }
+            }
+            SystemEvent::ModifiersChanged {
+                caps_lock,
+                num_lock,
+                scroll_lock,
+                ..
+            } => {
+                let bits = (*caps_lock, *num_lock, *scroll_lock);
+                let prev = self.last_lock_bits.replace(bits);
+                if ctx.state.config.osd.show_lock_keys && prev.is_some_and(|p| p != bits) {
+                    self.show(OsdKind::LockKeys, ctx)
+                } else {
+                    DirtyFlags::NONE
+                }
+            }
             SystemEvent::TimerFired { id } if id == OSD_TIMER_ID => self.hide(ctx),
             SystemEvent::ConfigReloaded
             | SystemEvent::ThemeChanged(_)
@@ -109,6 +144,7 @@ impl KazeExtension for OsdExtension {
 
 fn resolve_osd_anchor(position: &str, ox: i32, oy: i32) -> (Anchor, EdgeInsets) {
     match position {
+        "center" => (Anchor::empty(), EdgeInsets::default()),
         "top_left" => (
             Anchor::TOP | Anchor::LEFT,
             EdgeInsets {
@@ -337,5 +373,50 @@ mod tests {
             assert!(dirty.contains(DirtyFlags::OSD));
         }
         assert!(ext.surfaces().is_empty());
+    }
+
+    #[test]
+    fn osd_center_keyboard_layout_and_lock_keys_work() {
+        let mut cfg = Config::default();
+        cfg.osd.position = "center".into();
+        let mut state = AppState::new(cfg);
+        state.keyboard.layout_raw = "bamboo".into();
+        state.keyboard.layout_label = "VI".into();
+
+        let mut ext = OsdExtension::new();
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            let dirty = ext.on_event(
+                &SystemEvent::KeyboardLayoutChanged {
+                    raw_name: "bamboo".into(),
+                    source: "fcitx5".into(),
+                },
+                &mut ctx,
+            );
+            assert!(dirty.contains(DirtyFlags::OSD));
+        }
+        let spec = ext.surfaces();
+        assert_eq!(spec[0].anchor, Anchor::empty());
+        assert!(spec[0]
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCmd::Text { text, .. } if text == "VI")));
+
+        state.keyboard.caps_lock = true;
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_event(
+                &SystemEvent::LockKeysChanged {
+                    caps_lock: true,
+                    num_lock: false,
+                    scroll_lock: false,
+                },
+                &mut ctx,
+            );
+        }
+        assert!(ext.surfaces()[0]
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCmd::Text { text, .. } if text == "CAPS")));
     }
 }
