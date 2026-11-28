@@ -259,6 +259,20 @@ impl UiState {
         self.gamma_manager.is_some()
     }
 
+    /// Ensures `zwp_text_input_v3` is bound for the active seat even if `wl_seat`
+    /// was already present in the initial registry snapshot before `SeatHandler::new_seat`.
+    pub fn ensure_text_input(&mut self) {
+        if self.text_input.is_some() {
+            return;
+        }
+        let Some(ref mgr) = self.text_input_manager else {
+            return;
+        };
+        if let Some(seat) = self.seat_state.seats().next() {
+            self.text_input = Some(mgr.get_text_input(&seat, &self.qh, ()));
+        }
+    }
+
     pub fn wallpaper_count(&self) -> usize {
         self.wallpapers.len()
     }
@@ -493,10 +507,19 @@ impl UiState {
                 }
 
                 if geom_changed {
+                    let layer_geom_changed = existing.spec.layer != spec.layer
+                        || existing.spec.keyboard_interactivity != spec.keyboard_interactivity
+                        || existing.spec.anchor != spec.anchor
+                        || existing.spec.exclusive_zone != spec.exclusive_zone
+                        || existing.spec.width != spec.width
+                        || existing.spec.height != spec.height
+                        || existing.spec.margin != spec.margin;
                     let size_changed =
                         existing.spec.width != spec.width || existing.spec.height != spec.height;
                     let input_changed = existing.spec.input_regions != spec.input_regions;
-                    apply_layer_geometry(&existing.layer, &spec);
+                    if layer_geom_changed {
+                        apply_layer_geometry(&existing.layer, &spec);
+                    }
                     if input_changed {
                         apply_input_regions(
                             &self.compositor_state,
@@ -510,7 +533,9 @@ impl UiState {
                         // Wait for compositor configure before attaching a resized buffer.
                         existing.configured = false;
                     }
-                    existing.layer.commit();
+                    if layer_geom_changed {
+                        existing.layer.commit();
+                    }
                 } else if content_changed || force_redraw || spec.animating {
                     existing.spec = spec;
                     existing.dirty = true;
@@ -620,6 +645,8 @@ impl UiState {
             }
             // Dropping `surface` destroys `LayerSurface`, `wl_surface`, and `SlotPool` (munmaps SHM).
             drop(surface);
+            self.renderer.trim_caches();
+            trim_glibc_heap();
         }
     }
 
@@ -637,6 +664,8 @@ impl UiState {
         for id in matching {
             self.remove_surface(&id);
         }
+        self.renderer.trim_caches();
+        trim_glibc_heap();
     }
 
     fn draw_surface(&mut self, id: &str) {
@@ -740,6 +769,7 @@ impl UiState {
         if let Some(ref ti) = self.text_input {
             ti.enable();
             ti.set_content_type(ContentHint::None, ContentPurpose::Normal);
+            ti.set_cursor_rectangle(120, 14, 2, 20);
             ti.commit();
         }
     }
@@ -908,6 +938,7 @@ impl CompositorHandler for UiState {
                 self.anim_clock.stop(&id);
                 if should_redraw {
                     self.draw_surface(&id);
+                    let _ = _conn.flush();
                 }
             }
         }
@@ -1089,6 +1120,7 @@ impl LayerShellHandler for UiState {
         };
         if should_draw {
             self.draw_surface(&id);
+            let _ = _conn.flush();
         }
     }
 }
@@ -1104,21 +1136,28 @@ impl SeatHandler for UiState {
         &mut self.seat_state
     }
 
-    fn new_seat(&mut self, _conn: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat) {
+    fn new_seat(&mut self, conn: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat) {
         if self.text_input.is_none() {
             if let Some(ref mgr) = self.text_input_manager {
                 self.text_input = Some(mgr.get_text_input(&seat, qh, ()));
+                let _ = conn.flush();
             }
         }
     }
 
     fn new_capability(
         &mut self,
-        _conn: &Connection,
+        conn: &Connection,
         qh: &QueueHandle<Self>,
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
+        if self.text_input.is_none() {
+            if let Some(ref mgr) = self.text_input_manager {
+                self.text_input = Some(mgr.get_text_input(&seat, qh, ()));
+                let _ = conn.flush();
+            }
+        }
         if capability == Capability::Pointer && self.pointer.is_none() {
             if let Ok(pointer) = self.seat_state.get_pointer(qh, &seat) {
                 self.pointer = Some(pointer);
@@ -1164,24 +1203,42 @@ impl SeatHandler for UiState {
 impl KeyboardHandler for UiState {
     fn enter(
         &mut self,
-        _conn: &Connection,
+        conn: &Connection,
         _qh: &QueueHandle<Self>,
         _keyboard: &wl_keyboard::WlKeyboard,
         surface: &wl_surface::WlSurface,
         _serial: u32,
         _raw: &[u32],
-        _keysyms: &[Keysym],
+        keysyms: &[Keysym],
     ) {
         let obj_id = surface.id();
         self.keyboard_surface = Some(obj_id.clone());
-        if self.surface_accepts_keyboard(&obj_id) {
+        let accepts_kb = self.surface_accepts_keyboard(&obj_id);
+        // Only enable zwp_text_input_v3 once the compositor has sent text_input.enter on this surface.
+        if self.ime_surface.as_ref() == Some(&obj_id) && accepts_kb {
             self.enable_ime();
+            let _ = conn.flush();
+        }
+        // If Escape was pressed in the brief window before the compositor sent wl_keyboard.enter,
+        // Wayland delivers it in `enter.keysyms` rather than a separate press_key event.
+        if accepts_kb && keysyms.contains(&Keysym::Escape) {
+            if let Some(surface_id) = self.surface_key_by_obj.get(&obj_id).cloned() {
+                self.pending_events.push(SystemEvent::KeyInput {
+                    surface_id,
+                    key: CoreKeyEvent {
+                        keysym: Keysym::Escape.raw(),
+                        utf8: None,
+                        modifiers: self.modifiers,
+                        pressed: true,
+                    },
+                });
+            }
         }
     }
 
     fn leave(
         &mut self,
-        _conn: &Connection,
+        conn: &Connection,
         _qh: &QueueHandle<Self>,
         _keyboard: &wl_keyboard::WlKeyboard,
         surface: &wl_surface::WlSurface,
@@ -1191,6 +1248,7 @@ impl KeyboardHandler for UiState {
         if self.keyboard_surface.as_ref() == Some(&obj_id) {
             self.keyboard_surface = None;
             self.disable_ime();
+            let _ = conn.flush();
             if self.surface_accepts_keyboard(&obj_id) {
                 if let Some(surface_id) = self.surface_key_by_obj.get(&obj_id).cloned() {
                     self.pending_events
@@ -1513,7 +1571,7 @@ impl Dispatch<ZwpTextInputV3, ()> for UiState {
         _proxy: &ZwpTextInputV3,
         event: zwp_text_input_v3::Event,
         _data: &(),
-        _conn: &Connection,
+        conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
         match event {
@@ -1522,6 +1580,7 @@ impl Dispatch<ZwpTextInputV3, ()> for UiState {
                 state.ime_surface = Some(obj_id.clone());
                 if state.surface_accepts_keyboard(&obj_id) {
                     state.enable_ime();
+                    let _ = conn.flush();
                 }
             }
             zwp_text_input_v3::Event::Leave { surface } => {
@@ -1529,6 +1588,7 @@ impl Dispatch<ZwpTextInputV3, ()> for UiState {
                     state.ime_surface = None;
                     state.ime_pending = PendingIme::default();
                     state.disable_ime();
+                    let _ = conn.flush();
                 }
             }
             zwp_text_input_v3::Event::PreeditString {
@@ -1562,6 +1622,7 @@ impl Dispatch<ZwpTextInputV3, ()> for UiState {
                         ime: ImeEvent::DeleteSurrounding { before, after },
                     });
                 }
+                let had_commit = pending.commit.is_some();
                 if let Some(text) = pending.commit {
                     state.pending_events.push(SystemEvent::ImeInput {
                         surface_id: surface_id.clone(),
@@ -1575,6 +1636,16 @@ impl Dispatch<ZwpTextInputV3, ()> for UiState {
                             text,
                             cursor_begin,
                             cursor_end,
+                        },
+                    });
+                } else if !had_commit {
+                    // Per zwp_text_input_v3 spec, omitted preedit_string before done clears preedit.
+                    state.pending_events.push(SystemEvent::ImeInput {
+                        surface_id,
+                        ime: ImeEvent::Preedit {
+                            text: String::new(),
+                            cursor_begin: 0,
+                            cursor_end: 0,
                         },
                     });
                 }

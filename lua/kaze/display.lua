@@ -65,6 +65,9 @@ function M.is_virtual_monitor(name, mon)
         if type(mon.hardwareDetails) == "table" and mon.hardwareDetails.backend == "headless" then
             return true
         end
+        if type(mon.description) == "string" and mon.description:lower():find("headless", 1, true) ~= nil then
+            return true
+        end
     end
     return false
 end
@@ -113,7 +116,11 @@ function M.parse_monitors(json_str)
                 active_workspace = active_ws,
                 active_workspace_name = active_ws_name,
                 backend = backend,
-                virtual = M.is_virtual_monitor(m.name, { backend = backend, hardwareDetails = m.hardwareDetails }),
+                virtual = M.is_virtual_monitor(m.name, {
+                    backend = backend,
+                    description = m.description,
+                    hardwareDetails = m.hardwareDetails,
+                }),
             }
         end
     end
@@ -666,13 +673,13 @@ end
 -- Safety rules
 
 function M.should_ignore_hotplug(mon_name, ctx)
-    if type(mon_name) ~= "string" or mon_name == "" or M.is_virtual_monitor(mon_name) then
+    ctx = type(ctx) == "table" and ctx or {}
+    if type(mon_name) ~= "string" or mon_name == "" or M.is_virtual_monitor(mon_name, ctx.monitor) then
         return true, "virtual"
     end
     if is_internal_name(mon_name) then
         return true, "internal"
     end
-    ctx = type(ctx) == "table" and ctx or {}
     if ctx.enabled == false then
         return true, "disabled"
     end

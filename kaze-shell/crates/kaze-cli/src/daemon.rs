@@ -17,7 +17,9 @@ use kaze_ext_launcher::{desktop as launcher_desktop, LauncherExtension};
 use kaze_ext_notify::NotifyExtension;
 use kaze_ext_osd::OsdExtension;
 use kaze_ext_tray::TrayExtension;
-use kaze_ext_wallpaper::{load_wallpaper_job, WallpaperExtension};
+use kaze_ext_wallpaper::{
+    expand_tilde, load_wallpaper_job, validate_wallpaper_file, WallpaperExtension,
+};
 use kaze_hypr::{HyprClient, HyprEvent, ReconnectBackoff};
 use kaze_ipc::{default_socket_path, IpcRequest, IpcResponder, IpcResponse, IpcServer};
 use kaze_sys::{backlight, SysCommand, SysHandle};
@@ -29,6 +31,7 @@ use std::fs;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 enum WatchNotice {
@@ -55,9 +58,12 @@ struct Daemon {
     config_reload_armed: bool,
     timers: HashMap<String, RegistrationToken>,
     pending_dmenu: Option<IpcResponder>,
+    pending_wallpaper_set: Option<IpcResponder>,
     event_tx: channel::Sender<SystemEvent>,
     sys: Option<SysHandle>,
-    _fs_watcher: Option<RecommendedWatcher>,
+    fs_watcher: Option<RecommendedWatcher>,
+    watched_symlink_dir: Option<PathBuf>,
+    watched_config_target: Arc<Mutex<Option<PathBuf>>>,
     children: Vec<Child>,
 }
 
@@ -95,11 +101,20 @@ impl Daemon {
                     }
                     wallpaper_updated_palette = true;
                 }
+                if let Some(resp) = self.pending_wallpaper_set.take() {
+                    resp.send(&IpcResponse::ok(path.display().to_string()));
+                }
                 SystemEvent::WallpaperReady {
                     path,
                     palette: None,
                     buffers: uploaded_meta,
                 }
+            }
+            SystemEvent::WallpaperFailed { error } => {
+                if let Some(resp) = self.pending_wallpaper_set.take() {
+                    resp.send(&IpcResponse::err(error.clone()));
+                }
+                SystemEvent::WallpaperFailed { error }
             }
             other => other,
         };
@@ -194,6 +209,9 @@ impl Daemon {
             SystemEvent::CaffeineChanged(enabled) => {
                 self.state.caffeine_enabled = *enabled;
             }
+            SystemEvent::ControlCenterChanged(open) => {
+                self.state.cc_open = *open;
+            }
             SystemEvent::TrayBusStatus { owned } => {
                 self.state.tray_bus_owned = *owned;
             }
@@ -216,12 +234,14 @@ impl Daemon {
             | SystemEvent::NotificationsCountChanged(_)
             | SystemEvent::TrayMenuLoaded(_)
             | SystemEvent::WallpaperReady { .. }
+            | SystemEvent::WallpaperFailed { .. }
             | SystemEvent::SurfaceClosed { .. }
             | SystemEvent::KeyboardFocusLost { .. }
             | SystemEvent::ApplicationsChanged => {}
         }
 
         let prev_unread = self.state.unread_notifications;
+        let prev_cc_open = self.state.cc_open;
         let mut dirty = DirtyFlags::NONE;
         let mut actions = Vec::new();
         {
@@ -239,6 +259,12 @@ impl Daemon {
         }
         if wallpaper_updated_palette {
             self.dispatch_system_event(SystemEvent::ThemeChanged(self.state.theme_mode));
+        }
+
+        if !matches!(event, SystemEvent::ControlCenterChanged(_))
+            && self.state.cc_open != prev_cc_open
+        {
+            self.dispatch_system_event(SystemEvent::ControlCenterChanged(self.state.cc_open));
         }
 
         if !matches!(event, SystemEvent::NotificationsCountChanged(_))
@@ -444,6 +470,7 @@ impl Daemon {
                                 }
                                 Err(err) => {
                                     eprintln!("kaze-shell: wallpaper load failed: {err}");
+                                    let _ = tx.send(SystemEvent::WallpaperFailed { error: err });
                                 }
                             }
                             #[cfg(target_env = "gnu")]
@@ -630,10 +657,14 @@ impl Daemon {
     fn apply_caffeine(&mut self, enabled: bool) {
         let _ = self.ui.set_caffeine(enabled);
         let _ = self.wayland_conn.flush();
+        if let Some(ref sys) = self.sys {
+            sys.send(SysCommand::SetCaffeineInhibit(enabled));
+        }
         self.dispatch_system_event(SystemEvent::CaffeineChanged(enabled));
     }
 
     fn invoke_extension_ipc(&mut self, cmd: &str, args: &[String]) {
+        let prev_cc_open = self.state.cc_open;
         let mut dirty = DirtyFlags::NONE;
         let mut actions = Vec::new();
         {
@@ -652,6 +683,9 @@ impl Daemon {
         self.execute_actions(actions);
         if !dirty.is_empty() {
             self.sync_ui_surfaces(dirty);
+        }
+        if self.state.cc_open != prev_cc_open {
+            self.dispatch_system_event(SystemEvent::ControlCenterChanged(self.state.cc_open));
         }
     }
 
@@ -715,6 +749,40 @@ impl Daemon {
                     resp.send(&IpcResponse::err("launcher unavailable"));
                 }
             }
+            return;
+        }
+
+        if req.cmd == "wallpaper-set" {
+            let Some(raw) = req.args.first() else {
+                responder.send(&IpcResponse::err("usage: wallpaper-set <path>"));
+                return;
+            };
+            let path = expand_tilde(raw);
+            if let Err(err) = validate_wallpaper_file(&path) {
+                responder.send(&IpcResponse::err(err));
+                return;
+            }
+            let outputs: Vec<(String, u32, u32)> = self
+                .state
+                .outputs
+                .values()
+                .filter(|o| o.name != "kaze-share" && o.width > 0 && o.height > 0)
+                .map(|o| (o.name.clone(), o.width as u32, o.height as u32))
+                .collect();
+            if outputs.is_empty() {
+                self.state.wallpaper_path = Some(path.clone());
+                responder.send(&IpcResponse::ok(format!("queued {}", path.display())));
+                return;
+            }
+            if let Some(prev) = self.pending_wallpaper_set.take() {
+                prev.send(&IpcResponse::err("superseded by newer wallpaper-set"));
+            }
+            self.pending_wallpaper_set = Some(responder);
+            self.execute_actions(vec![ShellAction::RequestWallpaperLoad {
+                path,
+                outputs,
+                extract_palette: self.state.config.wallpaper.dynamic_palette,
+            }]);
             return;
         }
 
@@ -911,7 +979,7 @@ impl Daemon {
                     "nightlight_enabled": self.state.nightlight_enabled,
                     "nightlight_temp_k": self.state.nightlight_temp_k,
                     "caffeine_enabled": self.state.caffeine_enabled,
-                    "has_idle_inhibit": self.ui.has_idle_inhibit(),
+                    "wayland_idle_protocol": self.ui.has_idle_inhibit(),
                     "has_gamma_control": self.ui.has_gamma_control(),
                     "tray_bus_owned": self.state.tray_bus_owned,
                     "tray_items_count": self.state.tray_items.len(),
@@ -937,6 +1005,7 @@ impl Daemon {
                 IpcResponse::ok_data("ok", data)
             }
             _ => {
+                let prev_cc_open = self.state.cc_open;
                 let mut handled_resp: Option<IpcResponse> = None;
                 let mut dirty = DirtyFlags::NONE;
                 let mut actions = Vec::new();
@@ -965,6 +1034,11 @@ impl Daemon {
                 self.execute_actions(actions);
                 if !dirty.is_empty() {
                     self.sync_ui_surfaces(dirty);
+                }
+                if self.state.cc_open != prev_cc_open {
+                    self.dispatch_system_event(SystemEvent::ControlCenterChanged(
+                        self.state.cc_open,
+                    ));
                 }
                 handled_resp
                     .unwrap_or_else(|| IpcResponse::err(format!("unknown command '{}'", req.cmd)))
@@ -1136,6 +1210,36 @@ impl Daemon {
         }
     }
 
+    fn sync_config_symlink_watch(&mut self) {
+        let resolved = fs::canonicalize(&self.config_path).ok();
+        let config_parent = self
+            .config_path
+            .parent()
+            .and_then(|p| fs::canonicalize(p).ok().or_else(|| Some(p.to_path_buf())));
+        let new_target = resolved.filter(|p| p != &self.config_path);
+        let new_dir = new_target
+            .as_ref()
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+            .filter(|dir| config_parent.as_ref() != Some(dir));
+
+        if let Ok(mut guard) = self.watched_config_target.lock() {
+            *guard = new_target;
+        }
+
+        if self.watched_symlink_dir != new_dir {
+            if let Some(ref mut watcher) = self.fs_watcher {
+                if let Some(old_dir) = self.watched_symlink_dir.take() {
+                    let _ = watcher.unwatch(&old_dir);
+                }
+                if let Some(ref dir) = new_dir {
+                    if watcher.watch(dir, RecursiveMode::NonRecursive).is_ok() {
+                        self.watched_symlink_dir = Some(dir.clone());
+                    }
+                }
+            }
+        }
+    }
+
     fn schedule_config_reload(&mut self) {
         if self.config_reload_armed {
             return;
@@ -1178,6 +1282,21 @@ fn parse_step(args: &[String], default: i32) -> i32 {
 }
 
 pub fn run(config_path: PathBuf) -> Result<(), String> {
+    // Keep glibc M_MMAP_THRESHOLD fixed at 128 KiB so transient Pixmap/wallpaper buffers
+    // munmap straight back to Linux on drop instead of inflating the brk heap arena.
+    #[cfg(target_env = "gnu")]
+    // SAFETY: standard glibc mallopt configuration before spawning worker threads.
+    unsafe {
+        libc::mallopt(libc::M_MMAP_THRESHOLD, 128 * 1024);
+        libc::mallopt(libc::M_TRIM_THRESHOLD, 128 * 1024);
+    }
+
+    // Block SIGTERM/SIGINT/SIGCHLD on the main thread BEFORE spawning any worker threads
+    // (`notify`, `kaze-sys`) so every child thread inherits the signal mask and shutdown
+    // routes deterministically through `calloop::signals::Signals` with exit code 0.
+    let signals = Signals::new(&[Signal::SIGTERM, Signal::SIGINT, Signal::SIGCHLD])
+        .map_err(|e| format!("failed registering signal handler: {e}"))?;
+
     let config = match Config::load_from_path(&config_path) {
         Ok(cfg) => cfg,
         Err(err) => {
@@ -1193,6 +1312,8 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     event_queue
         .roundtrip(&mut ui)
         .map_err(|e| format!("second Wayland roundtrip failed: {e}"))?;
+    ui.ensure_text_input();
+    let _ = wayland_conn.flush();
 
     let initial_events = ui.drain_events();
 
@@ -1204,12 +1325,19 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     let loop_handle = event_loop.handle();
     let loop_signal = event_loop.get_signal();
 
-    // Shared single-thread `notify` watcher for `config.toml`, `/sys/class/backlight/*`,
-    // and `.desktop` application directories (1 thread total).
+    // Shared single-thread `notify` watcher for `config.toml` (+ symlink target),
+    // `/sys/class/backlight/*`, and `.desktop` application directories (1 thread total).
     let backlight_dir = backlight::discover_device();
     let app_dirs = launcher_desktop::existing_watch_dirs();
     let (fs_tx, fs_rx) = channel::channel::<WatchNotice>();
-    let fs_watcher = start_shared_watcher(&config_path, backlight_dir.as_deref(), &app_dirs, fs_tx);
+    let watched_config_target: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
+    let fs_watcher = start_shared_watcher(
+        &config_path,
+        backlight_dir.as_deref(),
+        &app_dirs,
+        fs_tx,
+        Arc::clone(&watched_config_target),
+    );
 
     // Single background `tokio` current_thread runtime for D-Bus + native pipewire-pulse (1 thread).
     let (sys_tx, sys_rx) = channel::channel::<SystemEvent>();
@@ -1269,15 +1397,17 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         config_reload_armed: false,
         timers: HashMap::new(),
         pending_dmenu: None,
+        pending_wallpaper_set: None,
         event_tx,
         sys: sys_handle,
-        _fs_watcher: fs_watcher,
+        fs_watcher,
+        watched_symlink_dir: None,
+        watched_config_target,
         children: Vec::new(),
     };
+    daemon.sync_config_symlink_watch();
 
     // 1. Signals: clean shutdown on SIGTERM/SIGINT + child reaping on SIGCHLD (0 zombies).
-    let signals = Signals::new(&[Signal::SIGTERM, Signal::SIGINT, Signal::SIGCHLD])
-        .map_err(|e| format!("failed registering signal handler: {e}"))?;
     loop_handle
         .insert_source(signals, |event, _, daemon| match event.signal() {
             Signal::SIGTERM | Signal::SIGINT => {
@@ -1299,6 +1429,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
             for ev in events {
                 daemon.dispatch_system_event(ev);
             }
+            let _ = daemon.wayland_conn.flush();
             Ok(dispatched)
         })
         .map_err(|e| format!("failed inserting Wayland source: {e}"))?;
@@ -1317,7 +1448,10 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         .insert_source(fs_rx, |ev, _, daemon| {
             if let channel::Event::Msg(notice) = ev {
                 match notice {
-                    WatchNotice::Config => daemon.schedule_config_reload(),
+                    WatchNotice::Config => {
+                        daemon.sync_config_symlink_watch();
+                        daemon.schedule_config_reload();
+                    }
                     WatchNotice::Backlight => daemon.handle_backlight_fs_event(),
                     WatchNotice::Applications => {
                         daemon.dispatch_system_event(SystemEvent::ApplicationsChanged);
@@ -1372,6 +1506,7 @@ fn start_shared_watcher(
     backlight_dir: Option<&Path>,
     app_dirs: &[PathBuf],
     tx: channel::Sender<WatchNotice>,
+    watched_config_target: Arc<Mutex<Option<PathBuf>>>,
 ) -> Option<RecommendedWatcher> {
     let config_parent = config_path.parent().map(Path::to_path_buf);
     if let Some(ref parent) = config_parent {
@@ -1379,6 +1514,7 @@ fn start_shared_watcher(
     }
 
     let config_name = config_path.file_name().map(|n| n.to_os_string());
+    let config_parent_for_cb = config_parent.clone();
     let bl_dir_owned = backlight_dir.map(Path::to_path_buf);
     let app_dirs_owned: Vec<PathBuf> = app_dirs.to_vec();
 
@@ -1394,12 +1530,21 @@ fn start_shared_watcher(
             if !relevant_kind {
                 return;
             }
+            let symlink_target = watched_config_target.lock().ok().and_then(|g| g.clone());
             for path in &ev.paths {
-                if let Some(ref expected) = config_name {
-                    if path.file_name().is_some_and(|n| n == expected.as_os_str()) {
-                        let _ = tx.send(WatchNotice::Config);
-                        continue;
-                    }
+                let matches_config = config_name.as_ref().is_some_and(|expected| {
+                    path.file_name().is_some_and(|n| n == expected.as_os_str())
+                        && config_parent_for_cb
+                            .as_ref()
+                            .is_none_or(|p| path.parent() == Some(p.as_path()))
+                }) || symlink_target.as_ref().is_some_and(|target| {
+                    path == target
+                        || path.file_name() == target.file_name()
+                            && path.parent() == target.parent()
+                });
+                if matches_config {
+                    let _ = tx.send(WatchNotice::Config);
+                    continue;
                 }
                 if let Some(ref bl) = bl_dir_owned {
                     if path.starts_with(bl)

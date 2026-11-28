@@ -23,6 +23,7 @@ hl.on("monitor.added", function(mon)
     local now = os.time()
     local cfg = ctx.cfg or {}
     if display.should_ignore_hotplug(name, {
+        monitor = mon,
         now = now,
         started_at = _G._kaze_boot_at,
         last_event_at = last_added_at,
@@ -36,7 +37,7 @@ end)
 
 hl.on("monitor.removed", function(mon)
     local name = mon and mon.name
-    if not name or name == "" or display.is_virtual_monitor(name) then
+    if not name or name == "" or display.is_virtual_monitor(name, mon) then
         return
     end
     hl.exec_cmd(display_cli .. " --on-disconnect " .. fs.shell_quote(name))

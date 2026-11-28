@@ -26,6 +26,7 @@ pub enum SysCommand {
     MediaCommand(String),
     WifiToggle,
     BluetoothToggle,
+    SetCaffeineInhibit(bool),
     SystemPower(String),
     NotifyClosed {
         id: u32,
@@ -151,6 +152,7 @@ fn run_sys_thread(
         let sni_task = sess_conn
             .clone()
             .map(|c| tokio::spawn(dbus_sni::run_sni_task(c, event_tx.clone(), tray_cmd_rx)));
+        let mut caffeine_inhibit_fd: Option<zbus::zvariant::OwnedFd> = None;
 
         while let Some(cmd) = cmd_rx.recv().await {
             match cmd {
@@ -190,6 +192,17 @@ fn run_sys_thread(
                 }
                 SysCommand::BluetoothToggle => {
                     let _ = bluez_cmd_tx.send(());
+                }
+                SysCommand::SetCaffeineInhibit(enabled) => {
+                    if !enabled {
+                        caffeine_inhibit_fd = None;
+                    } else if caffeine_inhibit_fd.is_none() {
+                        if let Some(ref c) = sys_conn {
+                            caffeine_inhibit_fd = dbus_logind::acquire_idle_inhibit(c).await;
+                        } else if let Ok(c) = zbus::Connection::system().await {
+                            caffeine_inhibit_fd = dbus_logind::acquire_idle_inhibit(&c).await;
+                        }
+                    }
                 }
                 SysCommand::SystemPower(action) => {
                     let conn_opt = sys_conn.clone();

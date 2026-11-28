@@ -1,7 +1,7 @@
 #![deny(clippy::unwrap_used)]
 
 use image::imageops::FilterType;
-use image::DynamicImage;
+use image::{DynamicImage, ImageReader};
 use kaze_core::theme::{PaletteColors, ResolvedPalette, TerminalColors};
 use kaze_core::{
     AppState, Color, DirtyFlags, IpcResult, KazeExtension, ShellAction, ShellContext, SurfaceSpec,
@@ -138,6 +138,13 @@ impl KazeExtension for WallpaperExtension {
                         dirty: DirtyFlags::NONE,
                     };
                 }
+                if let Err(err) = validate_wallpaper_file(&path) {
+                    return IpcResult::Handled {
+                        ok: false,
+                        message: err,
+                        dirty: DirtyFlags::NONE,
+                    };
+                }
                 let outputs = Self::collect_target_outputs(ctx.state);
                 if outputs.is_empty() {
                     ctx.state.wallpaper_path = Some(path.clone());
@@ -147,7 +154,6 @@ impl KazeExtension for WallpaperExtension {
                         dirty: DirtyFlags::NONE,
                     };
                 }
-                ctx.state.wallpaper_path = Some(path.clone());
                 ctx.push_action(ShellAction::RequestWallpaperLoad {
                     path: path.clone(),
                     outputs,
@@ -237,13 +243,32 @@ impl KazeExtension for WallpaperExtension {
     }
 }
 
-fn expand_tilde(raw: &str) -> PathBuf {
+pub fn expand_tilde(raw: &str) -> PathBuf {
     if let Some(rest) = raw.strip_prefix("~/") {
         if let Some(home) = env::var_os("HOME") {
             return PathBuf::from(home).join(rest);
         }
     }
     PathBuf::from(raw)
+}
+
+/// Fast header/format validation so corrupt or unsupported images are rejected immediately
+/// without overwriting the active wallpaper.
+pub fn validate_wallpaper_file(path: &Path) -> Result<(), String> {
+    if !path.is_file() {
+        return Err(format!("wallpaper file not found: {}", path.display()));
+    }
+    let reader = ImageReader::open(path)
+        .map_err(|e| format!("failed opening {}: {e}", path.display()))?
+        .with_guessed_format()
+        .map_err(|e| format!("failed inspecting {}: {e}", path.display()))?;
+    let (w, h) = reader
+        .into_dimensions()
+        .map_err(|e| format!("invalid image {}: {e}", path.display()))?;
+    if w == 0 || h == 0 {
+        return Err(format!("invalid empty image: {}", path.display()));
+    }
+    Ok(())
 }
 
 pub fn default_wallpaper_dir() -> Option<PathBuf> {
@@ -865,6 +890,29 @@ mod tests {
             ));
         }
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_wallpaper_returns_error_and_preserves_existing_path() {
+        let dir = std::env::temp_dir().join(format!("kaze-wp-corrupt-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let good = dir.join("good.png");
+        let bad = dir.join("corrupt.png");
+        sample_gradient_image().save(&good).expect("save good");
+        fs::write(&bad, b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRbroken").expect("write bad");
+
+        let mut state = AppState::new(Config::default());
+        state.wallpaper_path = Some(good.clone());
+        let mut ext = WallpaperExtension::new();
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            let res = ext.on_ipc("wallpaper-set", &[bad.display().to_string()], &mut ctx);
+            assert!(matches!(res, IpcResult::Handled { ok: false, .. }));
+            assert!(ctx.actions.is_empty());
+        }
+        assert_eq!(state.wallpaper_path.as_ref(), Some(&good));
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -15,6 +15,7 @@ const TIMER_OSD_EXPIRE: &str = "island:osd-expire";
 const TIMER_NOTIFY_EXPIRE: &str = "island:notify-expire";
 const TIMER_RECORD_TICK: &str = "island:record-tick";
 const TIMER_MEDIA_TICK: &str = "island:media-tick";
+const TIMER_AUTO_COLLAPSE: &str = "island:auto-collapse";
 
 const ANIM_CANVAS_W: u32 = 448;
 const ANIM_CANVAS_H: u32 = 216;
@@ -179,6 +180,20 @@ impl IslandExtension {
         }
     }
 
+    fn sync_auto_collapse_timer(&self, ctx: &mut ShellContext) {
+        let ms = ctx.state.config.island.auto_collapse_ms;
+        if self.expanded && ms > 0 {
+            ctx.push_action(ShellAction::ScheduleTimer {
+                id: TIMER_AUTO_COLLAPSE.to_string(),
+                after_ms: ms,
+            });
+        } else {
+            ctx.push_action(ShellAction::CancelTimer {
+                id: TIMER_AUTO_COLLAPSE.to_string(),
+            });
+        }
+    }
+
     fn rebuild(&mut self, state: &mut AppState) {
         state.island_expanded = self.expanded;
         if !self.is_visible(state) {
@@ -221,7 +236,11 @@ impl IslandExtension {
         ctx.push_action(ShellAction::CancelTimer {
             id: TIMER_NOTIFY_EXPIRE.to_string(),
         });
+        ctx.push_action(ShellAction::CancelTimer {
+            id: TIMER_AUTO_COLLAPSE.to_string(),
+        });
         self.sync_timers(ctx);
+        self.sync_auto_collapse_timer(ctx);
         let snap = !self.is_visible(ctx.state);
         self.update_spring_targets(ctx.state, snap);
         self.rebuild(ctx.state);
@@ -348,8 +367,13 @@ impl IslandExtension {
             }
         }
 
+        if self.expanded && !Self::has_live_activity(ctx.state) {
+            self.expanded = false;
+            self.force_visible = false;
+        }
         let was_visible = self.cached_spec.is_some();
         self.sync_timers(ctx);
+        self.sync_auto_collapse_timer(ctx);
         self.update_spring_targets(ctx.state, !was_visible);
         self.rebuild(ctx.state);
         IpcResult::Handled {
@@ -389,7 +413,12 @@ impl IslandExtension {
                 ctx.state.custom_activities.remove(other);
             }
         }
+        if self.expanded && !Self::has_live_activity(ctx.state) {
+            self.expanded = false;
+            self.force_visible = false;
+        }
         self.sync_timers(ctx);
+        self.sync_auto_collapse_timer(ctx);
         let snap = !self.is_visible(ctx.state);
         self.update_spring_targets(ctx.state, snap);
         self.rebuild(ctx.state);
@@ -420,24 +449,29 @@ impl IslandExtension {
                     self.absorbed_notify = None;
                 }
                 self.sync_timers(ctx);
+                self.sync_auto_collapse_timer(ctx);
                 self.update_spring_targets(ctx.state, false);
                 self.rebuild(ctx.state);
                 DirtyFlags::ISLAND | DirtyFlags::LAYOUT
             }
             "island:collapse" => self.collapse(ctx),
             "island:media:prev" => {
+                self.sync_auto_collapse_timer(ctx);
                 ctx.push_action(ShellAction::MediaCommand("prev".into()));
                 DirtyFlags::NONE
             }
             "island:media:play" => {
+                self.sync_auto_collapse_timer(ctx);
                 ctx.push_action(ShellAction::MediaCommand("play-pause".into()));
                 DirtyFlags::NONE
             }
             "island:media:next" => {
+                self.sync_auto_collapse_timer(ctx);
                 ctx.push_action(ShellAction::MediaCommand("next".into()));
                 DirtyFlags::NONE
             }
             "island:display:preview" => {
+                self.sync_auto_collapse_timer(ctx);
                 ctx.push_action(ShellAction::SpawnCommand {
                     program: "kaze-display".into(),
                     args: vec!["toggle-preview".into()],
@@ -445,6 +479,7 @@ impl IslandExtension {
                 DirtyFlags::NONE
             }
             "island:display:control" => {
+                self.sync_auto_collapse_timer(ctx);
                 ctx.push_action(ShellAction::SpawnCommand {
                     program: "kaze-display".into(),
                     args: vec!["toggle-control".into()],
@@ -556,6 +591,11 @@ impl KazeExtension for IslandExtension {
                 }
             }
             SystemEvent::MediaChanged(_) => {
+                if self.expanded && !Self::has_live_activity(ctx.state) {
+                    self.expanded = false;
+                    self.force_visible = false;
+                    self.sync_auto_collapse_timer(ctx);
+                }
                 let was_visible = self.cached_spec.is_some();
                 self.sync_timers(ctx);
                 self.update_spring_targets(ctx.state, !was_visible);
@@ -670,6 +710,7 @@ impl KazeExtension for IslandExtension {
                         DirtyFlags::NONE
                     }
                 }
+                TIMER_AUTO_COLLAPSE => self.collapse(ctx),
                 _ => DirtyFlags::NONE,
             },
             SystemEvent::PointerClick {
@@ -701,6 +742,9 @@ impl KazeExtension for IslandExtension {
                     self.absorbed_notify = None;
                 }
                 self.sync_timers(ctx);
+                ctx.push_action(ShellAction::CancelTimer {
+                    id: TIMER_AUTO_COLLAPSE.to_string(),
+                });
                 let snap = !was_visible && !self.is_visible(ctx.state);
                 self.update_spring_targets(ctx.state, snap);
                 self.rebuild(ctx.state);
@@ -1226,25 +1270,72 @@ fn build_island_surface(
             let pad = 14.0f32;
             let content_x = inner_x + pad;
             let content_w = (inner_w - pad * 2.0).max(120.0);
-            let mut y = 12.0f32;
+            let mut y = 6.0f32;
 
-            // Header row: Clock + Workspace + Collapse button
+            // Header row (aligned to the 34px Collapsed baseline: y=6..28)
             commands.push(PaintCmd::Text {
-                rect: Rect::new(content_x, y, 64.0, 22.0),
+                rect: Rect::new(content_x, y, 56.0, 22.0),
                 text: state.clock.format_hh_mm(),
                 color: on_surface,
-                size: 14.0,
+                size: 13.5,
                 bold: true,
                 align: TextAlign::Left,
             });
             commands.push(PaintCmd::Text {
-                rect: Rect::new(content_x + 68.0, y, 90.0, 22.0),
+                rect: Rect::new(content_x + 58.0, y, 64.0, 22.0),
                 text: format!("WS {ws_id}"),
                 color: primary,
-                size: 12.0,
+                size: 11.5,
                 bold: true,
                 align: TextAlign::Left,
             });
+            if state.media.active {
+                // Centered transport pills aligned to the Collapsed top strip so long titles
+                // below get full width and controls stay anchored cleanly during morphs.
+                let btn_size = 20.0f32;
+                let btn_gap = 8.0f32;
+                let group_w = btn_size * 3.0 + btn_gap * 2.0;
+                let bx0 = inner_x + (inner_w - group_w) * 0.5;
+                let by = y + 1.0;
+                let play_kind = if state.media.status == MediaPlayback::Playing {
+                    IconKind::Pause
+                } else {
+                    IconKind::Play
+                };
+                for (idx, (id, kind)) in [
+                    ("island:media:prev", IconKind::Prev),
+                    ("island:media:play", play_kind),
+                    ("island:media:next", IconKind::Next),
+                ]
+                .iter()
+                .enumerate()
+                {
+                    let r = Rect::new(
+                        bx0 + idx as f32 * (btn_size + btn_gap),
+                        by,
+                        btn_size,
+                        btn_size,
+                    );
+                    commands.push(PaintCmd::RoundedRect {
+                        rect: r,
+                        radius: btn_size * 0.5,
+                        fill: Some(if idx == 1 { primary } else { surface_container }),
+                        stroke: None,
+                        stroke_width: 0.0,
+                    });
+                    commands.push(PaintCmd::Icon {
+                        rect: Rect::new(r.x + 4.5, r.y + 4.5, 11.0, 11.0),
+                        kind: *kind,
+                        color: if idx == 1 { on_primary } else { on_surface },
+                        stroke_width: 1.5,
+                        level: None,
+                    });
+                    hit_targets.push(HitTarget {
+                        rect: r,
+                        id: (*id).to_string(),
+                    });
+                }
+            }
             let collapse_rect = Rect::new(content_x + content_w - 22.0, y, 22.0, 22.0);
             commands.push(PaintCmd::RoundedRect {
                 rect: collapse_rect,
@@ -1264,7 +1355,7 @@ fn build_island_surface(
                 rect: collapse_rect,
                 id: "island:collapse".into(),
             });
-            y += 28.0;
+            y += 30.0;
 
             // Record section
             if let Some(rec) = state.record_activity.as_ref().filter(|r| r.active) {
@@ -1376,7 +1467,7 @@ fn build_island_surface(
                 y += 50.0;
             }
 
-            // Media MPRIS section
+            // Media MPRIS section (full-width metadata + interpolated progress bar)
             if state.media.active {
                 let title = if state.media.title.is_empty() {
                     state.media.player.as_str()
@@ -1384,8 +1475,8 @@ fn build_island_surface(
                     state.media.title.as_str()
                 };
                 commands.push(PaintCmd::RichText {
-                    rect: Rect::new(content_x, y, content_w - 96.0, 20.0),
-                    text: ellipsize(title, 34),
+                    rect: Rect::new(content_x, y, content_w, 20.0),
+                    text: ellipsize(title, 46),
                     color: on_surface,
                     size: 13.0,
                     bold: true,
@@ -1394,49 +1485,13 @@ fn build_island_surface(
                 });
                 if !state.media.artist.is_empty() {
                     commands.push(PaintCmd::RichText {
-                        rect: Rect::new(content_x, y + 20.0, content_w - 96.0, 18.0),
-                        text: ellipsize(&state.media.artist, 36),
+                        rect: Rect::new(content_x, y + 20.0, content_w, 18.0),
+                        text: ellipsize(&state.media.artist, 48),
                         color: muted,
                         size: 11.0,
                         bold: false,
                         align: TextAlign::Left,
                         max_lines: 1,
-                    });
-                }
-
-                // Media buttons (Prev / Play-Pause / Next)
-                let bx0 = content_x + content_w - 86.0;
-                let play_kind = if state.media.status == MediaPlayback::Playing {
-                    IconKind::Pause
-                } else {
-                    IconKind::Play
-                };
-                for (idx, (id, kind)) in [
-                    ("island:media:prev", IconKind::Prev),
-                    ("island:media:play", play_kind),
-                    ("island:media:next", IconKind::Next),
-                ]
-                .iter()
-                .enumerate()
-                {
-                    let r = Rect::new(bx0 + idx as f32 * 30.0, y + 4.0, 26.0, 26.0);
-                    commands.push(PaintCmd::RoundedRect {
-                        rect: r,
-                        radius: 13.0,
-                        fill: Some(if idx == 1 { primary } else { surface_container }),
-                        stroke: None,
-                        stroke_width: 0.0,
-                    });
-                    commands.push(PaintCmd::Icon {
-                        rect: Rect::new(r.x + 6.0, r.y + 6.0, 14.0, 14.0),
-                        kind: *kind,
-                        color: if idx == 1 { on_primary } else { on_surface },
-                        stroke_width: 1.5,
-                        level: None,
-                    });
-                    hit_targets.push(HitTarget {
-                        rect: r,
-                        id: (*id).to_string(),
                     });
                 }
 
@@ -1501,7 +1556,9 @@ fn build_island_surface(
             KeyboardMode::None
         },
         anchor: Anchor::TOP,
-        exclusive_zone: 0,
+        // -1 ignores the split top bar's exclusive zone so notch mode anchors flush at y=0
+        // and floating mode sits cleanly at margin.top (8px).
+        exclusive_zone: -1,
         width: surf_w,
         height: surf_h,
         margin: EdgeInsets {
@@ -1602,10 +1659,57 @@ mod tests {
         }
         let notch_specs = ext.surfaces();
         assert_eq!(notch_specs[0].margin.top, 0);
+        assert_eq!(notch_specs[0].exclusive_zone, -1);
         assert!(notch_specs[0]
             .commands
             .iter()
             .any(|c| matches!(c, PaintCmd::NotchPill { .. })));
+    }
+
+    #[test]
+    fn expanded_island_auto_collapses_when_mpris_exits() {
+        let mut st = state_with_outputs();
+        let mut ext = IslandExtension::new();
+        {
+            let mut ctx = ShellContext::new(&mut st);
+            ext.on_init(&mut ctx);
+        }
+        st.media = MediaState {
+            active: true,
+            player: "mock".into(),
+            title: "Song".into(),
+            artist: "Artist".into(),
+            status: MediaPlayback::Playing,
+            position_us: 0,
+            length_us: 60_000_000,
+            rate_milli: 1000,
+            updated_at_epoch_ms: now_epoch_ms(),
+        };
+        {
+            let mut ctx = ShellContext::new(&mut st);
+            ext.on_event(
+                &SystemEvent::MediaChanged(ctx.state.media.clone()),
+                &mut ctx,
+            );
+            ext.on_event(
+                &SystemEvent::PointerClick {
+                    surface_id: SURFACE_ID.into(),
+                    target_id: "island:pill".into(),
+                    button: PointerButton::Left,
+                },
+                &mut ctx,
+            );
+            assert_eq!(ext.visual_mode(ctx.state), IslandMode::Expanded);
+        }
+        st.media = MediaState::default();
+        {
+            let mut ctx = ShellContext::new(&mut st);
+            ext.on_event(
+                &SystemEvent::MediaChanged(ctx.state.media.clone()),
+                &mut ctx,
+            );
+            assert_eq!(ext.visual_mode(ctx.state), IslandMode::Collapsed);
+        }
     }
 
     #[test]
@@ -1746,13 +1850,10 @@ mod tests {
             },
             &mut ctx,
         );
-        assert_eq!(
-            ctx.actions,
-            vec![ShellAction::SpawnCommand {
-                program: "kaze-display".into(),
-                args: vec!["toggle-preview".into()],
-            }]
-        );
+        assert!(ctx.actions.contains(&ShellAction::SpawnCommand {
+            program: "kaze-display".into(),
+            args: vec!["toggle-preview".into()],
+        }));
     }
 
     #[test]

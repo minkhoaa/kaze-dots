@@ -180,6 +180,7 @@ impl KazeExtension for BarExtension {
             | SystemEvent::DndChanged(_)
             | SystemEvent::NightLightChanged { .. }
             | SystemEvent::CaffeineChanged(_)
+            | SystemEvent::ControlCenterChanged(_)
             | SystemEvent::TrayItemsChanged(_)
             | SystemEvent::NotificationsCountChanged(_)
             | SystemEvent::NotificationClearAll => {
@@ -344,6 +345,7 @@ impl KazeExtension for BarExtension {
             | SystemEvent::TrayBusStatus { .. }
             | SystemEvent::TrayMenuLoaded(_)
             | SystemEvent::WallpaperReady { .. }
+            | SystemEvent::WallpaperFailed { .. }
             | SystemEvent::SurfaceClosed { .. }
             | SystemEvent::KeyboardFocusLost { .. }
             | SystemEvent::ApplicationsChanged => DirtyFlags::NONE,

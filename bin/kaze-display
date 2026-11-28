@@ -1035,6 +1035,12 @@ if cmd == "--hotplug" and not pick_only then
         locked = is_screen_locked(),
         enabled = cfg.display_hotplug_menu ~= false,
     })
+    if not ignore then
+        local plugged = find_monitor_by_name(get_monitors(), sub_arg)
+        if plugged and display.is_virtual_monitor(sub_arg, plugged) then
+            ignore = true
+        end
+    end
     if ignore then
         os.exit(0)
     end
@@ -1411,7 +1417,9 @@ end
 
 if cmd == "--hotplug" then
     local cfg = hypr_user.load()
-    local ignore = display.should_ignore_hotplug(sub_arg, {
+    local plugged = find_monitor_by_name(monitors, sub_arg)
+    local ignore = (plugged == nil) or display.should_ignore_hotplug(sub_arg, {
+        monitor = plugged,
         locked = is_screen_locked(),
         enabled = cfg.display_hotplug_menu ~= false,
     })

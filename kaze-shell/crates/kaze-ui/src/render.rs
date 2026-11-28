@@ -278,6 +278,18 @@ impl Renderer {
         self.rich_text.is_some()
     }
 
+    /// Drops transient glyph/shaping caches after surface destruction so bursty workloads
+    /// (hotplug, 30x notifications, launcher cycles) return heap pages back to the OS.
+    pub fn trim_caches(&mut self) {
+        if self.glyph_cache.len() > 64 {
+            self.glyph_cache.clear();
+            self.glyph_cache.shrink_to_fit();
+        }
+        if let Some(ref mut rt) = self.rich_text {
+            rt.swash_cache = SwashCache::new();
+        }
+    }
+
     pub fn reload_font_if_needed(&mut self, font_hint: &str) {
         if self.font_hint == font_hint {
             return;

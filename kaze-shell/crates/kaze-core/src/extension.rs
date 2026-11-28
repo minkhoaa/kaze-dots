@@ -168,6 +168,7 @@ pub enum SystemEvent {
         temp_k: u32,
     },
     CaffeineChanged(bool),
+    ControlCenterChanged(bool),
     TrayBusStatus {
         owned: bool,
     },
@@ -177,6 +178,9 @@ pub enum SystemEvent {
         path: PathBuf,
         palette: Option<Box<ResolvedPalette>>,
         buffers: Vec<(String, u32, u32, Vec<u8>)>,
+    },
+    WallpaperFailed {
+        error: String,
     },
     SurfaceClosed {
         surface_id: String,
