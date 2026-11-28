@@ -649,6 +649,7 @@ dependencies = [
  "kaze-ext-launcher",
  "kaze-ext-notify",
  "kaze-ext-osd",
+ "kaze-ext-polkit",
  "kaze-ext-session",
  "kaze-ext-tray",
  "kaze-ext-wallpaper",
@@ -661,6 +662,7 @@ dependencies = [
  "notify",
  "serde_json",
  "smithay-client-toolkit",
+ "zeroize",
 ]
 
 [[package]]
@@ -740,6 +742,15 @@ name = "kaze-ext-osd"
 version = "0.1.0"
 dependencies = [
  "kaze-core",
+]
+
+[[package]]
+name = "kaze-ext-polkit"
+version = "0.1.0"
+dependencies = [
+ "kaze-core",
+ "unicode-segmentation",
+ "zeroize",
 ]
 
 [[package]]

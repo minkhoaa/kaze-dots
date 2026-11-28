@@ -19,6 +19,7 @@ use kaze_ext_island::IslandExtension;
 use kaze_ext_launcher::{desktop as launcher_desktop, LauncherExtension};
 use kaze_ext_notify::NotifyExtension;
 use kaze_ext_osd::OsdExtension;
+use kaze_ext_polkit::PolkitExtension;
 use kaze_ext_session::SessionMenuExtension;
 use kaze_ext_tray::TrayExtension;
 use kaze_ext_wallpaper::{
@@ -400,7 +401,15 @@ impl Daemon {
             | SystemEvent::PrepareForSleep(_)
             | SystemEvent::SessionLockRequested
             | SystemEvent::LockWorkerCommitted
-            | SystemEvent::LockWorkerExited => {}
+            | SystemEvent::LockWorkerExited
+            | SystemEvent::PolkitBegin(_)
+            | SystemEvent::PolkitCancel { .. }
+            | SystemEvent::PolkitPrompt { .. }
+            | SystemEvent::PolkitError { .. }
+            | SystemEvent::PolkitComplete { .. } => {}
+            SystemEvent::PolkitBusOwned(owned) => {
+                self.state.polkit_bus_owned = *owned;
+            }
         }
         if matches!(&event, SystemEvent::TimerFired { id } if id == "kaze:solar") {
             self.state.nightlight_manual_override = false;
@@ -735,6 +744,24 @@ impl Daemon {
                 }
                 ShellAction::LockSession => {
                     self.spawn_lock_worker();
+                }
+                ShellAction::PolkitSubmitPassword {
+                    cookie,
+                    user,
+                    password,
+                } => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::PolkitSubmitPassword {
+                            cookie,
+                            user,
+                            password: zeroize::Zeroizing::new(password),
+                        });
+                    }
+                }
+                ShellAction::PolkitCancel { cookie } => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::PolkitCancel { cookie });
+                    }
                 }
             }
         }
@@ -1763,6 +1790,10 @@ impl Daemon {
                         "power_capabilities".into(),
                         serde_json::json!(self.state.power_capabilities),
                     );
+                    obj.insert(
+                        "polkit_bus_owned".into(),
+                        serde_json::json!(self.state.polkit_bus_owned),
+                    );
                 }
                 IpcResponse::ok_data("ok", data)
             }
@@ -2167,6 +2198,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         Box::new(LauncherExtension::new()),
         Box::new(IdleExtension::new()),
         Box::new(SessionMenuExtension::new()),
+        Box::new(PolkitExtension::new()),
     ];
 
     let mut daemon = Daemon {

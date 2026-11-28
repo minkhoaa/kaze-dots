@@ -366,7 +366,13 @@ impl KazeExtension for BarExtension {
             | SystemEvent::SessionUnlockRequested
             | SystemEvent::LockWorkerCommitted
             | SystemEvent::LockWorkerExited
-            | SystemEvent::PowerCapabilitiesChanged(_) => DirtyFlags::NONE,
+            | SystemEvent::PowerCapabilitiesChanged(_)
+            | SystemEvent::PolkitBusOwned(_)
+            | SystemEvent::PolkitBegin(_)
+            | SystemEvent::PolkitCancel { .. }
+            | SystemEvent::PolkitPrompt { .. }
+            | SystemEvent::PolkitError { .. }
+            | SystemEvent::PolkitComplete { .. } => DirtyFlags::NONE,
         }
     }
 

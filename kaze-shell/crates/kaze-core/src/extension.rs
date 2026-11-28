@@ -28,7 +28,8 @@ bitflags! {
         const CLIPBOARD = 1 << 10;
         const IDLE      = 1 << 11;
         const SESSION   = 1 << 12;
-        const ALL       = 0b0001_1111_1111_1111;
+        const POLKIT    = 1 << 13;
+        const ALL       = 0b0011_1111_1111_1111;
     }
 }
 
@@ -221,6 +222,34 @@ pub enum SystemEvent {
     LockWorkerCommitted,
     LockWorkerExited,
     PowerCapabilitiesChanged(PowerCapabilities),
+    PolkitBusOwned(bool),
+    PolkitBegin(PolkitRequest),
+    PolkitCancel {
+        cookie: String,
+    },
+    PolkitPrompt {
+        cookie: String,
+        prompt: String,
+        echo: bool,
+    },
+    PolkitError {
+        cookie: String,
+        message: String,
+    },
+    PolkitComplete {
+        cookie: String,
+        success: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolkitRequest {
+    pub cookie: String,
+    pub action_id: String,
+    pub message: String,
+    pub icon_name: String,
+    pub identities: Vec<String>,
+    pub details: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -332,6 +361,14 @@ pub enum ShellAction {
     SetOutputsDpms(bool),
     ReleaseSleepInhibitor,
     LockSession,
+    PolkitSubmitPassword {
+        cookie: String,
+        user: String,
+        password: String,
+    },
+    PolkitCancel {
+        cookie: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

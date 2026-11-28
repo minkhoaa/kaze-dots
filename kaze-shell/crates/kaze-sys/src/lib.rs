@@ -7,6 +7,7 @@ mod dbus_logind;
 mod dbus_mpris;
 mod dbus_net;
 mod dbus_notify;
+mod dbus_polkit;
 mod dbus_power;
 pub mod dbus_secrets;
 pub mod dbus_sni;
@@ -56,6 +57,14 @@ pub enum SysCommand {
     SetPowerProfile(String),
     HyprScreencastUpdate(bool),
     ReleaseSleepInhibitor,
+    PolkitSubmitPassword {
+        cookie: String,
+        user: String,
+        password: zeroize::Zeroizing<String>,
+    },
+    PolkitCancel {
+        cookie: String,
+    },
     MediaCommand(String),
     WifiToggle,
     BluetoothToggle,
@@ -182,6 +191,7 @@ fn run_sys_thread(
         let (ddc_cmd_tx, ddc_cmd_rx) = mpsc::unbounded_channel();
         let (privacy_tx, privacy_rx) = mpsc::unbounded_channel();
         let (sleep_rel_tx, sleep_rel_rx) = mpsc::unbounded_channel();
+        let (polkit_cmd_tx, polkit_cmd_rx) = mpsc::unbounded_channel();
 
         // Share ONE System Bus and ONE Session Bus connection across all observers
         // (2 sockets total instead of 6; avoids spawning parallel zbus/tokio handshake threads).
@@ -244,6 +254,11 @@ fn run_sys_thread(
             sys_conn.clone(),
             event_tx.clone(),
         ));
+        let polkit_task = tokio::spawn(dbus_polkit::run_polkit_task(
+            sys_conn.clone(),
+            event_tx.clone(),
+            polkit_cmd_rx,
+        ));
         let mut caffeine_inhibit_fd: Option<zbus::zvariant::OwnedFd> = None;
 
         while let Some(cmd) = cmd_rx.recv().await {
@@ -302,6 +317,20 @@ fn run_sys_thread(
                 }
                 SysCommand::ReleaseSleepInhibitor => {
                     let _ = sleep_rel_tx.send(());
+                }
+                SysCommand::PolkitSubmitPassword {
+                    cookie,
+                    user,
+                    password,
+                } => {
+                    let _ = polkit_cmd_tx.send(dbus_polkit::PolkitCmd::SubmitPassword {
+                        cookie,
+                        user,
+                        password,
+                    });
+                }
+                SysCommand::PolkitCancel { cookie } => {
+                    let _ = polkit_cmd_tx.send(dbus_polkit::PolkitCmd::Cancel { cookie });
                 }
                 SysCommand::MediaCommand(action) => {
                     let _ = media_cmd_tx.send(action);
@@ -420,6 +449,7 @@ fn run_sys_thread(
         }
 
         accounts_task.abort();
+        polkit_task.abort();
         if let Some(t) = logind_task {
             t.abort();
         }
