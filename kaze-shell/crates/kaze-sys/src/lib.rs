@@ -1,6 +1,7 @@
 #![deny(clippy::unwrap_used)]
 
 pub mod backlight;
+pub mod calendar;
 pub mod dbus_accounts;
 mod dbus_bluez;
 pub mod dbus_input;
@@ -17,10 +18,12 @@ pub mod ddc;
 pub mod hooks;
 pub mod pipewire_privacy;
 pub mod pulse_native;
+pub mod screentime;
 pub mod sysmon;
+pub mod weather;
 
 use calloop::channel::Sender as CalloopSender;
-use kaze_core::{BrightnessConfig, MasterKey, SystemEvent};
+use kaze_core::{BrightnessConfig, CalendarConfig, MasterKey, SystemEvent, WeatherConfig};
 use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -69,7 +72,34 @@ pub enum SysCommand {
     },
     MediaCommand(String),
     WifiToggle,
+    NetworkRequestScan,
+    WifiConnect {
+        ssid: String,
+        password: String,
+    },
+    WifiDisconnect,
+    WifiForget(String),
+    VpnToggle(String),
     BluetoothToggle,
+    BluetoothSetDiscovery(bool),
+    BluetoothPair(String),
+    BluetoothTrust {
+        path: String,
+        trusted: bool,
+    },
+    BluetoothConnect(String),
+    BluetoothDisconnect(String),
+    BluetoothRemove(String),
+    ConfigureWeather {
+        cfg: WeatherConfig,
+        offline_mode: bool,
+    },
+    WeatherRefresh,
+    ConfigureCalendar {
+        cfg: CalendarConfig,
+        offline_mode: bool,
+    },
+    CalendarSyncNow,
     SetCaffeineInhibit(bool),
     SystemPower(String),
     NotifyClosed {
@@ -200,6 +230,8 @@ fn run_sys_thread(
         let (sleep_rel_tx, sleep_rel_rx) = mpsc::unbounded_channel();
         let (polkit_cmd_tx, polkit_cmd_rx) = mpsc::unbounded_channel();
         let (sysmon_cmd_tx, sysmon_cmd_rx) = mpsc::unbounded_channel();
+        let (weather_cmd_tx, weather_cmd_rx) = mpsc::unbounded_channel();
+        let (cal_cmd_tx, cal_cmd_rx) = mpsc::unbounded_channel();
 
         // Share ONE System Bus and ONE Session Bus connection across all observers
         // (2 sockets total instead of 6; avoids spawning parallel zbus/tokio handshake threads).
@@ -271,6 +303,14 @@ fn run_sys_thread(
             .clone()
             .map(|c| tokio::spawn(dbus_input::run_input_method_task(c, event_tx.clone())));
         let sysmon_task = tokio::spawn(sysmon::run_sysmon_task(event_tx.clone(), sysmon_cmd_rx));
+        let weather_task =
+            tokio::spawn(weather::run_weather_task(event_tx.clone(), weather_cmd_rx));
+        let cal_cache_path = calendar::default_calendar_cache_path().ok();
+        let calendar_task = tokio::spawn(calendar::run_calendar_task(
+            event_tx.clone(),
+            cal_cmd_rx,
+            cal_cache_path,
+        ));
         let mut caffeine_inhibit_fd: Option<zbus::zvariant::OwnedFd> = None;
 
         while let Some(cmd) = cmd_rx.recv().await {
@@ -356,10 +396,70 @@ fn run_sys_thread(
                     let _ = media_cmd_tx.send(action);
                 }
                 SysCommand::WifiToggle => {
-                    let _ = net_cmd_tx.send(());
+                    let _ = net_cmd_tx.send(dbus_net::NetCmd::ToggleWifi);
+                }
+                SysCommand::NetworkRequestScan => {
+                    let _ = net_cmd_tx.send(dbus_net::NetCmd::RequestScan);
+                }
+                SysCommand::WifiConnect { ssid, password } => {
+                    let _ = net_cmd_tx.send(dbus_net::NetCmd::ConnectWifi { ssid, password });
+                }
+                SysCommand::WifiDisconnect => {
+                    let _ = net_cmd_tx.send(dbus_net::NetCmd::DisconnectWifi);
+                }
+                SysCommand::WifiForget(ssid) => {
+                    let _ = net_cmd_tx.send(dbus_net::NetCmd::ForgetWifi(ssid));
+                }
+                SysCommand::VpnToggle(uuid) => {
+                    let _ = net_cmd_tx.send(dbus_net::NetCmd::ToggleVpn(uuid));
                 }
                 SysCommand::BluetoothToggle => {
-                    let _ = bluez_cmd_tx.send(());
+                    let _ = bluez_cmd_tx.send(dbus_bluez::BluezCmd::TogglePower);
+                }
+                SysCommand::BluetoothSetDiscovery(active) => {
+                    let _ = bluez_cmd_tx.send(dbus_bluez::BluezCmd::SetDiscovery(active));
+                }
+                SysCommand::BluetoothPair(path) => {
+                    let _ = bluez_cmd_tx.send(dbus_bluez::BluezCmd::Pair(path));
+                }
+                SysCommand::BluetoothTrust { path, trusted } => {
+                    let _ = bluez_cmd_tx.send(dbus_bluez::BluezCmd::Trust { path, trusted });
+                }
+                SysCommand::BluetoothConnect(path) => {
+                    let _ = bluez_cmd_tx.send(dbus_bluez::BluezCmd::Connect(path));
+                }
+                SysCommand::BluetoothDisconnect(path) => {
+                    let _ = bluez_cmd_tx.send(dbus_bluez::BluezCmd::Disconnect(path));
+                }
+                SysCommand::BluetoothRemove(path) => {
+                    let _ = bluez_cmd_tx.send(dbus_bluez::BluezCmd::Remove(path));
+                }
+                SysCommand::ConfigureWeather { cfg, offline_mode } => {
+                    let _ =
+                        weather_cmd_tx.send(weather::WeatherCmd::Configure { cfg, offline_mode });
+                }
+                SysCommand::WeatherRefresh => {
+                    let _ = weather_cmd_tx.send(weather::WeatherCmd::RefreshNow);
+                }
+                SysCommand::ConfigureCalendar { cfg, offline_mode } => {
+                    let tok = if cfg.google_oauth_client_id.trim().is_empty() {
+                        None
+                    } else {
+                        dbus_secrets::read_named_secret(
+                            sess_conn.as_ref(),
+                            "kaze-google-oauth-token",
+                        )
+                        .await
+                        .map(|z| z.to_string())
+                    };
+                    let _ = cal_cmd_tx.send(calendar::CalendarCmd::Configure {
+                        cfg,
+                        offline_mode,
+                        oauth_token: tok,
+                    });
+                }
+                SysCommand::CalendarSyncNow => {
+                    let _ = cal_cmd_tx.send(calendar::CalendarCmd::SyncNow);
                 }
                 SysCommand::SetCaffeineInhibit(enabled) => {
                     if !enabled {
@@ -493,6 +593,8 @@ fn run_sys_thread(
             }
         }
 
+        calendar_task.abort();
+        weather_task.abort();
         sysmon_task.abort();
         if let Some(t) = input_task {
             t.abort();

@@ -103,6 +103,35 @@ async fn try_secret_service(conn: &Connection) -> Option<MasterKey> {
     }
 }
 
+pub async fn read_named_secret(
+    sess_conn: Option<&Connection>,
+    label: &str,
+) -> Option<Zeroizing<String>> {
+    let conn = sess_conn?;
+    let service = Proxy::new(conn, SECRETS_DEST, SECRETS_PATH, SERVICE_IFACE)
+        .await
+        .ok()?;
+    let empty_in = Value::from("");
+    let (_output, session_path): (OwnedValue, OwnedObjectPath) = service
+        .call("OpenSession", &("plain", &empty_in))
+        .await
+        .ok()?;
+    let mut attrs = HashMap::new();
+    attrs.insert("application", "kaze-shell");
+    attrs.insert("label", label);
+    let (unlocked, _locked): (Vec<OwnedObjectPath>, Vec<OwnedObjectPath>) =
+        service.call("SearchItems", &(&attrs,)).await.ok()?;
+    let item_path = unlocked.first()?;
+    let items = vec![item_path.clone()];
+    let secrets: HashMap<OwnedObjectPath, OwnedSecretTuple> = service
+        .call("GetSecrets", &(&items, &session_path))
+        .await
+        .ok()?;
+    let (_sess, _params, secret_bytes, _ct) = secrets.get(item_path)?;
+    let txt = String::from_utf8(secret_bytes.clone()).ok()?;
+    Some(Zeroizing::new(txt))
+}
+
 pub fn decode_secret_bytes(raw: &[u8]) -> Option<MasterKey> {
     if raw.len() == 32 {
         let mut out = [0u8; 32];

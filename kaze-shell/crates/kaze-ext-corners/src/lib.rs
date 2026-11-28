@@ -95,11 +95,12 @@ impl CornersExtension {
         self.last_trigger
             .insert(corner_id.to_string(), self.current_time());
         if !act.ipc.trim().is_empty() {
-            let parts: Vec<String> = act.ipc.split_whitespace().map(str::to_string).collect();
-            if !parts.is_empty() {
+            let mut args = vec!["msg".to_string()];
+            args.extend(act.ipc.split_whitespace().map(str::to_string));
+            if args.len() > 1 {
                 ctx.push_action(ShellAction::SpawnCommand {
-                    program: "kaze-ctl".to_string(),
-                    args: parts,
+                    program: "kaze-shell".to_string(),
+                    args,
                 });
             }
         } else if !act.command.trim().is_empty() {
@@ -438,8 +439,8 @@ mod tests {
             assert_eq!(
                 ctx.actions,
                 vec![ShellAction::SpawnCommand {
-                    program: "kaze-ctl".into(),
-                    args: vec!["launcher-toggle".into()],
+                    program: "kaze-shell".into(),
+                    args: vec!["msg".into(), "launcher-toggle".into()],
                 }]
             );
             ctx.actions.clear();

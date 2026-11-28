@@ -33,7 +33,9 @@ use kaze_ext_wallpaper::{
 };
 use kaze_hypr::{HyprClient, HyprEvent, ReconnectBackoff};
 use kaze_ipc::{default_socket_path, IpcRequest, IpcResponder, IpcResponse, IpcServer};
+use kaze_sys::calendar::next_reminder_fire;
 use kaze_sys::hooks::HookRequest;
+use kaze_sys::screentime::ScreenTimeTracker;
 use kaze_sys::{backlight, SysCommand, SysHandle};
 use kaze_ui::UiState;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -86,9 +88,52 @@ struct Daemon {
     lock_committed: bool,
     pre_lock_dnd: Option<bool>,
     lock_pipe_token: Option<RegistrationToken>,
+    screentime: ScreenTimeTracker,
+    last_cal_reminder_uid: Option<String>,
+}
+
+fn epoch_secs_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 impl Daemon {
+    fn sync_wave2_services(&mut self) {
+        self.screentime.configure(
+            self.state.config.screentime.enabled,
+            self.state.config.screentime.retention_days,
+        );
+        self.state.screentime = self.screentime.snapshot(epoch_secs_now());
+        if let Some(ref sys) = self.sys {
+            sys.send(SysCommand::ConfigureWeather {
+                cfg: self.state.config.weather.clone(),
+                offline_mode: self.state.offline_mode,
+            });
+            sys.send(SysCommand::ConfigureCalendar {
+                cfg: self.state.config.calendar.clone(),
+                offline_mode: self.state.offline_mode,
+            });
+        }
+    }
+
+    fn arm_next_calendar_reminder(&mut self) {
+        let now = epoch_secs_now();
+        let lead = self.state.config.calendar.reminder_lead_mins;
+        if let Some(rem) = next_reminder_fire(&self.state.calendar, now, lead) {
+            if self.last_cal_reminder_uid.as_deref() != Some(rem.event_uid.as_str()) {
+                let wait_secs = rem.fire_epoch_secs.saturating_sub(now).max(1);
+                self.schedule_named_timer(
+                    "cal:reminder".to_string(),
+                    Duration::from_secs(wait_secs),
+                );
+                return;
+            }
+        }
+        self.cancel_named_timer("cal:reminder");
+    }
+
     fn fire_hook(
         &self,
         event: &str,
@@ -367,6 +412,7 @@ impl Daemon {
             }
             SystemEvent::OfflineModeChanged(offline) => {
                 self.state.offline_mode = *offline;
+                self.sync_wave2_services();
             }
             SystemEvent::LocaleChanged(locale) => {
                 self.state.locale = *locale;
@@ -424,9 +470,13 @@ impl Daemon {
                     }
                 }
             }
-            SystemEvent::IdleTimeout { .. }
-            | SystemEvent::IdleResumed { .. }
-            | SystemEvent::PrepareForSleep(_)
+            SystemEvent::IdleTimeout { .. } => {
+                self.state.screentime = self.screentime.set_paused(true, epoch_secs_now());
+            }
+            SystemEvent::IdleResumed { .. } => {
+                self.state.screentime = self.screentime.set_paused(false, epoch_secs_now());
+            }
+            SystemEvent::PrepareForSleep(_)
             | SystemEvent::SessionLockRequested
             | SystemEvent::PolkitBegin(_)
             | SystemEvent::PolkitCancel { .. }
@@ -435,9 +485,11 @@ impl Daemon {
             | SystemEvent::PolkitComplete { .. } => {}
             SystemEvent::LockWorkerCommitted => {
                 self.state.session_locked = true;
+                self.state.screentime = self.screentime.set_paused(true, epoch_secs_now());
             }
             SystemEvent::LockWorkerExited => {
                 self.state.session_locked = false;
+                self.state.screentime = self.screentime.set_paused(false, epoch_secs_now());
             }
             SystemEvent::PolkitBusOwned(owned) => {
                 self.state.polkit_bus_owned = *owned;
@@ -469,6 +521,16 @@ impl Daemon {
                 for w in rest {
                     self.state.window_mru.push(w.address.clone());
                 }
+                let active_cls = self.state.active_window().map(|w| {
+                    if w.class.is_empty() {
+                        w.initial_class.clone()
+                    } else {
+                        w.class.clone()
+                    }
+                });
+                self.state.screentime = self
+                    .screentime
+                    .on_focus_change(active_cls.as_deref(), epoch_secs_now());
             }
             SystemEvent::KeyboardLayoutChanged { raw_name, .. } => {
                 self.state.keyboard.layout_raw = raw_name.clone();
@@ -521,6 +583,7 @@ impl Daemon {
             }
             SystemEvent::CalendarUpdated(c) => {
                 self.state.calendar = c.clone();
+                self.arm_next_calendar_reminder();
             }
             SystemEvent::PointerEnter { .. }
             | SystemEvent::PointerLeave { .. }
@@ -533,6 +596,18 @@ impl Daemon {
         if matches!(&event, SystemEvent::TimerFired { id } if id == "kaze:solar") {
             self.state.nightlight_manual_override = false;
             self.sync_solar_schedule(true);
+        } else if matches!(&event, SystemEvent::TimerFired { id } if id == "cal:reminder") {
+            let now = epoch_secs_now();
+            let lead = self.state.config.calendar.reminder_lead_mins;
+            if let Some(rem) = next_reminder_fire(&self.state.calendar, now, lead) {
+                self.last_cal_reminder_uid = Some(rem.event_uid.clone());
+                self.execute_actions(vec![ShellAction::SendNotification {
+                    app_name: "kaze-calendar".to_string(),
+                    summary: rem.title,
+                    body: format!("Starts in {}m", rem.mins_before),
+                }]);
+            }
+            self.arm_next_calendar_reminder();
         }
 
         let prev_unread = self.state.unread_notifications;
@@ -1009,20 +1084,75 @@ impl Daemon {
                     );
                     let _ = self.wayland_conn.flush();
                 }
-                ShellAction::NetworkRequestScan
-                | ShellAction::WifiConnect { .. }
-                | ShellAction::WifiDisconnect
-                | ShellAction::WifiForget(_)
-                | ShellAction::VpnToggle(_)
-                | ShellAction::BluetoothSetDiscovery(_)
-                | ShellAction::BluetoothPair(_)
-                | ShellAction::BluetoothTrust { .. }
-                | ShellAction::BluetoothConnect(_)
-                | ShellAction::BluetoothDisconnect(_)
-                | ShellAction::BluetoothRemove(_)
-                | ShellAction::WeatherRefresh
-                | ShellAction::ScreenTimeReset
-                | ShellAction::CalendarSyncNow => {}
+                ShellAction::NetworkRequestScan => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::NetworkRequestScan);
+                    }
+                }
+                ShellAction::WifiConnect { ssid, password } => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::WifiConnect { ssid, password });
+                    }
+                }
+                ShellAction::WifiDisconnect => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::WifiDisconnect);
+                    }
+                }
+                ShellAction::WifiForget(ssid) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::WifiForget(ssid));
+                    }
+                }
+                ShellAction::VpnToggle(uuid) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::VpnToggle(uuid));
+                    }
+                }
+                ShellAction::BluetoothSetDiscovery(active) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::BluetoothSetDiscovery(active));
+                    }
+                }
+                ShellAction::BluetoothPair(path) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::BluetoothPair(path));
+                    }
+                }
+                ShellAction::BluetoothTrust { path, trusted } => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::BluetoothTrust { path, trusted });
+                    }
+                }
+                ShellAction::BluetoothConnect(path) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::BluetoothConnect(path));
+                    }
+                }
+                ShellAction::BluetoothDisconnect(path) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::BluetoothDisconnect(path));
+                    }
+                }
+                ShellAction::BluetoothRemove(path) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::BluetoothRemove(path));
+                    }
+                }
+                ShellAction::WeatherRefresh => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::WeatherRefresh);
+                    }
+                }
+                ShellAction::ScreenTimeReset => {
+                    let st = self.screentime.reset(epoch_secs_now());
+                    self.dispatch_system_event(SystemEvent::ScreenTimeUpdated(st));
+                }
+                ShellAction::CalendarSyncNow => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::CalendarSyncNow);
+                    }
+                }
             }
         }
     }
@@ -1493,6 +1623,7 @@ impl Daemon {
                 }
                 self.dispatch_system_event(SystemEvent::ConfigReloaded);
                 self.sync_solar_schedule(false);
+                self.sync_wave2_services();
                 Ok(())
             }
             Err(err) => {
@@ -2153,6 +2284,18 @@ impl Daemon {
                         "windows_count".into(),
                         serde_json::json!(self.state.windows.len()),
                     );
+                    obj.insert(
+                        "bt_discovering".into(),
+                        serde_json::json!(self.state.bluetooth.discovering),
+                    );
+                    obj.insert(
+                        "weather_stale".into(),
+                        serde_json::json!(self.state.weather.stale),
+                    );
+                    obj.insert(
+                        "calendar_sources".into(),
+                        serde_json::json!(self.state.calendar.sources.len()),
+                    );
                 }
                 IpcResponse::ok_data("ok", data)
             }
@@ -2584,13 +2727,20 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         }
     }
     let theme_paths = ThemePaths::default_paths()?;
+    let master_key = sys_handle.as_ref().and_then(|s| {
+        kaze_core::crypto::default_master_key_path()
+            .ok()
+            .and_then(|kp| s.resolve_master_key(kp).ok())
+    });
+    let screentime = ScreenTimeTracker::new(
+        state.config.screentime.enabled,
+        state.config.screentime.retention_days,
+        ScreenTimeTracker::default_store_path().ok(),
+        master_key.clone(),
+    );
+    state.screentime = screentime.snapshot(epoch_secs_now());
     let clipboard_ext = {
         let store_path = default_clipboard_store_path().ok();
-        let master_key = sys_handle.as_ref().and_then(|s| {
-            kaze_core::crypto::default_master_key_path()
-                .ok()
-                .and_then(|kp| s.resolve_master_key(kp).ok())
-        });
         ClipboardExtension::new(store_path, master_key)
     };
     let extensions: Vec<Box<dyn KazeExtension>> = vec![
@@ -2643,6 +2793,8 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         lock_committed: false,
         pre_lock_dnd: None,
         lock_pipe_token: None,
+        screentime,
+        last_cal_reminder_uid: None,
     };
     daemon.sync_config_symlink_watch();
 
@@ -2733,6 +2885,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     }
     daemon.init_extensions();
     daemon.sync_solar_schedule(false);
+    daemon.sync_wave2_services();
     daemon.connect_hypr_socket2();
     daemon.fire_hook("started", None, None, None);
 

@@ -375,6 +375,96 @@ impl Default for HotCornerActionConfig {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+pub struct ControlCenterConfig {
+    pub sidebar_mode: String,
+    pub default_tab: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Default for ControlCenterConfig {
+    fn default() -> Self {
+        Self {
+            sidebar_mode: "full".to_string(),
+            default_tab: "home".to_string(),
+            width: 480,
+            height: 540,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WeatherConfig {
+    pub enabled: bool,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub city: String,
+    pub unit: String,
+    pub refresh_interval_mins: u64,
+}
+
+impl Default for WeatherConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            latitude: 21.0285,
+            longitude: 105.8542,
+            city: "Hanoi".to_string(),
+            unit: "c".to_string(),
+            refresh_interval_mins: 30,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScreenTimeConfig {
+    pub enabled: bool,
+    pub retention_days: u32,
+}
+
+impl Default for ScreenTimeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            retention_days: 14,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalendarConfig {
+    pub enabled: bool,
+    pub caldav_urls: Vec<String>,
+    pub caldav_client_cert: String,
+    pub caldav_client_key: String,
+    pub ics_urls: Vec<String>,
+    pub vdir_paths: Vec<String>,
+    pub google_oauth_client_id: String,
+    pub sync_interval_mins: u64,
+    pub reminder_lead_mins: u32,
+}
+
+impl Default for CalendarConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            caldav_urls: Vec::new(),
+            caldav_client_cert: String::new(),
+            caldav_client_key: String::new(),
+            ics_urls: Vec::new(),
+            vdir_paths: Vec::new(),
+            google_oauth_client_id: String::new(),
+            sync_interval_mins: 30,
+            reminder_lead_mins: 10,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CornersConfig {
     pub hot_enabled: bool,
     pub top_left: HotCornerActionConfig,
@@ -936,6 +1026,10 @@ pub struct Config {
     pub dock: DockConfig,
     pub switcher: SwitcherConfig,
     pub corners: CornersConfig,
+    pub control_center: ControlCenterConfig,
+    pub weather: WeatherConfig,
+    pub screentime: ScreenTimeConfig,
+    pub calendar: CalendarConfig,
     pub widget: BTreeMap<String, WidgetInstanceConfig>,
 }
 
@@ -1254,6 +1348,30 @@ impl Config {
             self.corners.screen_corners_radius = 12.0;
         }
         self.corners.screen_corners_radius = self.corners.screen_corners_radius.clamp(0.0, 64.0);
+        self.control_center.width = self.control_center.width.clamp(320, 900);
+        self.control_center.height = self.control_center.height.clamp(320, 900);
+        if !matches!(
+            self.control_center
+                .sidebar_mode
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "full" | "compact" | "none"
+        ) {
+            return Err(format!(
+                "control_center.sidebar_mode='{}' must be full|compact|none",
+                self.control_center.sidebar_mode
+            ));
+        }
+        if !self.weather.latitude.is_finite() || !(-90.0..=90.0).contains(&self.weather.latitude) {
+            return Err("weather.latitude out of range (-90..=90)".to_string());
+        }
+        if !self.weather.longitude.is_finite()
+            || !(-180.0..=180.0).contains(&self.weather.longitude)
+        {
+            return Err("weather.longitude out of range (-180..=180)".to_string());
+        }
+        self.screentime.retention_days = self.screentime.retention_days.clamp(1, 90);
         for (id, w) in &self.widget {
             if w.exec_interval_secs > 0 && w.exec_interval_secs < 5 {
                 return Err(format!(

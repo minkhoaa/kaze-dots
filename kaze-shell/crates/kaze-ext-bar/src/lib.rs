@@ -780,16 +780,16 @@ impl KazeExtension for BarExtension {
                     "launcher" => {
                         if *button == PointerButton::Left {
                             ctx.push_action(ShellAction::SpawnCommand {
-                                program: "kaze-ctl".into(),
-                                args: vec!["launcher-toggle".into()],
+                                program: "kaze-shell".into(),
+                                args: vec!["msg".into(), "launcher-toggle".into()],
                             });
                         }
                     }
                     "window_switcher_btn" => {
                         if *button == PointerButton::Left {
                             ctx.push_action(ShellAction::SpawnCommand {
-                                program: "kaze-ctl".into(),
-                                args: vec!["switcher-open".into()],
+                                program: "kaze-shell".into(),
+                                args: vec!["msg".into(), "switcher-open".into()],
                             });
                         }
                     }
@@ -908,24 +908,24 @@ impl KazeExtension for BarExtension {
                     "screenshot" => {
                         if *button == PointerButton::Left {
                             ctx.push_action(ShellAction::SpawnCommand {
-                                program: "kaze-ctl".into(),
-                                args: vec!["capture-area".into()],
+                                program: "kaze-shell".into(),
+                                args: vec!["msg".into(), "capture".into(), "region".into()],
                             });
                         }
                     }
                     "color_picker" => {
                         if *button == PointerButton::Left {
                             ctx.push_action(ShellAction::SpawnCommand {
-                                program: "kaze-ctl".into(),
-                                args: vec!["color-picker".into()],
+                                program: "kaze-shell".into(),
+                                args: vec!["msg".into(), "color-picker".into()],
                             });
                         }
                     }
                     "clipboard" => {
                         if *button == PointerButton::Left {
                             ctx.push_action(ShellAction::SpawnCommand {
-                                program: "kaze-ctl".into(),
-                                args: vec!["clipboard-toggle".into()],
+                                program: "kaze-shell".into(),
+                                args: vec!["msg".into(), "clipboard-toggle".into()],
                             });
                         }
                     }
@@ -939,8 +939,8 @@ impl KazeExtension for BarExtension {
                     }
                     "session" if *button == PointerButton::Left => {
                         ctx.push_action(ShellAction::SpawnCommand {
-                            program: "kaze-ctl".into(),
-                            args: vec!["session-open".into()],
+                            program: "kaze-shell".into(),
+                            args: vec!["msg".into(), "session-menu-toggle".into()],
                         });
                     }
                     _ => {}
