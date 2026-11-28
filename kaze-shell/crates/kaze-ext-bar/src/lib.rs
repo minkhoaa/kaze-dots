@@ -348,7 +348,9 @@ impl KazeExtension for BarExtension {
             | SystemEvent::WallpaperFailed { .. }
             | SystemEvent::SurfaceClosed { .. }
             | SystemEvent::KeyboardFocusLost { .. }
-            | SystemEvent::ApplicationsChanged => DirtyFlags::NONE,
+            | SystemEvent::ApplicationsChanged
+            | SystemEvent::UserAccountChanged(_)
+            | SystemEvent::OfflineModeChanged(_) => DirtyFlags::NONE,
         }
     }
 

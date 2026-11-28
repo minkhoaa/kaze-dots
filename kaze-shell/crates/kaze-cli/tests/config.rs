@@ -45,5 +45,20 @@ fn validate_selects_one_file_without_using_the_host_environment() -> io::Result<
         format!("OK: {}", explicit.display())
     );
     assert!(String::from_utf8_lossy(&selected.stderr).contains("bar.background_opacity"));
+
+    let strict_out = Command::new(env!("CARGO_BIN_EXE_kaze-shell"))
+        .args(["config", "validate", "--strict", "--json"])
+        .arg(&explicit)
+        .output()?;
+    assert_eq!(strict_out.status.code(), Some(1));
+    let strict_stdout = String::from_utf8_lossy(&strict_out.stdout);
+    assert!(strict_stdout.contains("\"strict\": true"));
+    assert!(strict_stdout.contains("bar.background_opacity"));
+
+    let bad_flag = Command::new(env!("CARGO_BIN_EXE_kaze-shell"))
+        .args(["config", "validate", "--bogus"])
+        .output()?;
+    assert_eq!(bad_flag.status.code(), Some(2));
+
     fs::remove_dir_all(home)
 }

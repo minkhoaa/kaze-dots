@@ -2,6 +2,7 @@
 
 pub mod anim;
 pub mod config;
+pub mod crypto;
 pub mod extension;
 pub mod layout;
 pub mod state;
@@ -10,9 +11,13 @@ pub mod theme;
 
 pub use anim::{Spring, SPRING_MAX_DT_SECS, SPRING_POS_EPSILON, SPRING_VEL_EPSILON};
 pub use config::{
-    BarConfig, BarPosition, Config, DisplayConfig, IslandConfig, IslandStyle, LauncherConfig,
-    LayoutConfig, NotifyConfig, OsdConfig, ThemeConfig, WallpaperConfig,
+    AccessibilityConfig, AudioConfig, BarConfig, BarPosition, BrightnessConfig, CaptureConfig,
+    ClipboardConfig, Config, DisplayConfig, GeneralConfig, HooksConfig, IdleConfig, InputConfig,
+    IslandConfig, IslandStyle, LauncherConfig, LayoutConfig, LocationConfig, LockscreenConfig,
+    NetworkConfig, NotifyConfig, OsdConfig, PrivacyConfig, SessionConfig, SettingsStore,
+    ThemeConfig, ValidationIssue, ValidationReport, ValidationSeverity, WallpaperConfig,
 };
+pub use crypto::{check_network_allowed, EncryptedRecordStore, MasterKey};
 pub use extension::{
     DirtyFlags, ImeEvent, IpcResult, KazeExtension, KeyEvent, KeyModifiers, OsdKind, PointerButton,
     ShellAction, ShellContext, SystemEvent,
@@ -25,7 +30,8 @@ pub use state::{
     AppState, AudioState, BacklightState, BatteryState, BluetoothState, ClockTime, CustomActivity,
     DisplayActivity, DisplayStatus, MediaPlayback, MediaState, MonitorState, NetworkKind,
     NetworkState, NotificationAction, NotificationItem, NotificationUrgency, OutputInfo,
-    RecordActivity, ThemeMode, TrayItem, TrayMenuEntry, TrayMenuState, WorkspaceState,
+    RecordActivity, ThemeMode, TrayItem, TrayMenuEntry, TrayMenuState, UserAccountState,
+    WorkspaceState,
 };
 pub use surface::{
     Anchor, Color, EdgeInsets, HitTarget, IconKind, KeyboardMode, Layer, PaintCmd, Rect,

@@ -8,7 +8,7 @@ use kaze_core::layout::{layout_state_path, load_persisted_preset, save_persisted
 use kaze_core::theme::generate_all_templates;
 use kaze_core::{
     AppState, ClockTime, Config, DirtyFlags, IpcResult, KazeExtension, LayoutPreset,
-    ResolvedPalette, ShellAction, ShellContext, SystemEvent, ThemePaths,
+    ResolvedPalette, SettingsStore, ShellAction, ShellContext, SystemEvent, ThemePaths,
 };
 use kaze_ext_bar::BarExtension;
 use kaze_ext_cc::ControlCenterExtension;
@@ -22,6 +22,7 @@ use kaze_ext_wallpaper::{
 };
 use kaze_hypr::{HyprClient, HyprEvent, ReconnectBackoff};
 use kaze_ipc::{default_socket_path, IpcRequest, IpcResponder, IpcResponse, IpcServer};
+use kaze_sys::hooks::HookRequest;
 use kaze_sys::{backlight, SysCommand, SysHandle};
 use kaze_ui::UiState;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -47,6 +48,7 @@ struct Daemon {
     ui: UiState,
     state: AppState,
     config_path: PathBuf,
+    settings_path: Option<PathBuf>,
     layout_state_file: Option<PathBuf>,
     backlight_dir: Option<PathBuf>,
     theme_paths: ThemePaths,
@@ -68,6 +70,28 @@ struct Daemon {
 }
 
 impl Daemon {
+    fn fire_hook(
+        &self,
+        event: &str,
+        old: Option<String>,
+        new: Option<String>,
+        value: Option<String>,
+    ) {
+        let Some(cmd) = self.state.config.hooks.command_for(event) else {
+            return;
+        };
+        if let Some(ref sys) = self.sys {
+            sys.send(SysCommand::RunHook(HookRequest {
+                command: cmd.to_string(),
+                timeout_secs: self.state.config.hooks.timeout_secs,
+                event: event.to_string(),
+                old,
+                new,
+                value,
+            }));
+        }
+    }
+
     fn init_extensions(&mut self) {
         let mut ctx = ShellContext::new(&mut self.state);
         for ext in &mut self.extensions {
@@ -87,7 +111,21 @@ impl Daemon {
                 palette,
                 buffers,
             } => {
+                let prev_wall = self
+                    .state
+                    .wallpaper_path
+                    .as_ref()
+                    .map(|p| p.display().to_string());
+                let next_wall = path.display().to_string();
                 self.state.wallpaper_path = Some(path.clone());
+                if prev_wall.as_deref() != Some(next_wall.as_str()) {
+                    self.fire_hook(
+                        "wallpaper_changed",
+                        prev_wall,
+                        Some(next_wall.clone()),
+                        Some(next_wall),
+                    );
+                }
                 let mut uploaded_meta = Vec::with_capacity(buffers.len());
                 for (out_name, w, h, bgra) in buffers {
                     self.ui.set_wallpaper_buffer(&out_name, w, h, bgra);
@@ -173,10 +211,28 @@ impl Daemon {
                 self.state.clock = *clock;
             }
             SystemEvent::ThemeChanged(mode) => {
+                let prev_mode = self.state.theme_mode;
                 self.state.theme_mode = *mode;
+                if prev_mode != *mode {
+                    self.fire_hook(
+                        "theme_mode_changed",
+                        Some(prev_mode.as_str().to_string()),
+                        Some(mode.as_str().to_string()),
+                        Some(mode.as_str().to_string()),
+                    );
+                }
             }
             SystemEvent::LayoutPresetChanged(preset) => {
+                let prev_preset = self.state.layout_preset;
                 self.state.layout_preset = *preset;
+                if prev_preset != *preset {
+                    self.fire_hook(
+                        "layout_changed",
+                        Some(prev_preset.as_str().to_string()),
+                        Some(preset.as_str().to_string()),
+                        Some(preset.as_str().to_string()),
+                    );
+                }
             }
             SystemEvent::NetworkChanged(net) => {
                 self.state.network = net.clone();
@@ -185,7 +241,26 @@ impl Daemon {
                 self.state.bluetooth = bt.clone();
             }
             SystemEvent::BatteryChanged(bat) => {
+                let prev_pct = self.state.battery.percentage;
+                let prev_present = self.state.battery.present;
+                let prev_charging = self.state.battery.charging;
                 self.state.battery = bat.clone();
+                if bat.present && (!prev_present || prev_pct != bat.percentage) {
+                    self.fire_hook(
+                        "battery_percentage_changed",
+                        prev_present.then(|| prev_pct.to_string()),
+                        Some(bat.percentage.to_string()),
+                        Some(bat.percentage.to_string()),
+                    );
+                }
+                if bat.present && (!prev_present || prev_charging != bat.charging) {
+                    self.fire_hook(
+                        "ac_state_changed",
+                        prev_present.then(|| if prev_charging { "ac" } else { "battery" }.to_string()),
+                        Some(if bat.charging { "ac" } else { "battery" }.to_string()),
+                        Some(if bat.charging { "ac" } else { "battery" }.to_string()),
+                    );
+                }
             }
             SystemEvent::AudioChanged { state, .. } => {
                 self.state.audio = state.clone();
@@ -200,7 +275,16 @@ impl Daemon {
                 self.state.notifications_bus_owned = *owned;
             }
             SystemEvent::DndChanged(dnd) => {
+                let prev_dnd = self.state.dnd;
                 self.state.dnd = *dnd;
+                if prev_dnd != *dnd {
+                    self.fire_hook(
+                        "dnd_changed",
+                        Some(if prev_dnd { "on" } else { "off" }.to_string()),
+                        Some(if *dnd { "on" } else { "off" }.to_string()),
+                        Some(if *dnd { "on" } else { "off" }.to_string()),
+                    );
+                }
             }
             SystemEvent::NightLightChanged { enabled, temp_k } => {
                 self.state.nightlight_enabled = *enabled;
@@ -238,6 +322,12 @@ impl Daemon {
             | SystemEvent::SurfaceClosed { .. }
             | SystemEvent::KeyboardFocusLost { .. }
             | SystemEvent::ApplicationsChanged => {}
+            SystemEvent::UserAccountChanged(acct) => {
+                self.state.user_account = acct.clone();
+            }
+            SystemEvent::OfflineModeChanged(offline) => {
+                self.state.offline_mode = *offline;
+            }
         }
 
         let prev_unread = self.state.unread_notifications;
@@ -492,6 +582,14 @@ impl Daemon {
                         }
                     }
                 }
+                ShellAction::RunHook {
+                    event,
+                    old,
+                    new,
+                    value,
+                } => {
+                    self.fire_hook(&event, old, new, value);
+                }
             }
         }
     }
@@ -690,9 +788,10 @@ impl Daemon {
     }
 
     fn reload_config(&mut self) -> Result<(), String> {
-        match Config::load_from_path(&self.config_path) {
+        match Config::load_layered(&self.config_path, self.settings_path.as_deref()) {
             Ok(new_cfg) => {
                 let mode = new_cfg.theme.mode;
+                let offline = new_cfg.network.offline_mode;
                 let palette = ResolvedPalette::load(
                     &new_cfg.theme.palette,
                     new_cfg.theme.palettes_dir.as_deref(),
@@ -700,6 +799,7 @@ impl Daemon {
                 self.ui.set_font(&new_cfg.bar.font);
                 self.state.config = new_cfg;
                 self.state.theme_mode = mode;
+                self.state.offline_mode = offline;
                 self.state.palette = palette;
                 if let Err(err) = self.apply_templates() {
                     eprintln!("kaze-shell: template regeneration after reload failed: {err}");
@@ -960,6 +1060,61 @@ impl Daemon {
                 }
                 _ => IpcResponse::err("usage: caffeine-set <on|off>"),
             },
+            "offline-mode-status" => IpcResponse::ok(if self.state.offline_mode {
+                "on"
+            } else {
+                "off"
+            }),
+            "offline-mode-toggle" => {
+                let next = !self.state.offline_mode;
+                self.dispatch_system_event(SystemEvent::OfflineModeChanged(next));
+                IpcResponse::ok(if next { "on" } else { "off" })
+            }
+            "offline-mode-set" => match req.args.first().map(String::as_str) {
+                Some("on" | "true" | "1") => {
+                    self.dispatch_system_event(SystemEvent::OfflineModeChanged(true));
+                    IpcResponse::ok("on")
+                }
+                Some("off" | "false" | "0") => {
+                    self.dispatch_system_event(SystemEvent::OfflineModeChanged(false));
+                    IpcResponse::ok("off")
+                }
+                _ => IpcResponse::err("usage: offline-mode-set <on|off>"),
+            },
+            "config-set" => {
+                let (Some(key), Some(val)) = (req.args.first(), req.args.get(1)) else {
+                    responder.send(&IpcResponse::err("usage: config-set <dotted_key> <value>"));
+                    return;
+                };
+                let Some(ref sp) = self.settings_path else {
+                    responder.send(&IpcResponse::err("settings.toml path unavailable"));
+                    return;
+                };
+                match SettingsStore::set_override(sp, key, val) {
+                    Ok(()) => match self.reload_config() {
+                        Ok(()) => IpcResponse::ok(format!("set {key}")),
+                        Err(err) => IpcResponse::err(err),
+                    },
+                    Err(err) => IpcResponse::err(err),
+                }
+            }
+            "config-unset" => {
+                let Some(key) = req.args.first() else {
+                    responder.send(&IpcResponse::err("usage: config-unset <dotted_key>"));
+                    return;
+                };
+                let Some(ref sp) = self.settings_path else {
+                    responder.send(&IpcResponse::err("settings.toml path unavailable"));
+                    return;
+                };
+                match SettingsStore::remove_override(sp, key) {
+                    Ok(_) => match self.reload_config() {
+                        Ok(()) => IpcResponse::ok(format!("unset {key}")),
+                        Err(err) => IpcResponse::err(err),
+                    },
+                    Err(err) => IpcResponse::err(err),
+                }
+            }
             "status" | "inspect" => {
                 let outputs: Vec<&String> = self.state.outputs.keys().collect();
                 let hidden: Vec<&String> = self.state.hidden_bars.iter().collect();
@@ -969,6 +1124,8 @@ impl Daemon {
                     "layout_preset": self.state.layout_preset.as_str(),
                     "theme_mode": self.state.theme_mode.as_str(),
                     "palette": self.state.palette.name,
+                    "offline_mode": self.state.offline_mode,
+                    "user_account": self.state.user_account,
                     "hypr_connected": self.state.hypr_connected,
                     "active_workspace_id": self.state.active_workspace_id,
                     "display_status": self.state.display_status.kind_name(),
@@ -1297,7 +1454,8 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     let signals = Signals::new(&[Signal::SIGTERM, Signal::SIGINT, Signal::SIGCHLD])
         .map_err(|e| format!("failed registering signal handler: {e}"))?;
 
-    let config = match Config::load_from_path(&config_path) {
+    let settings_path = Config::settings_path().ok();
+    let config = match Config::load_layered(&config_path, settings_path.as_deref()) {
         Ok(cfg) => cfg,
         Err(err) => {
             eprintln!("kaze-shell: initial config warning (using defaults): {err}");
@@ -1326,13 +1484,14 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     let loop_signal = event_loop.get_signal();
 
     // Shared single-thread `notify` watcher for `config.toml` (+ symlink target),
-    // `/sys/class/backlight/*`, and `.desktop` application directories (1 thread total).
+    // `settings.toml`, `/sys/class/backlight/*`, and `.desktop` application directories (1 thread total).
     let backlight_dir = backlight::discover_device();
     let app_dirs = launcher_desktop::existing_watch_dirs();
     let (fs_tx, fs_rx) = channel::channel::<WatchNotice>();
     let watched_config_target: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
     let fs_watcher = start_shared_watcher(
         &config_path,
+        settings_path.as_deref(),
         backlight_dir.as_deref(),
         &app_dirs,
         fs_tx,
@@ -1386,6 +1545,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         ui,
         state,
         config_path,
+        settings_path,
         layout_state_file,
         backlight_dir,
         theme_paths,
@@ -1493,16 +1653,19 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     }
     daemon.init_extensions();
     daemon.connect_hypr_socket2();
+    daemon.fire_hook("started", None, None, None);
 
     event_loop
         .run(None, &mut daemon, |_| {})
         .map_err(|e| format!("event loop exited with error: {e}"))?;
 
+    daemon.fire_hook("stopping", None, None, None);
     Ok(())
 }
 
 fn start_shared_watcher(
     config_path: &Path,
+    settings_path: Option<&Path>,
     backlight_dir: Option<&Path>,
     app_dirs: &[PathBuf],
     tx: channel::Sender<WatchNotice>,
@@ -1512,9 +1675,15 @@ fn start_shared_watcher(
     if let Some(ref parent) = config_parent {
         let _ = fs::create_dir_all(parent);
     }
+    let settings_parent = settings_path.and_then(|p| p.parent()).map(Path::to_path_buf);
+    if let Some(ref parent) = settings_parent {
+        let _ = fs::create_dir_all(parent);
+    }
 
     let config_name = config_path.file_name().map(|n| n.to_os_string());
     let config_parent_for_cb = config_parent.clone();
+    let settings_name = settings_path.and_then(|p| p.file_name()).map(|n| n.to_os_string());
+    let settings_parent_for_cb = settings_parent.clone();
     let bl_dir_owned = backlight_dir.map(Path::to_path_buf);
     let app_dirs_owned: Vec<PathBuf> = app_dirs.to_vec();
 
@@ -1535,6 +1704,11 @@ fn start_shared_watcher(
                 let matches_config = config_name.as_ref().is_some_and(|expected| {
                     path.file_name().is_some_and(|n| n == expected.as_os_str())
                         && config_parent_for_cb
+                            .as_ref()
+                            .is_none_or(|p| path.parent() == Some(p.as_path()))
+                }) || settings_name.as_ref().is_some_and(|expected| {
+                    path.file_name().is_some_and(|n| n == expected.as_os_str())
+                        && settings_parent_for_cb
                             .as_ref()
                             .is_none_or(|p| path.parent() == Some(p.as_path()))
                 }) || symlink_target.as_ref().is_some_and(|target| {
@@ -1571,6 +1745,13 @@ fn start_shared_watcher(
     if let Some(ref parent) = config_parent {
         if let Err(err) = watcher.watch(parent, RecursiveMode::NonRecursive) {
             eprintln!("kaze-shell: failed watching {}: {err}", parent.display());
+        }
+    }
+    if let Some(ref sp) = settings_parent {
+        if config_parent.as_ref() != Some(sp) {
+            if let Err(err) = watcher.watch(sp, RecursiveMode::NonRecursive) {
+                eprintln!("kaze-shell: failed watching {}: {err}", sp.display());
+            }
         }
     }
     if let Some(bl_dir) = backlight_dir {

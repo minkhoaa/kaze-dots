@@ -1,21 +1,25 @@
 #![deny(clippy::unwrap_used)]
 
 pub mod backlight;
+pub mod dbus_accounts;
 mod dbus_bluez;
 mod dbus_logind;
 mod dbus_mpris;
 mod dbus_net;
 mod dbus_notify;
+pub mod dbus_secrets;
 pub mod dbus_sni;
 mod dbus_upower;
+pub mod hooks;
 pub mod pulse_native;
 
 use calloop::channel::Sender as CalloopSender;
-use kaze_core::SystemEvent;
+use kaze_core::{MasterKey, SystemEvent};
+use std::path::PathBuf;
 use std::thread::{self, JoinHandle};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum SysCommand {
     AudioStepVolume(i32),
     AudioSetVolume(u8),
@@ -52,6 +56,11 @@ pub enum SysCommand {
         menu_path: String,
         item_id: i32,
     },
+    RunHook(hooks::HookRequest),
+    ResolveMasterKey {
+        fallback_path: PathBuf,
+        reply: oneshot::Sender<Result<MasterKey, String>>,
+    },
     Shutdown,
 }
 
@@ -80,6 +89,18 @@ impl SysHandle {
 
     pub fn send(&self, cmd: SysCommand) {
         let _ = self.cmd_tx.send(cmd);
+    }
+
+    pub fn resolve_master_key(&self, fallback_path: PathBuf) -> Result<MasterKey, String> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SysCommand::ResolveMasterKey {
+                fallback_path,
+                reply: tx,
+            })
+            .map_err(|_| "kaze-sys channel closed".to_string())?;
+        rx.blocking_recv()
+            .map_err(|_| "kaze-sys master key resolution cancelled".to_string())?
     }
 }
 
@@ -152,6 +173,10 @@ fn run_sys_thread(
         let sni_task = sess_conn
             .clone()
             .map(|c| tokio::spawn(dbus_sni::run_sni_task(c, event_tx.clone(), tray_cmd_rx)));
+        let accounts_task = tokio::spawn(dbus_accounts::run_accounts_task(
+            sys_conn.clone(),
+            event_tx.clone(),
+        ));
         let mut caffeine_inhibit_fd: Option<zbus::zvariant::OwnedFd> = None;
 
         while let Some(cmd) = cmd_rx.recv().await {
@@ -252,9 +277,24 @@ fn run_sys_thread(
                         item_id,
                     });
                 }
+                SysCommand::RunHook(req) => {
+                    tokio::spawn(hooks::run_hook(req));
+                }
+                SysCommand::ResolveMasterKey {
+                    fallback_path,
+                    reply,
+                } => {
+                    let sess = sess_conn.clone();
+                    tokio::spawn(async move {
+                        let res = dbus_secrets::resolve_master_key(sess.as_ref(), &fallback_path).await;
+                        let _ = reply.send(res);
+                    });
+                }
                 SysCommand::Shutdown => break,
             }
         }
+
+        accounts_task.abort();
 
         audio_task.abort();
         if let Some(t) = net_task {

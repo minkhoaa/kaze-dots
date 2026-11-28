@@ -354,6 +354,49 @@ impl ClockTime {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct UserAccountState {
+    pub username: String,
+    pub real_name: String,
+    pub icon_path: Option<PathBuf>,
+    pub initials: String,
+}
+
+impl UserAccountState {
+    pub fn from_username(username: impl Into<String>, real_name: impl Into<String>) -> Self {
+        let username = username.into();
+        let real_name = real_name.into();
+        let source = if real_name.trim().is_empty() {
+            username.as_str()
+        } else {
+            real_name.as_str()
+        };
+        let initials = compute_initials(source);
+        Self {
+            username,
+            real_name,
+            icon_path: None,
+            initials,
+        }
+    }
+}
+
+pub fn compute_initials(name: &str) -> String {
+    let mut parts = name.split_whitespace().filter(|p| !p.is_empty());
+    let first = parts.next().and_then(|s| s.chars().next());
+    let second = parts.next().and_then(|s| s.chars().next());
+    match (first, second) {
+        (Some(a), Some(b)) => format!(
+            "{}{}",
+            a.to_uppercase().next().unwrap_or(a),
+            b.to_uppercase().next().unwrap_or(b)
+        ),
+        (Some(a), None) => a.to_uppercase().collect(),
+        _ => "?".to_string(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub config: Config,
@@ -391,6 +434,8 @@ pub struct AppState {
     pub active_notifications: usize,
     pub history_notifications: usize,
     pub notifications_bus_owned: bool,
+    pub offline_mode: bool,
+    pub user_account: UserAccountState,
     pub clock: ClockTime,
     pub hypr_connected: bool,
 }
@@ -399,9 +444,12 @@ impl AppState {
     pub fn new(config: Config) -> Self {
         let layout_preset = config.layout.preset;
         let theme_mode = config.theme.mode;
+        let offline_mode = config.network.offline_mode;
         let palette =
             ResolvedPalette::load(&config.theme.palette, config.theme.palettes_dir.as_deref());
         let (clock, _) = ClockTime::now_and_duration_to_next_minute();
+        let fallback_user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
+        let user_account = UserAccountState::from_username(&fallback_user, "");
         Self {
             config,
             layout_preset,
@@ -438,6 +486,8 @@ impl AppState {
             active_notifications: 0,
             history_notifications: 0,
             notifications_bus_owned: false,
+            offline_mode,
+            user_account,
             clock,
             hypr_connected: false,
         }

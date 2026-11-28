@@ -33,6 +33,7 @@ ab_glyph = { version = "0.2", default-features = false, features = ["std"] }
 bitflags = "2"
 calloop = { version = "0.14", features = ["signals"] }
 calloop-wayland-source = "0.4"
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
 cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
@@ -43,11 +44,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 smithay-client-toolkit = { version = "0.20", default-features = false, features = ["calloop", "xkbcommon"] }
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
-tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "sync", "macros"] }
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "sync", "macros", "process"] }
 toml = { version = "1", default-features = false, features = ["std", "serde", "parse"] }
-wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+toml_edit = "0.25"
+wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
+zeroize = { version = "1", features = ["derive"] }
 
 kaze-core = { path = "crates/kaze-core" }
 kaze-hypr = { path = "crates/kaze-hypr" }

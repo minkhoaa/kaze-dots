@@ -5,7 +5,7 @@ use crate::layout::LayoutPreset;
 use crate::state::{
     AppState, AudioState, BacklightState, BatteryState, BluetoothState, ClockTime, MediaState,
     MonitorState, NetworkState, NotificationItem, OutputInfo, ThemeMode, TrayItem, TrayMenuState,
-    WorkspaceState,
+    UserAccountState, WorkspaceState,
 };
 use crate::surface::SurfaceSpec;
 use crate::theme::ResolvedPalette;
@@ -189,6 +189,8 @@ pub enum SystemEvent {
         surface_id: String,
     },
     ApplicationsChanged,
+    UserAccountChanged(UserAccountState),
+    OfflineModeChanged(bool),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -265,6 +267,12 @@ pub enum ShellAction {
     ClearWallpaper,
     DmenuReply {
         selected: Option<String>,
+    },
+    RunHook {
+        event: String,
+        old: Option<String>,
+        new: Option<String>,
+        value: Option<String>,
     },
 }
 

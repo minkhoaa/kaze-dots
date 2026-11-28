@@ -20,7 +20,7 @@ Usage:\n\
   kaze-shell msg <command> [args...]\n\
   kaze-shell inspect\n\
   kaze-shell doctor [--offline] [--config PATH]\n\
-  kaze-shell config validate [PATH]\n\
+  kaze-shell config validate [--strict] [--json] [PATH]\n\
   kaze-shell --help | --version\n\n\
 IPC Commands (via `kaze-shell msg`):\n\
   ping                              Check daemon liveness\n\
@@ -54,7 +54,10 @@ IPC Commands (via `kaze-shell msg`):\n\
   dnd-status | dnd-on | dnd-off | dnd-toggle\n\
   notify-clear                      Dismiss active notification popups & unread badge\n\
   launcher-toggle | launcher-close  Toggle or close the App Launcher / dmenu overlay\n\
-  reload                            Reload config.toml without restarting\n\
+  offline-mode-status | offline-mode-toggle | offline-mode-set <on|off>\n\
+  config-set <key> <value>          Write Layer-2 override in settings.toml\n\
+  config-unset <key>                Remove Layer-2 override from settings.toml\n\
+  reload                            Reload config.toml + settings.toml without restarting\n\
   inspect | status                  Print daemon JSON diagnostics",
         env!("CARGO_PKG_VERSION")
     );
@@ -507,33 +510,74 @@ fn run_msg_cmd(args: &[String]) -> ExitCode {
 fn run_config_cmd(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
         Some("validate") => {
-            let path = match &args[1..] {
-                [] => match Config::default_path() {
+            let mut strict = false;
+            let mut json_out = false;
+            let mut path_arg: Option<PathBuf> = None;
+            for a in &args[1..] {
+                match a.as_str() {
+                    "-h" | "--help" => {
+                        println!("Usage: kaze-shell config validate [--strict] [--json] [PATH]");
+                        return ExitCode::SUCCESS;
+                    }
+                    "--strict" => strict = true,
+                    "--json" => json_out = true,
+                    s if s.starts_with('-') => {
+                        eprintln!("kaze-shell config validate: unknown option '{s}'");
+                        return ExitCode::from(2);
+                    }
+                    s => {
+                        if path_arg.is_some() {
+                            eprintln!("Usage: kaze-shell config validate [--strict] [--json] [PATH]");
+                            return ExitCode::from(2);
+                        }
+                        path_arg = Some(PathBuf::from(s));
+                    }
+                }
+            }
+            let path = match path_arg {
+                Some(p) => p,
+                None => match Config::default_path() {
                     Ok(p) => p,
                     Err(err) => {
                         eprintln!("kaze-shell config validate: {err}");
                         return ExitCode::FAILURE;
                     }
                 },
-                [single] => PathBuf::from(single),
-                _ => {
-                    eprintln!("Usage: kaze-shell config validate [PATH]");
-                    return ExitCode::from(2);
-                }
             };
-            match Config::load_from_path(&path) {
-                Ok(_) => {
+            let report = Config::validate_file(&path);
+            let strict_fail = report.has_errors() || (strict && report.has_warnings());
+            if json_out {
+                let mut payload = serde_json::to_value(&report).unwrap_or_default();
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("strict".into(), serde_json::Value::Bool(strict));
+                    obj.insert("ok".into(), serde_json::Value::Bool(!strict_fail));
+                }
+                if let Ok(s) = serde_json::to_string_pretty(&payload) {
+                    println!("{s}");
+                }
+            } else {
+                for w in &report.warnings {
+                    eprintln!("kaze-shell config validate: warning: {}: {}", w.path, w.message);
+                }
+                for e in &report.errors {
+                    if e.path.is_empty() {
+                        eprintln!("kaze-shell config validate: error: {}", e.message);
+                    } else {
+                        eprintln!("kaze-shell config validate: error: {}: {}", e.path, e.message);
+                    }
+                }
+                if !strict_fail {
                     println!("OK: {}", path.display());
-                    ExitCode::SUCCESS
                 }
-                Err(err) => {
-                    eprintln!("kaze-shell config validate: {err}");
-                    ExitCode::FAILURE
-                }
+            }
+            if strict_fail {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
             }
         }
         _ => {
-            eprintln!("Usage: kaze-shell config validate [PATH]");
+            eprintln!("Usage: kaze-shell config validate [--strict] [--json] [PATH]");
             ExitCode::from(2)
         }
     }
