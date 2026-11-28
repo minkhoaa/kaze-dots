@@ -286,6 +286,7 @@ mod tests {
             mic_muted: false,
             sink_name: "default".into(),
             source_name: String::new(),
+            ..AudioState::default()
         };
         state.audio = audio.clone();
         {

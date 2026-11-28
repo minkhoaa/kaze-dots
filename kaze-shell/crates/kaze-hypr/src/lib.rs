@@ -171,6 +171,27 @@ impl HyprClient {
         }
     }
 
+    pub fn set_privacy_noscreenshare(&self, patterns: &[String], enable: bool) {
+        for (idx, pat) in patterns.iter().enumerate() {
+            let trimmed = pat.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let escaped = trimmed.replace('\\', "\\\\").replace('"', "\\\"");
+            let flag = if enable { "true" } else { "false" };
+            let lua = format!(
+                "hl.window_rule({{ name = \"kaze-privacy-{idx}\", match = {{ class = \"^{escaped}$\" }}, no_screen_share = {flag} }})"
+            );
+            let eval_ok = self
+                .eval(&lua)
+                .is_ok_and(|resp| !resp.contains("unknown request") && !resp.contains("error"));
+            if !eval_ok {
+                let effect = if enable { "noscreenshare" } else { "unset" };
+                let _ = self.keyword("windowrule", &format!("{effect},^({trimmed})$"));
+            }
+        }
+    }
+
     pub fn snapshot(&self) -> Result<HyprSnapshot, HyprError> {
         let monitors_raw = self.request("j/monitors")?;
         let workspaces_raw = self.request("j/workspaces")?;
@@ -297,6 +318,10 @@ pub enum HyprEvent {
     Urgent {
         address: String,
     },
+    Screencast {
+        active: bool,
+        owner: u32,
+    },
     Other {
         kind: String,
         data: String,
@@ -364,6 +389,13 @@ impl HyprEvent {
             "urgent" => Self::Urgent {
                 address: data.to_string(),
             },
+            "screencast" => {
+                let (state_s, owner_s) = data.split_once(',').unwrap_or((data, "0"));
+                Self::Screencast {
+                    active: state_s.trim() == "1",
+                    owner: owner_s.trim().parse::<u32>().unwrap_or(0),
+                }
+            }
             _ => Self::Other {
                 kind: kind.to_string(),
                 data: data.to_string(),
@@ -524,6 +556,20 @@ mod tests {
         assert_eq!(
             HyprEvent::parse_line("configreloaded>>\n"),
             Some(HyprEvent::ConfigReloaded)
+        );
+        assert_eq!(
+            HyprEvent::parse_line("screencast>>1,0\n"),
+            Some(HyprEvent::Screencast {
+                active: true,
+                owner: 0
+            })
+        );
+        assert_eq!(
+            HyprEvent::parse_line("screencast>>0,0\n"),
+            Some(HyprEvent::Screencast {
+                active: false,
+                owner: 0
+            })
         );
 
         let mut backoff = ReconnectBackoff::default();

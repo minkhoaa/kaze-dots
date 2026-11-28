@@ -5,8 +5,8 @@ use crate::i18n::Locale;
 use crate::layout::LayoutPreset;
 use crate::state::{
     AppState, AudioState, BacklightState, BatteryState, BluetoothState, ClockTime, MediaState,
-    MonitorState, NetworkState, NotificationItem, OutputInfo, ThemeMode, TrayItem, TrayMenuState,
-    UserAccountState, WorkspaceState,
+    MonitorState, NetworkState, NotificationItem, OutputInfo, PowerProfileState, PrivacyState,
+    ThemeMode, TrayItem, TrayMenuState, UserAccountState, WorkspaceState,
 };
 use crate::surface::SurfaceSpec;
 use crate::theme::ResolvedPalette;
@@ -204,6 +204,9 @@ pub enum SystemEvent {
         bytes: Vec<u8>,
         source_is_self: bool,
     },
+    PowerProfileChanged(PowerProfileState),
+    PrivacyChanged(PrivacyState),
+    AudioSpectrum(Vec<u8>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -295,6 +298,22 @@ pub enum ShellAction {
     RequestClipboardPaste {
         surface_id: String,
     },
+    SetPowerProfile(String),
+    SetBrightnessMonitor {
+        monitor: String,
+        pct: u8,
+    },
+    AudioSetDefaultSink(String),
+    AudioSetDefaultSource(String),
+    AudioSetStreamVolume {
+        index: u32,
+        pct: u8,
+    },
+    AudioSetStreamMute {
+        index: u32,
+        muted: bool,
+    },
+    AudioSetSpectrumSubscribed(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

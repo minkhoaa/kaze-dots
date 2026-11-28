@@ -1,11 +1,13 @@
 use kaze_core::BacklightState;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use zbus::{Connection, Proxy};
 
 const BACKLIGHT_ROOT: &str = "/sys/class/backlight";
+const LOGIND_DEST: &str = "org.freedesktop.login1";
+const LOGIND_AUTO_SESSION: &str = "/org/freedesktop/login1/session/auto";
+const LOGIND_SESSION_IFACE: &str = "org.freedesktop.login1.Session";
 
-/// Returns the first usable `/sys/class/backlight/<dev>` directory, if any exists.
 pub fn discover_device() -> Option<PathBuf> {
     let entries = fs::read_dir(BACKLIGHT_ROOT).ok()?;
     let mut dirs: Vec<PathBuf> = entries
@@ -49,68 +51,68 @@ pub fn read_backlight() -> Option<BacklightState> {
     read_backlight_from_dir(&dir)
 }
 
-/// Steps screen brightness by `delta_pct` (e.g. +5 or -5) via `brightnessctl`
-/// (with direct sysfs fallback) and returns the updated state if a backlight exists.
-pub fn step_backlight(delta_pct: i32) -> Option<BacklightState> {
-    let dir = discover_device()?;
-    let arg = if delta_pct >= 0 {
-        format!("+{}%", delta_pct.min(100))
-    } else {
-        format!("{}%-", delta_pct.unsigned_abs().min(100))
-    };
-
-    let ran_ctl = Command::new("brightnessctl")
-        .args(["set", &arg])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
-
-    if !ran_ctl {
-        if let (Ok(cur_s), Ok(max_s)) = (
-            fs::read_to_string(dir.join("brightness")),
-            fs::read_to_string(dir.join("max_brightness")),
-        ) {
-            if let (Ok(cur), Ok(max)) = (cur_s.trim().parse::<i64>(), max_s.trim().parse::<i64>()) {
-                if max > 0 {
-                    let step = (max * i64::from(delta_pct)) / 100;
-                    let next = (cur + step).clamp(1, max);
-                    let _ = fs::write(dir.join("brightness"), next.to_string());
-                }
+async fn apply_raw_brightness(
+    conn: Option<&Connection>,
+    dir: &Path,
+    raw_val: u32,
+) -> Result<(), ()> {
+    let device = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("backlight");
+    if let Some(c) = conn {
+        if let Ok(proxy) = Proxy::new(c, LOGIND_DEST, LOGIND_AUTO_SESSION, LOGIND_SESSION_IFACE).await
+        {
+            if proxy
+                .call::<_, _, ()>("SetBrightness", &("backlight", device, raw_val))
+                .await
+                .is_ok()
+            {
+                return Ok(());
             }
         }
     }
+    fs::write(dir.join("brightness"), raw_val.to_string()).map_err(|_| ())
+}
 
+/// Steps screen brightness by `delta_pct` via `logind.Session.SetBrightness`
+/// with direct sysfs fallback (0 `brightnessctl` dependency).
+pub async fn step_backlight_async(conn: Option<&Connection>, delta_pct: i32) -> Option<BacklightState> {
+    let dir = discover_device()?;
+    let cur = fs::read_to_string(dir.join("brightness"))
+        .ok()?
+        .trim()
+        .parse::<i64>()
+        .ok()?;
+    let max = fs::read_to_string(dir.join("max_brightness"))
+        .ok()?
+        .trim()
+        .parse::<i64>()
+        .ok()?;
+    if max <= 0 {
+        return None;
+    }
+    let step = (max * i64::from(delta_pct)) / 100;
+    let next = (cur + step).clamp(1, max) as u32;
+    let _ = apply_raw_brightness(conn, &dir, next).await;
     read_backlight_from_dir(&dir)
 }
 
-/// Sets absolute screen brightness percentage (`1..=100`) via `brightnessctl`
-/// (with direct sysfs fallback) and returns the updated state if a backlight exists.
-pub fn set_backlight(pct: u8) -> Option<BacklightState> {
+/// Sets absolute screen brightness percentage (`1..=100`) via `logind.Session.SetBrightness`
+/// with direct sysfs fallback.
+pub async fn set_backlight_async(conn: Option<&Connection>, pct: u8) -> Option<BacklightState> {
     let dir = discover_device()?;
-    let clamped = pct.clamp(1, 100);
-    let arg = format!("{clamped}%");
-
-    let ran_ctl = Command::new("brightnessctl")
-        .args(["set", &arg])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
-
-    if !ran_ctl {
-        if let Ok(max_s) = fs::read_to_string(dir.join("max_brightness")) {
-            if let Ok(max) = max_s.trim().parse::<i64>() {
-                if max > 0 {
-                    let next = ((max * i64::from(clamped)) / 100).clamp(1, max);
-                    let _ = fs::write(dir.join("brightness"), next.to_string());
-                }
-            }
-        }
+    let max = fs::read_to_string(dir.join("max_brightness"))
+        .ok()?
+        .trim()
+        .parse::<i64>()
+        .ok()?;
+    if max <= 0 {
+        return None;
     }
-
+    let clamped = pct.clamp(1, 100);
+    let next = ((max * i64::from(clamped)) / 100).clamp(1, max) as u32;
+    let _ = apply_raw_brightness(conn, &dir, next).await;
     read_backlight_from_dir(&dir)
 }
 

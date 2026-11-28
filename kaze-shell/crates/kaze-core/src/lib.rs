@@ -7,6 +7,7 @@ pub mod dconf_read;
 pub mod extension;
 pub mod i18n;
 pub mod layout;
+pub mod solar;
 pub mod state;
 pub mod surface;
 pub mod text_input;
@@ -33,9 +34,10 @@ pub use layout::{
     HyprGeometrySpec, LayoutPreset,
 };
 pub use state::{
-    AppState, AudioState, BacklightState, BatteryState, BluetoothState, ClockTime, CustomActivity,
-    DisplayActivity, DisplayStatus, MediaPlayback, MediaState, MonitorState, NetworkKind,
-    NetworkState, NotificationAction, NotificationItem, NotificationUrgency, OutputInfo,
+    AppState, AudioDeviceInfo, AudioState, AudioStreamInfo, BacklightState, BatteryDeviceDetail,
+    BatteryState, BluetoothState, ClockTime, CustomActivity, DisplayActivity, DisplayStatus,
+    MediaPlayback, MediaState, MonitorState, NetworkKind, NetworkState, NotificationAction,
+    NotificationItem, NotificationUrgency, OutputInfo, PowerProfileState, PrivacyState,
     RecordActivity, ThemeMode, TrayItem, TrayMenuEntry, TrayMenuState, UserAccountState,
     WorkspaceState,
 };

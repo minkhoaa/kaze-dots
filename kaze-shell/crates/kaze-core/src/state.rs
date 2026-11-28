@@ -124,11 +124,48 @@ pub struct TrayMenuState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
+pub struct BatteryDeviceDetail {
+    pub name: String,
+    pub kind: String,
+    pub percentage: u8,
+    pub charging: bool,
+    pub capacity_pct: Option<u8>,
+    pub charge_limit_pct: Option<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct BatteryState {
     pub present: bool,
     pub percentage: u8,
     pub charging: bool,
     pub low: bool,
+    pub ac_online: bool,
+    pub health_pct: Option<u8>,
+    pub charge_limit_pct: Option<u8>,
+    pub devices: Vec<BatteryDeviceDetail>,
+    pub peripherals: Vec<BatteryDeviceDetail>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AudioDeviceInfo {
+    pub index: u32,
+    pub name: String,
+    pub description: String,
+    pub volume_pct: u8,
+    pub muted: bool,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AudioStreamInfo {
+    pub index: u32,
+    pub app_name: String,
+    pub media_name: String,
+    pub volume_pct: u8,
+    pub muted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -140,6 +177,27 @@ pub struct AudioState {
     pub mic_muted: bool,
     pub sink_name: String,
     pub source_name: String,
+    pub sinks: Vec<AudioDeviceInfo>,
+    pub sources: Vec<AudioDeviceInfo>,
+    pub streams: Vec<AudioStreamInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct PowerProfileState {
+    pub available: bool,
+    pub active: String,
+    pub available_profiles: Vec<String>,
+    pub degraded_reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct PrivacyState {
+    pub mic_apps: Vec<String>,
+    pub camera_apps: Vec<String>,
+    pub screenshare_apps: Vec<String>,
+    pub noscreenshare_active: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -420,12 +478,17 @@ pub struct AppState {
     pub network: NetworkState,
     pub bluetooth: BluetoothState,
     pub battery: BatteryState,
+    pub power_profile: PowerProfileState,
+    pub privacy: PrivacyState,
     pub audio: AudioState,
+    pub audio_spectrum: Vec<u8>,
     pub backlight: BacklightState,
     pub media: MediaState,
     pub dnd: bool,
     pub nightlight_enabled: bool,
     pub nightlight_temp_k: u32,
+    pub nightlight_auto: bool,
+    pub nightlight_manual_override: bool,
     pub caffeine_enabled: bool,
     pub cc_open: bool,
     pub tray_bus_owned: bool,
@@ -463,6 +526,7 @@ impl AppState {
         let layout_preset = config.layout.preset;
         let theme_mode = config.theme.mode;
         let offline_mode = config.network.offline_mode;
+        let nightlight_auto = config.location.auto_nightlight;
         let locale = Locale::resolve(&config.general.locale);
         let effective_font_scale = Self::compute_effective_font_scale(&config);
         let palette =
@@ -490,12 +554,17 @@ impl AppState {
             network: NetworkState::default(),
             bluetooth: BluetoothState::default(),
             battery: BatteryState::default(),
+            power_profile: PowerProfileState::default(),
+            privacy: PrivacyState::default(),
             audio: AudioState::default(),
+            audio_spectrum: Vec::new(),
             backlight: BacklightState::default(),
             media: MediaState::default(),
             dnd: false,
             nightlight_enabled: false,
             nightlight_temp_k: 4000,
+            nightlight_auto,
+            nightlight_manual_override: false,
             caffeine_enabled: false,
             cc_open: false,
             tray_bus_owned: false,

@@ -5,6 +5,7 @@ use calloop::timer::{TimeoutAction, Timer};
 use calloop::{EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, RegistrationToken};
 use calloop_wayland_source::WaylandSource;
 use kaze_core::layout::{layout_state_path, load_persisted_preset, save_persisted_preset};
+use kaze_core::solar::evaluate_solar_now;
 use kaze_core::theme::generate_all_templates;
 use kaze_core::{
     AppState, ClockTime, Config, DirtyFlags, IpcResult, KazeExtension, LayoutPreset, Locale,
@@ -342,6 +343,42 @@ impl Daemon {
                     self.ui.note_clipboard_captured(mime, bytes);
                 }
             }
+            SystemEvent::PowerProfileChanged(pp) => {
+                let prev = self.state.power_profile.active.clone();
+                self.state.power_profile = pp.clone();
+                if !prev.is_empty() && !pp.active.is_empty() && prev != pp.active {
+                    self.fire_hook(
+                        "power_profile_changed",
+                        Some(prev),
+                        Some(pp.active.clone()),
+                        Some(pp.active.clone()),
+                    );
+                }
+            }
+            SystemEvent::PrivacyChanged(priv_st) => {
+                let was_sharing = !self.state.privacy.screenshare_apps.is_empty();
+                let is_sharing = !priv_st.screenshare_apps.is_empty();
+                let mut next = priv_st.clone();
+                if was_sharing != is_sharing {
+                    if let Some(ref client) = self.hypr_client {
+                        client.set_privacy_noscreenshare(
+                            &self.state.config.privacy.hide_on_share,
+                            is_sharing,
+                        );
+                    }
+                    next.noscreenshare_active = is_sharing;
+                } else {
+                    next.noscreenshare_active = self.state.privacy.noscreenshare_active;
+                }
+                self.state.privacy = next;
+            }
+            SystemEvent::AudioSpectrum(bars) => {
+                self.state.audio_spectrum = bars.clone();
+            }
+        }
+        if matches!(&event, SystemEvent::TimerFired { id } if id == "kaze:solar") {
+            self.state.nightlight_manual_override = false;
+            self.sync_solar_schedule(true);
         }
 
         let prev_unread = self.state.unread_notifications;
@@ -621,6 +658,42 @@ impl Daemon {
                         let _ = self.wayland_conn.flush();
                     }
                 }
+                ShellAction::SetPowerProfile(prof) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::SetPowerProfile(prof));
+                    }
+                }
+                ShellAction::SetBrightnessMonitor { monitor, pct } => {
+                    self.apply_monitor_brightness(&monitor, pct);
+                }
+                ShellAction::AudioSetDefaultSink(name) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::AudioSetDefaultSink(name));
+                    }
+                }
+                ShellAction::AudioSetDefaultSource(name) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::AudioSetDefaultSource(name));
+                    }
+                }
+                ShellAction::AudioSetStreamVolume { index, pct } => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::AudioSetStreamVolume { index, pct });
+                    }
+                }
+                ShellAction::AudioSetStreamMute { index, muted } => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::AudioSetStreamMute { index, muted });
+                    }
+                }
+                ShellAction::AudioSetSpectrumSubscribed(count) => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::AudioSetSpectrumSubscribers {
+                            count,
+                            fps: self.state.config.audio.spectrum_frame_rate,
+                        });
+                    }
+                }
             }
         }
     }
@@ -767,20 +840,57 @@ impl Daemon {
 
     fn apply_nightlight(&mut self, enabled: bool, temp_k: u32) {
         let clamped = temp_k.clamp(2500, 6500);
-        let applied_native = self.ui.set_nightlight(enabled, clamped);
+        let _applied_native = self.ui.set_nightlight(enabled, clamped);
         let _ = self.wayland_conn.flush();
-        if !applied_native {
-            // Fallback for compositors without zwlr_gamma_control_manager_v1: hyprsunset.
-            if enabled {
-                self.spawn_child("hyprsunset", &["-t".to_string(), clamped.to_string()]);
-            } else {
-                self.spawn_child("pkill", &["-x".to_string(), "hyprsunset".to_string()]);
-            }
-        }
         self.dispatch_system_event(SystemEvent::NightLightChanged {
             enabled,
             temp_k: clamped,
         });
+    }
+
+    fn apply_monitor_brightness(&mut self, monitor: &str, pct: u8) {
+        let clamped = pct.clamp(1, 100);
+        if monitor == "all" || monitor == "internal" {
+            if let Some(ref sys) = self.sys {
+                sys.send(SysCommand::BacklightSet(clamped));
+            }
+        }
+        if monitor != "internal" {
+            if let Some(ref sys) = self.sys {
+                sys.send(SysCommand::DdcSetBrightness {
+                    monitor: monitor.to_string(),
+                    pct: clamped,
+                    cfg: self.state.config.brightness.clone(),
+                });
+            }
+        }
+    }
+
+    fn sync_solar_schedule(&mut self, apply_now: bool) {
+        let loc = self.state.config.location.clone();
+        if !loc.auto_nightlight && !loc.auto_brightness && !self.state.nightlight_auto {
+            self.cancel_named_timer("kaze:solar");
+            return;
+        }
+        let tr = evaluate_solar_now(loc.lat, loc.lon, &loc.fallback_sunrise, &loc.fallback_sunset);
+        if (apply_now || !self.state.nightlight_manual_override)
+            && (loc.auto_nightlight || self.state.nightlight_auto)
+        {
+            if tr.is_daytime {
+                self.apply_nightlight(loc.day_temp_k < 6500, loc.day_temp_k);
+            } else {
+                self.apply_nightlight(true, loc.night_temp_k);
+            }
+        }
+        if loc.auto_brightness && !self.state.nightlight_manual_override {
+            let target_pct = if tr.is_daytime {
+                loc.day_brightness
+            } else {
+                loc.night_brightness
+            };
+            self.apply_monitor_brightness("all", target_pct);
+        }
+        self.schedule_named_timer("kaze:solar".to_string(), tr.next_transition_in);
     }
 
     fn apply_caffeine(&mut self, enabled: bool) {
@@ -872,6 +982,7 @@ impl Daemon {
                     self.dispatch_system_event(SystemEvent::LocaleChanged(new_locale));
                 }
                 self.dispatch_system_event(SystemEvent::ConfigReloaded);
+                self.sync_solar_schedule(false);
                 Ok(())
             }
             Err(err) => {
@@ -1076,6 +1187,8 @@ impl Daemon {
             }),
             "nightlight-toggle" => {
                 let next = !self.state.nightlight_enabled;
+                self.state.nightlight_manual_override = true;
+                self.state.nightlight_auto = false;
                 self.apply_nightlight(next, self.state.nightlight_temp_k);
                 IpcResponse::ok(if next {
                     format!("on {}K", self.state.nightlight_temp_k)
@@ -1084,16 +1197,32 @@ impl Daemon {
                 })
             }
             "nightlight-set" => match req.args.first().map(String::as_str) {
+                Some("auto") => {
+                    self.state.nightlight_auto = true;
+                    self.state.nightlight_manual_override = false;
+                    self.sync_solar_schedule(true);
+                    IpcResponse::ok(if self.state.nightlight_enabled {
+                        format!("auto {}K", self.state.nightlight_temp_k)
+                    } else {
+                        "auto day".into()
+                    })
+                }
                 Some("off" | "0" | "false") => {
+                    self.state.nightlight_auto = false;
+                    self.state.nightlight_manual_override = true;
                     self.apply_nightlight(false, self.state.nightlight_temp_k);
                     IpcResponse::ok("off")
                 }
                 Some("on" | "true") => {
+                    self.state.nightlight_auto = false;
+                    self.state.nightlight_manual_override = true;
                     self.apply_nightlight(true, self.state.nightlight_temp_k);
                     IpcResponse::ok(format!("on {}K", self.state.nightlight_temp_k))
                 }
                 Some(raw) => match raw.trim_end_matches(['K', 'k']).parse::<u32>() {
                     Ok(temp_k) => {
+                        self.state.nightlight_auto = false;
+                        self.state.nightlight_manual_override = true;
                         let enabled = temp_k < 6500;
                         self.apply_nightlight(enabled, temp_k);
                         IpcResponse::ok(if enabled {
@@ -1102,10 +1231,134 @@ impl Daemon {
                             "off".into()
                         })
                     }
-                    Err(_) => IpcResponse::err("usage: nightlight-set <on|off|2500..6500>"),
+                    Err(_) => IpcResponse::err("usage: nightlight-set <on|off|auto|2500..6500>"),
                 },
-                None => IpcResponse::err("usage: nightlight-set <on|off|2500..6500>"),
+                None => IpcResponse::err("usage: nightlight-set <on|off|auto|2500..6500>"),
             },
+            "brightness-set" => {
+                let Some(target) = req.args.first().map(String::as_str) else {
+                    responder.send(&IpcResponse::err("usage: brightness-set <mon|all> <1..=100>"));
+                    return;
+                };
+                let Some(pct) = req.args.get(1).and_then(|v| v.parse::<u8>().ok()) else {
+                    responder.send(&IpcResponse::err("usage: brightness-set <mon|all> <1..=100>"));
+                    return;
+                };
+                self.state.nightlight_manual_override = true;
+                self.apply_monitor_brightness(target, pct);
+                IpcResponse::ok(format!("{target} {}%", pct.clamp(1, 100)))
+            }
+            "power-profile-status" => IpcResponse::ok_data(
+                if self.state.power_profile.available {
+                    self.state.power_profile.active.clone()
+                } else {
+                    "unavailable".into()
+                },
+                serde_json::to_value(&self.state.power_profile).unwrap_or(serde_json::Value::Null),
+            ),
+            "power-profile-set" => {
+                let Some(prof) = req.args.first().cloned() else {
+                    responder.send(&IpcResponse::err(
+                        "usage: power-profile-set <power-saver|balanced|performance>",
+                    ));
+                    return;
+                };
+                if let Some(ref sys) = self.sys {
+                    sys.send(SysCommand::SetPowerProfile(prof.clone()));
+                }
+                IpcResponse::ok(prof)
+            }
+            "power-profile-next" => {
+                let profiles = if self.state.power_profile.available_profiles.is_empty() {
+                    vec![
+                        "power-saver".to_string(),
+                        "balanced".to_string(),
+                        "performance".to_string(),
+                    ]
+                } else {
+                    self.state.power_profile.available_profiles.clone()
+                };
+                let cur_idx = profiles
+                    .iter()
+                    .position(|p| p == &self.state.power_profile.active)
+                    .unwrap_or(0);
+                let next = profiles[(cur_idx + 1) % profiles.len()].clone();
+                if let Some(ref sys) = self.sys {
+                    sys.send(SysCommand::SetPowerProfile(next.clone()));
+                }
+                IpcResponse::ok(next)
+            }
+            "privacy-status" => IpcResponse::ok_data(
+                "ok",
+                serde_json::to_value(&self.state.privacy).unwrap_or(serde_json::Value::Null),
+            ),
+            "audio-sinks" => IpcResponse::ok_data(
+                "ok",
+                serde_json::to_value(&self.state.audio.sinks).unwrap_or(serde_json::Value::Null),
+            ),
+            "audio-sources" => IpcResponse::ok_data(
+                "ok",
+                serde_json::to_value(&self.state.audio.sources).unwrap_or(serde_json::Value::Null),
+            ),
+            "audio-streams" => IpcResponse::ok_data(
+                "ok",
+                serde_json::to_value(&self.state.audio.streams).unwrap_or(serde_json::Value::Null),
+            ),
+            "audio-sink-set" => match req.args.first() {
+                Some(name) => {
+                    self.execute_actions(vec![ShellAction::AudioSetDefaultSink(name.clone())]);
+                    IpcResponse::ok(name.clone())
+                }
+                None => IpcResponse::err("usage: audio-sink-set <name>"),
+            },
+            "audio-source-set" => match req.args.first() {
+                Some(name) => {
+                    self.execute_actions(vec![ShellAction::AudioSetDefaultSource(name.clone())]);
+                    IpcResponse::ok(name.clone())
+                }
+                None => IpcResponse::err("usage: audio-source-set <name>"),
+            },
+            "audio-stream-volume" => {
+                if let (Some(idx), Some(pct)) = (
+                    req.args.first().and_then(|s| s.parse::<u32>().ok()),
+                    req.args.get(1).and_then(|s| s.parse::<u8>().ok()),
+                ) {
+                    self.execute_actions(vec![ShellAction::AudioSetStreamVolume { index: idx, pct }]);
+                    IpcResponse::ok(format!("stream {idx} {pct}%"))
+                } else {
+                    IpcResponse::err("usage: audio-stream-volume <index> <pct>")
+                }
+            }
+            "audio-stream-mute" => {
+                if let Some(idx) = req.args.first().and_then(|s| s.parse::<u32>().ok()) {
+                    let muted = req
+                        .args
+                        .get(1)
+                        .map(|s| matches!(s.as_str(), "on" | "true" | "1"))
+                        .unwrap_or_else(|| {
+                            !self
+                                .state
+                                .audio
+                                .streams
+                                .iter()
+                                .find(|s| s.index == idx)
+                                .is_some_and(|s| s.muted)
+                        });
+                    self.execute_actions(vec![ShellAction::AudioSetStreamMute { index: idx, muted }]);
+                    IpcResponse::ok(format!("stream {idx} muted={muted}"))
+                } else {
+                    IpcResponse::err("usage: audio-stream-mute <index> [on|off]")
+                }
+            }
+            "spectrum-subscribe" => {
+                let count = req
+                    .args
+                    .first()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(1);
+                self.execute_actions(vec![ShellAction::AudioSetSpectrumSubscribed(count)]);
+                IpcResponse::ok(format!("subscribers={count}"))
+            }
             "caffeine-status" => IpcResponse::ok(if self.state.caffeine_enabled {
                 "on"
             } else {
@@ -1247,6 +1500,11 @@ impl Daemon {
                         "high_contrast".into(),
                         serde_json::json!(self.state.config.accessibility.high_contrast),
                     );
+                    obj.insert(
+                        "power_profile".into(),
+                        serde_json::json!(self.state.power_profile),
+                    );
+                    obj.insert("privacy".into(), serde_json::json!(self.state.privacy));
                 }
                 IpcResponse::ok_data("ok", data)
             }
@@ -1436,6 +1694,11 @@ impl Daemon {
                 }
                 HyprEvent::ConfigReloaded => {
                     config_reloaded = true;
+                }
+                HyprEvent::Screencast { active, .. } => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::HyprScreencastUpdate(active));
+                    }
                 }
                 _ => {}
             }
@@ -1761,6 +2024,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         daemon.dispatch_system_event(ev);
     }
     daemon.init_extensions();
+    daemon.sync_solar_schedule(false);
     daemon.connect_hypr_socket2();
     daemon.fire_hook("started", None, None, None);
 

@@ -7,14 +7,17 @@ mod dbus_logind;
 mod dbus_mpris;
 mod dbus_net;
 mod dbus_notify;
+mod dbus_power;
 pub mod dbus_secrets;
 pub mod dbus_sni;
 mod dbus_upower;
+pub mod ddc;
 pub mod hooks;
+pub mod pipewire_privacy;
 pub mod pulse_native;
 
 use calloop::channel::Sender as CalloopSender;
-use kaze_core::{MasterKey, SystemEvent};
+use kaze_core::{BrightnessConfig, MasterKey, SystemEvent};
 use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,8 +32,29 @@ pub enum SysCommand {
     AudioSetVolume(u8),
     AudioToggleMute,
     AudioToggleMicMute,
+    AudioSetDefaultSink(String),
+    AudioSetDefaultSource(String),
+    AudioSetStreamVolume {
+        index: u32,
+        pct: u8,
+    },
+    AudioSetStreamMute {
+        index: u32,
+        muted: bool,
+    },
+    AudioSetSpectrumSubscribers {
+        count: usize,
+        fps: u32,
+    },
     BacklightStep(i32),
     BacklightSet(u8),
+    DdcSetBrightness {
+        monitor: String,
+        pct: u8,
+        cfg: BrightnessConfig,
+    },
+    SetPowerProfile(String),
+    HyprScreencastUpdate(bool),
     MediaCommand(String),
     WifiToggle,
     BluetoothToggle,
@@ -153,13 +177,32 @@ fn run_sys_thread(
         let (net_cmd_tx, net_cmd_rx) = mpsc::unbounded_channel();
         let (bluez_cmd_tx, bluez_cmd_rx) = mpsc::unbounded_channel();
         let (tray_cmd_tx, tray_cmd_rx) = mpsc::unbounded_channel();
+        let (power_cmd_tx, power_cmd_rx) = mpsc::unbounded_channel();
+        let (ddc_cmd_tx, ddc_cmd_rx) = mpsc::unbounded_channel();
+        let (privacy_tx, privacy_rx) = mpsc::unbounded_channel();
 
         // Share ONE System Bus and ONE Session Bus connection across all observers
         // (2 sockets total instead of 6; avoids spawning parallel zbus/tokio handshake threads).
         let sys_conn = zbus::Connection::system().await.ok();
         let sess_conn = zbus::Connection::session().await.ok();
 
-        let audio_task = tokio::spawn(pulse_native::run_audio_task(event_tx.clone(), audio_cmd_rx));
+        let audio_task = tokio::spawn(pulse_native::run_audio_task(
+            event_tx.clone(),
+            privacy_tx.clone(),
+            audio_cmd_rx,
+        ));
+        let privacy_task = tokio::spawn(pipewire_privacy::run_privacy_task(
+            event_tx.clone(),
+            privacy_rx,
+        ));
+        let ddc_task = tokio::spawn(ddc::run_ddc_task(ddc_cmd_rx));
+        let power_task = sys_conn.clone().map(|c| {
+            tokio::spawn(dbus_power::run_power_profiles_task(
+                c,
+                event_tx.clone(),
+                power_cmd_rx,
+            ))
+        });
         let net_task = sys_conn
             .clone()
             .map(|c| tokio::spawn(dbus_net::run_network_task(c, event_tx.clone(), net_cmd_rx)));
@@ -208,8 +251,23 @@ fn run_sys_thread(
                 SysCommand::AudioToggleMicMute => {
                     let _ = audio_cmd_tx.send(pulse_native::AudioCmd::ToggleMicMute);
                 }
+                SysCommand::AudioSetDefaultSink(name) => {
+                    let _ = audio_cmd_tx.send(pulse_native::AudioCmd::SetDefaultSink(name));
+                }
+                SysCommand::AudioSetDefaultSource(name) => {
+                    let _ = audio_cmd_tx.send(pulse_native::AudioCmd::SetDefaultSource(name));
+                }
+                SysCommand::AudioSetStreamVolume { index, pct } => {
+                    let _ = audio_cmd_tx.send(pulse_native::AudioCmd::SetStreamVolume { index, pct });
+                }
+                SysCommand::AudioSetStreamMute { index, muted } => {
+                    let _ = audio_cmd_tx.send(pulse_native::AudioCmd::SetStreamMute { index, muted });
+                }
+                SysCommand::AudioSetSpectrumSubscribers { count, fps } => {
+                    let _ = audio_cmd_tx.send(pulse_native::AudioCmd::SetSpectrumSubscribers { count, fps });
+                }
                 SysCommand::BacklightStep(delta) => {
-                    if let Some(state) = backlight::step_backlight(delta) {
+                    if let Some(state) = backlight::step_backlight_async(sys_conn.as_ref(), delta).await {
                         let _ = event_tx.send(SystemEvent::BacklightChanged {
                             state,
                             trigger_osd: true,
@@ -217,12 +275,21 @@ fn run_sys_thread(
                     }
                 }
                 SysCommand::BacklightSet(pct) => {
-                    if let Some(state) = backlight::set_backlight(pct) {
+                    if let Some(state) = backlight::set_backlight_async(sys_conn.as_ref(), pct).await {
                         let _ = event_tx.send(SystemEvent::BacklightChanged {
                             state,
                             trigger_osd: false,
                         });
                     }
+                }
+                SysCommand::DdcSetBrightness { monitor, pct, cfg } => {
+                    let _ = ddc_cmd_tx.send(ddc::DdcRequest { monitor, pct, cfg });
+                }
+                SysCommand::SetPowerProfile(prof) => {
+                    let _ = power_cmd_tx.send(prof);
+                }
+                SysCommand::HyprScreencastUpdate(active) => {
+                    let _ = privacy_tx.send(pipewire_privacy::PrivacyUpdate::HyprScreencast(active));
                 }
                 SysCommand::MediaCommand(action) => {
                     let _ = media_cmd_tx.send(action);
@@ -341,7 +408,11 @@ fn run_sys_thread(
         }
 
         accounts_task.abort();
-
+        privacy_task.abort();
+        ddc_task.abort();
+        if let Some(t) = power_task {
+            t.abort();
+        }
         audio_task.abort();
         if let Some(t) = net_task {
             t.abort();

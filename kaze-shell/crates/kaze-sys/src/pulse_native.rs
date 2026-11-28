@@ -1,6 +1,8 @@
 use calloop::channel::Sender as CalloopSender;
-use kaze_core::{AudioState, OsdKind, SystemEvent};
+use kaze_core::{AudioDeviceInfo, AudioState, AudioStreamInfo, OsdKind, SystemEvent};
+use std::collections::HashMap;
 use std::env;
+use std::f32::consts::PI;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -9,22 +11,36 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
+use crate::pipewire_privacy::PrivacyUpdate;
+
 // PulseAudio Native Protocol command opcodes (verified against PipeWire module-protocol-pulse/commands.h).
 const PA_COMMAND_ERROR: u32 = 0;
 const PA_COMMAND_REPLY: u32 = 2;
+const PA_COMMAND_CREATE_RECORD_STREAM: u32 = 5;
+const PA_COMMAND_DELETE_RECORD_STREAM: u32 = 6;
 const PA_COMMAND_AUTH: u32 = 8;
 const PA_COMMAND_SET_CLIENT_NAME: u32 = 9;
 const PA_COMMAND_GET_SERVER_INFO: u32 = 20;
 const PA_COMMAND_GET_SINK_INFO: u32 = 21;
+const PA_COMMAND_GET_SINK_INFO_LIST: u32 = 22;
 const PA_COMMAND_GET_SOURCE_INFO: u32 = 23;
+const PA_COMMAND_GET_SOURCE_INFO_LIST: u32 = 24;
+const PA_COMMAND_GET_SINK_INPUT_INFO_LIST: u32 = 30;
+const PA_COMMAND_GET_SOURCE_OUTPUT_INFO_LIST: u32 = 32;
 const PA_COMMAND_SUBSCRIBE: u32 = 35;
 const PA_COMMAND_SET_SINK_VOLUME: u32 = 36;
+const PA_COMMAND_SET_SINK_INPUT_VOLUME: u32 = 37;
 const PA_COMMAND_SET_SINK_MUTE: u32 = 39;
 const PA_COMMAND_SET_SOURCE_MUTE: u32 = 40;
+const PA_COMMAND_SET_DEFAULT_SINK: u32 = 44;
+const PA_COMMAND_SET_DEFAULT_SOURCE: u32 = 45;
 const PA_COMMAND_SUBSCRIBE_EVENT: u32 = 66;
+const PA_COMMAND_SET_SINK_INPUT_MUTE: u32 = 75;
 
 const PA_SUBSCRIPTION_MASK_SINK: u32 = 0x0001;
 const PA_SUBSCRIPTION_MASK_SOURCE: u32 = 0x0002;
+const PA_SUBSCRIPTION_MASK_SINK_INPUT: u32 = 0x0004;
+const PA_SUBSCRIPTION_MASK_SOURCE_OUTPUT: u32 = 0x0008;
 const PA_SUBSCRIPTION_MASK_SERVER: u32 = 0x0080;
 
 const PA_INVALID_INDEX: u32 = 0xFFFF_FFFF;
@@ -50,12 +66,17 @@ const TAG_PROPLIST: u8 = b'P';
 const TAG_VOLUME: u8 = b'V';
 const TAG_FORMAT_INFO: u8 = b'f';
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum AudioCmd {
     StepVolume(i32),
     SetVolume(u8),
     ToggleMute,
     ToggleMicMute,
+    SetDefaultSink(String),
+    SetDefaultSource(String),
+    SetStreamVolume { index: u32, pct: u8 },
+    SetStreamMute { index: u32, muted: bool },
+    SetSpectrumSubscribers { count: usize, fps: u32 },
 }
 
 #[derive(Default)]
@@ -67,6 +88,23 @@ impl TagWriter {
     fn put_u32(&mut self, v: u32) {
         self.buf.push(TAG_U32);
         self.buf.extend_from_slice(&v.to_be_bytes());
+    }
+
+    fn put_sample_spec(&mut self, format: u8, channels: u8, rate: u32) {
+        self.buf.push(TAG_SAMPLE_SPEC);
+        self.buf.push(format);
+        self.buf.push(channels);
+        self.buf.extend_from_slice(&rate.to_be_bytes());
+    }
+
+    fn put_channel_map(&mut self, map: &[u8]) {
+        self.buf.push(TAG_CHANNEL_MAP);
+        self.buf.push(map.len() as u8);
+        self.buf.extend_from_slice(map);
+    }
+
+    fn put_null_string(&mut self) {
+        self.buf.push(TAG_STRING_NULL);
     }
 
     fn put_bool(&mut self, v: bool) {
@@ -199,6 +237,52 @@ impl<'a> TagReader<'a> {
         let n = usize::from(self.read_byte()?);
         self.read_exact(n)?;
         Some(())
+    }
+
+    fn read_proplist(&mut self) -> Option<HashMap<String, String>> {
+        if self.read_byte()? != TAG_PROPLIST {
+            return None;
+        }
+        let mut map = HashMap::new();
+        loop {
+            let key = self.read_string()?;
+            let Some(k) = key else {
+                break;
+            };
+            let _len = self.read_u32()?;
+            if self.read_byte()? == TAG_ARBITRARY {
+                let raw_len = self.read_u32_raw()? as usize;
+                let raw = self.read_exact(raw_len)?;
+                let nul = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+                map.insert(k, String::from_utf8_lossy(&raw[..nul]).into_owned());
+            } else {
+                self.pos = self.pos.saturating_sub(1);
+                self.skip_any()?;
+            }
+        }
+        Some(map)
+    }
+
+    fn read_u8_val(&mut self) -> Option<u8> {
+        if self.read_byte()? != TAG_U8 {
+            return None;
+        }
+        self.read_byte()
+    }
+
+    fn read_usec(&mut self) -> Option<u64> {
+        if self.read_byte()? != TAG_USEC {
+            return None;
+        }
+        let b: [u8; 8] = self.read_exact(8)?.try_into().ok()?;
+        Some(u64::from_be_bytes(b))
+    }
+
+    fn read_volume_single(&mut self) -> Option<u32> {
+        if self.read_byte()? != TAG_VOLUME {
+            return None;
+        }
+        self.read_u32_raw()
     }
 
     #[allow(dead_code)]
@@ -391,14 +475,87 @@ impl PulseConn {
             })
             .await?;
 
-        let mask =
-            PA_SUBSCRIPTION_MASK_SINK | PA_SUBSCRIPTION_MASK_SOURCE | PA_SUBSCRIPTION_MASK_SERVER;
+        let mask = PA_SUBSCRIPTION_MASK_SINK
+            | PA_SUBSCRIPTION_MASK_SOURCE
+            | PA_SUBSCRIPTION_MASK_SINK_INPUT
+            | PA_SUBSCRIPTION_MASK_SOURCE_OUTPUT
+            | PA_SUBSCRIPTION_MASK_SERVER;
         let _ = self
             .call(PA_COMMAND_SUBSCRIBE, |w| {
                 w.put_u32(mask);
             })
             .await?;
 
+        Ok(())
+    }
+
+    async fn get_sinks(&mut self, default_sink: &str) -> Vec<AudioDeviceInfo> {
+        let Ok(body) = self.call(PA_COMMAND_GET_SINK_INFO_LIST, |_| {}).await else {
+            return Vec::new();
+        };
+        parse_device_list(&body, default_sink)
+    }
+
+    async fn get_sources(&mut self, default_source: &str) -> Vec<AudioDeviceInfo> {
+        let Ok(body) = self.call(PA_COMMAND_GET_SOURCE_INFO_LIST, |_| {}).await else {
+            return Vec::new();
+        };
+        parse_device_list(&body, default_source)
+            .into_iter()
+            .filter(|s| !s.name.ends_with(".monitor"))
+            .collect()
+    }
+
+    async fn get_sink_inputs(&mut self) -> Vec<AudioStreamInfo> {
+        let Ok(body) = self.call(PA_COMMAND_GET_SINK_INPUT_INFO_LIST, |_| {}).await else {
+            return Vec::new();
+        };
+        parse_sink_input_list(&body)
+    }
+
+    async fn get_source_output_apps(&mut self) -> Vec<String> {
+        let Ok(body) = self.call(PA_COMMAND_GET_SOURCE_OUTPUT_INFO_LIST, |_| {}).await else {
+            return Vec::new();
+        };
+        parse_source_output_apps(&body)
+    }
+
+    async fn set_default_sink(&mut self, name: &str) -> io::Result<()> {
+        let _ = self
+            .call(PA_COMMAND_SET_DEFAULT_SINK, |w| {
+                w.put_string(name);
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn set_default_source(&mut self, name: &str) -> io::Result<()> {
+        let _ = self
+            .call(PA_COMMAND_SET_DEFAULT_SOURCE, |w| {
+                w.put_string(name);
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn set_sink_input_volume(&mut self, index: u32, pct: u8) -> io::Result<()> {
+        let cvol = vec![pct_to_pa_volume(pct); 2];
+        let _ = self
+            .call(PA_COMMAND_SET_SINK_INPUT_VOLUME, |w| {
+                w.put_u32(index);
+                w.put_cvolume(&cvol);
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn set_sink_input_mute(&mut self, index: u32, muted: bool) -> io::Result<()> {
+        let _ = self
+            .call(PA_COMMAND_SET_SINK_INPUT_MUTE, |w| {
+                w.put_u32(index);
+                w.put_bool(muted);
+            })
+            .await?;
         Ok(())
     }
 
@@ -463,7 +620,7 @@ impl PulseConn {
         Ok(())
     }
 
-    async fn fetch_state(&mut self) -> io::Result<(AudioState, usize)> {
+    async fn fetch_state(&mut self) -> io::Result<(AudioState, usize, Vec<String>)> {
         let (sink_name, source_name) = self.get_server_defaults().await?;
         let mut channels = 2usize;
         let (volume_pct, muted) = if !sink_name.is_empty() {
@@ -485,6 +642,10 @@ impl PulseConn {
         } else {
             false
         };
+        let sinks = self.get_sinks(&sink_name).await;
+        let sources = self.get_sources(&source_name).await;
+        let streams = self.get_sink_inputs().await;
+        let source_output_apps = self.get_source_output_apps().await;
         Ok((
             AudioState {
                 available: !sink_name.is_empty(),
@@ -493,10 +654,126 @@ impl PulseConn {
                 mic_muted,
                 sink_name,
                 source_name,
+                sinks,
+                sources,
+                streams,
             },
             channels,
+            source_output_apps,
         ))
     }
+}
+
+fn parse_device_list(body: &[u8], default_name: &str) -> Vec<AudioDeviceInfo> {
+    let mut r = TagReader::new(body);
+    let mut out = Vec::new();
+    while r.pos < body.len() {
+        let Some(index) = r.read_u32() else { break };
+        let Some(Some(name)) = r.read_string() else { break };
+        let desc = r.read_string().unwrap_or(None).unwrap_or_default();
+        if r.skip_sample_spec().is_none() || r.skip_channel_map().is_none() {
+            break;
+        }
+        if r.read_u32().is_none() { break }
+        let Some(cvol) = r.read_cvolume() else { break };
+        let Some(muted) = r.read_bool() else { break };
+        if r.read_u32().is_none() || r.read_string().is_none() || r.read_usec().is_none() || r.read_string().is_none() || r.read_u32().is_none() {
+            break;
+        }
+        if r.read_proplist().is_none() || r.read_usec().is_none() || r.read_volume_single().is_none() || r.read_u32().is_none() || r.read_u32().is_none() || r.read_u32().is_none() {
+            break;
+        }
+        let Some(n_ports) = r.read_u32() else { break };
+        for _ in 0..n_ports.min(64) {
+            if r.read_string().is_none() || r.read_string().is_none() || r.read_u32().is_none() || r.read_u32().is_none() {
+                return out;
+            }
+        }
+        if r.read_string().is_none() { break }
+        if let Some(n_formats) = r.read_u8_val() {
+            for _ in 0..n_formats.min(32) {
+                let _ = r.skip_any();
+            }
+        } else {
+            break;
+        }
+        out.push(AudioDeviceInfo {
+            index,
+            description: if desc.is_empty() { name.clone() } else { desc },
+            is_default: name == default_name,
+            name,
+            volume_pct: volume_to_pct(&cvol),
+            muted,
+        });
+    }
+    out
+}
+
+fn parse_sink_input_list(body: &[u8]) -> Vec<AudioStreamInfo> {
+    let mut r = TagReader::new(body);
+    let mut out = Vec::new();
+    while r.pos < body.len() {
+        let Some(index) = r.read_u32() else { break };
+        let name = r.read_string().unwrap_or(None).unwrap_or_default();
+        if r.read_u32().is_none() || r.read_u32().is_none() || r.read_u32().is_none() {
+            break;
+        }
+        if r.skip_sample_spec().is_none() || r.skip_channel_map().is_none() {
+            break;
+        }
+        let Some(cvol) = r.read_cvolume() else { break };
+        if r.read_usec().is_none() || r.read_usec().is_none() || r.read_string().is_none() || r.read_string().is_none() {
+            break;
+        }
+        let Some(muted) = r.read_bool() else { break };
+        let Some(props) = r.read_proplist() else { break };
+        if r.read_bool().is_none() || r.read_bool().is_none() || r.read_bool().is_none() {
+            break;
+        }
+        let _ = r.skip_any(); // format_info
+        let app_name = props
+            .get("application.name")
+            .cloned()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| name.clone());
+        let media_name = props.get("media.name").cloned().unwrap_or_default();
+        out.push(AudioStreamInfo {
+            index,
+            app_name,
+            media_name,
+            volume_pct: volume_to_pct(&cvol),
+            muted,
+        });
+    }
+    out
+}
+
+fn parse_source_output_apps(body: &[u8]) -> Vec<String> {
+    let mut r = TagReader::new(body);
+    let mut out = Vec::new();
+    while r.pos < body.len() {
+        if r.read_u32().is_none() || r.read_string().is_none() || r.read_u32().is_none() || r.read_u32().is_none() || r.read_u32().is_none() {
+            break;
+        }
+        if r.skip_sample_spec().is_none() || r.skip_channel_map().is_none() {
+            break;
+        }
+        if r.read_usec().is_none() || r.read_usec().is_none() || r.read_string().is_none() || r.read_string().is_none() {
+            break;
+        }
+        let Some(props) = r.read_proplist() else { break };
+        if r.read_bool().is_none() || r.read_cvolume().is_none() || r.read_bool().is_none() || r.read_bool().is_none() || r.read_bool().is_none() {
+            break;
+        }
+        let _ = r.skip_any(); // format_info
+        if let Some(app) = props.get("application.name").filter(|s| !s.is_empty()) {
+            let lower = app.to_ascii_lowercase();
+            if !lower.contains("kaze-shell") && !lower.contains("kaze-spectrum") && !out.contains(app) {
+                out.push(app.clone());
+            }
+        }
+    }
+    out
 }
 
 fn parse_server_info(body: &[u8]) -> Option<(String, String)> {
@@ -554,19 +831,22 @@ fn read_pulse_cookie() -> Vec<u8> {
 
 pub async fn run_audio_task(
     event_tx: CalloopSender<SystemEvent>,
+    privacy_tx: mpsc::UnboundedSender<PrivacyUpdate>,
     mut cmd_rx: mpsc::UnboundedReceiver<AudioCmd>,
 ) {
     let mut backoff = Duration::from_millis(250);
     let max_backoff = Duration::from_secs(5);
     let mut last_state: Option<AudioState> = None;
+    let mut spectrum_task: Option<tokio::task::JoinHandle<()>> = None;
 
     loop {
         match PulseConn::connect().await {
             Ok(mut conn) => {
                 backoff = Duration::from_millis(250);
                 let mut sink_channels = 2usize;
-                if let Ok((st, ch)) = conn.fetch_state().await {
+                if let Ok((st, ch, mic_apps)) = conn.fetch_state().await {
                     sink_channels = ch;
+                    let _ = privacy_tx.send(PrivacyUpdate::PulseMicApps(mic_apps));
                     if last_state.as_ref() != Some(&st) {
                         let _ = event_tx.send(SystemEvent::AudioChanged {
                             state: st.clone(),
@@ -583,8 +863,9 @@ pub async fn run_audio_task(
                                 Ok(data) => {
                                     let mut r = TagReader::new(&data);
                                     if r.read_u32() == Some(PA_COMMAND_SUBSCRIBE_EVENT) {
-                                        if let Ok((st, ch)) = conn.fetch_state().await {
+                                        if let Ok((st, ch, mic_apps)) = conn.fetch_state().await {
                                             sink_channels = ch;
+                                            let _ = privacy_tx.send(PrivacyUpdate::PulseMicApps(mic_apps));
                                             let trigger = compute_osd_trigger(last_state.as_ref(), &st);
                                             if last_state.as_ref() != Some(&st) {
                                                 let _ = event_tx.send(SystemEvent::AudioChanged {
@@ -600,49 +881,85 @@ pub async fn run_audio_task(
                             }
                         }
                         cmd = cmd_rx.recv() => {
-                            let Some(cmd) = cmd else { return; };
+                            let Some(cmd) = cmd else {
+                                if let Some(h) = spectrum_task.take() {
+                                    h.abort();
+                                }
+                                return;
+                            };
+                            if let AudioCmd::SetSpectrumSubscribers { count, fps } = cmd {
+                                let spectrum_fps = fps.clamp(10, 60);
+                                if count == 0 {
+                                    if let Some(h) = spectrum_task.take() {
+                                        h.abort();
+                                    }
+                                    let _ = event_tx.send(SystemEvent::AudioSpectrum(Vec::new()));
+                                } else if spectrum_task.is_none() {
+                                    let monitor_src = last_state
+                                        .as_ref()
+                                        .map(|s| format!("{}.monitor", s.sink_name))
+                                        .unwrap_or_default();
+                                    if !monitor_src.is_empty() {
+                                        let tx = event_tx.clone();
+                                        let fps_local = spectrum_fps;
+                                        spectrum_task = Some(tokio::spawn(run_spectrum_monitor(
+                                            tx,
+                                            monitor_src,
+                                            fps_local,
+                                        )));
+                                    }
+                                }
+                                continue;
+                            }
                             if let Some(ref cur) = last_state {
-                                if !cur.sink_name.is_empty() {
-                                    let res = match cmd {
-                                        AudioCmd::StepVolume(delta) => {
-                                            let next_pct = (i32::from(cur.volume_pct) + delta)
-                                                .clamp(0, i32::from(PA_VOLUME_MAX_PCT)) as u8;
-                                            let cvol = vec![pct_to_pa_volume(next_pct); sink_channels.max(1)];
-                                            conn.set_sink_volume(&cur.sink_name, &cvol).await
-                                        }
-                                        AudioCmd::SetVolume(pct) => {
-                                            let clamped = pct.min(PA_VOLUME_MAX_PCT);
-                                            let cvol = vec![pct_to_pa_volume(clamped); sink_channels.max(1)];
-                                            conn.set_sink_volume(&cur.sink_name, &cvol).await
-                                        }
-                                        AudioCmd::ToggleMute => {
-                                            conn.set_sink_mute(&cur.sink_name, !cur.muted).await
-                                        }
-                                        AudioCmd::ToggleMicMute => {
-                                            if !cur.source_name.is_empty() {
-                                                conn.set_source_mute(&cur.source_name, !cur.mic_muted).await
-                                            } else {
-                                                Ok(())
-                                            }
-                                        }
+                                let res = match cmd {
+                                    AudioCmd::StepVolume(delta) if !cur.sink_name.is_empty() => {
+                                        let next_pct = (i32::from(cur.volume_pct) + delta)
+                                            .clamp(0, i32::from(PA_VOLUME_MAX_PCT)) as u8;
+                                        let cvol = vec![pct_to_pa_volume(next_pct); sink_channels.max(1)];
+                                        conn.set_sink_volume(&cur.sink_name, &cvol).await
+                                    }
+                                    AudioCmd::SetVolume(pct) if !cur.sink_name.is_empty() => {
+                                        let clamped = pct.min(PA_VOLUME_MAX_PCT);
+                                        let cvol = vec![pct_to_pa_volume(clamped); sink_channels.max(1)];
+                                        conn.set_sink_volume(&cur.sink_name, &cvol).await
+                                    }
+                                    AudioCmd::ToggleMute if !cur.sink_name.is_empty() => {
+                                        conn.set_sink_mute(&cur.sink_name, !cur.muted).await
+                                    }
+                                    AudioCmd::ToggleMicMute if !cur.source_name.is_empty() => {
+                                        conn.set_source_mute(&cur.source_name, !cur.mic_muted).await
+                                    }
+                                    AudioCmd::SetDefaultSink(ref name) => {
+                                        conn.set_default_sink(name).await
+                                    }
+                                    AudioCmd::SetDefaultSource(ref name) => {
+                                        conn.set_default_source(name).await
+                                    }
+                                    AudioCmd::SetStreamVolume { index, pct } => {
+                                        conn.set_sink_input_volume(index, pct.min(PA_VOLUME_MAX_PCT)).await
+                                    }
+                                    AudioCmd::SetStreamMute { index, muted } => {
+                                        conn.set_sink_input_mute(index, muted).await
+                                    }
+                                    _ => Ok(()),
+                                };
+                                if res.is_err() {
+                                    break;
+                                }
+                                if let Ok((st, ch, mic_apps)) = conn.fetch_state().await {
+                                    sink_channels = ch;
+                                    let _ = privacy_tx.send(PrivacyUpdate::PulseMicApps(mic_apps));
+                                    let trigger = match cmd {
+                                        AudioCmd::StepVolume(_) | AudioCmd::ToggleMute => Some(OsdKind::Volume),
+                                        AudioCmd::ToggleMicMute => Some(OsdKind::Mic),
+                                        _ => None,
                                     };
-                                    if res.is_err() {
-                                        break;
-                                    }
-                                    // Immediately sync & notify even if server coalesces subscribe events.
-                                    if let Ok((st, ch)) = conn.fetch_state().await {
-                                        sink_channels = ch;
-                                        let trigger = match cmd {
-                                            AudioCmd::StepVolume(_) | AudioCmd::ToggleMute => Some(OsdKind::Volume),
-                                            AudioCmd::SetVolume(_) => None,
-                                            AudioCmd::ToggleMicMute => Some(OsdKind::Mic),
-                                        };
-                                        let _ = event_tx.send(SystemEvent::AudioChanged {
-                                            state: st.clone(),
-                                            trigger_osd: trigger,
-                                        });
-                                        last_state = Some(st);
-                                    }
+                                    let _ = event_tx.send(SystemEvent::AudioChanged {
+                                        state: st.clone(),
+                                        trigger_osd: trigger,
+                                    });
+                                    last_state = Some(st);
                                 }
                             }
                         }
@@ -650,13 +967,15 @@ pub async fn run_audio_task(
                 }
             }
             Err(_) => {
-                // Wait with backoff, draining commands cleanly if PipeWire is not yet up.
                 tokio::select! {
                     _ = tokio::time::sleep(backoff) => {
                         backoff = (backoff * 2).min(max_backoff);
                     }
                     cmd = cmd_rx.recv() => {
                         if cmd.is_none() {
+                            if let Some(h) = spectrum_task.take() {
+                                h.abort();
+                            }
                             return;
                         }
                     }
@@ -664,6 +983,180 @@ pub async fn run_audio_task(
             }
         }
     }
+}
+
+async fn run_spectrum_monitor(
+    event_tx: CalloopSender<SystemEvent>,
+    monitor_source: String,
+    fps: u32,
+) {
+    let Ok(sock) = pulse_socket_path().ok_or(()) else {
+        return;
+    };
+    let Ok(stream) = UnixStream::connect(sock).await else {
+        return;
+    };
+    let mut conn = PulseConn { stream, next_tag: 1 };
+    let cookie = read_pulse_cookie();
+    if conn
+        .call(PA_COMMAND_AUTH, |w| {
+            w.put_u32(PA_PROTOCOL_VERSION);
+            w.put_arbitrary(&cookie);
+        })
+        .await
+        .is_err()
+    {
+        return;
+    }
+    if conn
+        .call(PA_COMMAND_SET_CLIENT_NAME, |w| {
+            w.put_proplist(&[("application.name", "kaze-spectrum")]);
+        })
+        .await
+        .is_err()
+    {
+        return;
+    }
+
+    let reply = conn
+        .call(PA_COMMAND_CREATE_RECORD_STREAM, |w| {
+            w.put_sample_spec(3, 1, 16_000); // PA_SAMPLE_S16LE=3, 1ch, 16kHz
+            w.put_channel_map(&[0]);
+            w.put_u32(PA_INVALID_INDEX);
+            w.put_string(&monitor_source);
+            w.put_u32(512 * 4); // maxlength
+            w.put_bool(false); // corked
+            w.put_u32(512); // fragsize
+            w.put_u32(0); // syncid
+            w.put_cvolume(&[PA_VOLUME_NORM]);
+            w.put_bool(false); // no_remap
+            w.put_bool(false); // no_remix
+            w.put_bool(false); // fix_format
+            w.put_bool(false); // fix_rate
+            w.put_bool(false); // fix_channels
+            w.put_bool(false); // no_move
+            w.put_bool(false); // variable_rate
+            w.put_bool(false); // peak_detect
+            w.put_bool(true); // adjust_latency
+            w.put_proplist(&[("media.name", "kaze-spectrum-fft")]);
+            w.put_null_string();
+        })
+        .await;
+    let Ok(reply_bytes) = reply else {
+        return;
+    };
+    let mut r = TagReader::new(&reply_bytes);
+    let stream_idx = r.read_u32().unwrap_or(0);
+    let frame_period = Duration::from_millis((1000 / u64::from(fps.max(10))).max(16));
+    let mut last_emit = tokio::time::Instant::now();
+    let mut ring = Vec::<i16>::with_capacity(512);
+    let mut header = [0u8; 20];
+
+    loop {
+        if conn.stream.read_exact(&mut header).await.is_err() {
+            break;
+        }
+        let len = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
+        let ch = u32::from_be_bytes([header[4], header[5], header[6], header[7]]);
+        if len > 256 * 1024 {
+            break;
+        }
+        let mut payload = vec![0u8; len];
+        if len > 0 && conn.stream.read_exact(&mut payload).await.is_err() {
+            break;
+        }
+        if ch != PA_INVALID_INDEX && payload.len() >= 2 {
+            let (chunks, _) = payload.as_chunks::<2>();
+            for chunk in chunks {
+                ring.push(i16::from_le_bytes(*chunk));
+            }
+            if ring.len() > 512 {
+                let excess = ring.len() - 512;
+                ring.drain(..excess);
+            }
+            if ring.len() >= 256 && last_emit.elapsed() >= frame_period {
+                let slice = &ring[ring.len() - 256..];
+                let bars = compute_spectrum_bars(slice, 20);
+                let _ = event_tx.send(SystemEvent::AudioSpectrum(bars));
+                last_emit = tokio::time::Instant::now();
+            }
+        }
+    }
+    let _ = conn
+        .call(PA_COMMAND_DELETE_RECORD_STREAM, |w| {
+            w.put_u32(stream_idx);
+        })
+        .await;
+    let _ = stream_mut_unused(&mut conn.stream).await;
+}
+
+async fn stream_mut_unused(_s: &mut UnixStream) {}
+
+/// Pure-Rust 256-point Hann-windowed radix-2 Cooley-Tukey FFT binned into `n_bars` (`0..=100`).
+pub fn compute_spectrum_bars(samples: &[i16], n_bars: usize) -> Vec<u8> {
+    const N: usize = 256;
+    if n_bars == 0 || samples.len() < N {
+        return vec![0u8; n_bars];
+    }
+    let mut re = [0.0f32; N];
+    let mut im = [0.0f32; N];
+    for i in 0..N {
+        let hann = 0.5 * (1.0 - ((2.0 * PI * i as f32) / ((N - 1) as f32)).cos());
+        re[i] = (f32::from(samples[i]) / 32768.0) * hann;
+    }
+
+    // Bit-reversal permutation
+    let mut j = 0usize;
+    for i in 1..N {
+        let mut bit = N >> 1;
+        while (j & bit) != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j ^= bit;
+        if i < j {
+            re.swap(i, j);
+        }
+    }
+
+    // Butterfly stages
+    let mut len = 2usize;
+    while len <= N {
+        let half = len / 2;
+        let angle = -2.0 * PI / (len as f32);
+        for start in (0..N).step_by(len) {
+            for k in 0..half {
+                let theta = angle * (k as f32);
+                let (sin_t, cos_t) = theta.sin_cos();
+                let u_re = re[start + k];
+                let u_im = im[start + k];
+                let v_re = re[start + k + half] * cos_t - im[start + k + half] * sin_t;
+                let v_im = re[start + k + half] * sin_t + im[start + k + half] * cos_t;
+                re[start + k] = u_re + v_re;
+                im[start + k] = u_im + v_im;
+                re[start + k + half] = u_re - v_re;
+                im[start + k + half] = u_im - v_im;
+            }
+        }
+        len <<= 1;
+    }
+
+    let usable = N / 2;
+    let bins_per_bar = (usable / n_bars.max(1)).max(1);
+    let mut bars = Vec::with_capacity(n_bars);
+    for b in 0..n_bars {
+        let lo = 1 + b * bins_per_bar;
+        let hi = ((b + 1) * bins_per_bar + 1).min(usable);
+        let mut peak = 0.0f32;
+        for idx in lo..hi {
+            let mag = (re[idx] * re[idx] + im[idx] * im[idx]).sqrt() / (N as f32 * 0.25);
+            if mag > peak {
+                peak = mag;
+            }
+        }
+        bars.push((peak * 100.0).round().clamp(0.0, 100.0) as u8);
+    }
+    bars
 }
 
 fn compute_osd_trigger(prev: Option<&AudioState>, next: &AudioState) -> Option<OsdKind> {
@@ -727,5 +1220,23 @@ mod tests {
         assert_eq!(idx, 42);
         assert_eq!(volume_to_pct(&vols), 65);
         assert!(muted);
+    }
+
+    #[test]
+    fn fft_detects_sine_wave_frequency_peak() {
+        let mut samples = [0i16; 256];
+        for (i, slot) in samples.iter_mut().enumerate() {
+            let phase = 2.0 * PI * 24.0 * (i as f32) / 256.0;
+            *slot = (phase.sin() * 20_000.0) as i16;
+        }
+        let bars = compute_spectrum_bars(&samples, 20);
+        assert_eq!(bars.len(), 20);
+        let peak_idx = bars
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, &v)| v)
+            .map(|(idx, _)| idx)
+            .unwrap_or(0);
+        assert!((2..=5).contains(&peak_idx), "peak bar={peak_idx}, bars={bars:?}");
     }
 }
