@@ -187,18 +187,17 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
     -- =========================================================================
 
     local MINIMAL_PKGS = {
-        "hyprland", "hyprlock", "hypridle", "hyprpolkitagent", "cliphist",
-        "grim", "slurp", "xdg-desktop-portal", "xdg-desktop-portal-hyprland",
+        "hyprland", "xdg-desktop-portal", "xdg-desktop-portal-hyprland",
         "xdg-desktop-portal-gtk", "dconf", "libnotify", "foot", "zsh",
         "zsh-autosuggestions", "zsh-syntax-highlighting", "zsh-completions",
         "pipewire", "pipewire-pulse", "pipewire-alsa", "wireplumber",
-        "wl-clipboard", "xdg-utils", "brightnessctl", "playerctl",
+        "wl-clipboard", "xdg-utils", "playerctl",
         "networkmanager", "bluez", "bluez-utils", "btop",
         "ttf-jetbrains-mono-nerd", "adwaita-cursors", "lua",
     }
 
     local FULL_EXTRA_PKGS = {
-        "wf-recorder", "ffmpeg", "hyprpicker", "wl-mirror",
+        "wf-recorder", "ffmpeg", "wl-mirror",
         "thunar", "adw-gtk-theme", "papirus-icon-theme", "xdg-user-dirs",
         "yazi", "imv", "zathura", "zathura-pdf-poppler", "gnome-keyring",
         "fcitx5", "fcitx5-bamboo", "fcitx5-gtk", "noto-fonts", "noto-fonts-cjk",
@@ -217,6 +216,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
     local LEGACY_BANNED_PKGS = {
         "noctalia", "waybar", "swaybg", "fuzzel", "fnott",
         "hyprsunset", "matugen", "mate-polkit", "swappy",
+        "hyprlock", "hypridle", "hyprpolkitagent", "cliphist",
+        "grim", "slurp", "hyprpicker", "brightnessctl",
         "pulseaudio", "pipewire-media-session", "gst-plugin-pipewire",
         "zathura-pdf-mupdf",
     }

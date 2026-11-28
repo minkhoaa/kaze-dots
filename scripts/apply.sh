@@ -211,8 +211,6 @@ for f in hyprland.lua env.lua core.lua rules.lua execs.lua keybinds.lua; do
     backup_and_link "$REPO_DIR/hypr/$f" "$CONFIG_HOME/hypr/$f"
 done
 backup_and_link "$REPO_DIR/config/hypr/xdph.conf" "$CONFIG_HOME/hypr/xdph.conf"
-backup_and_link "$REPO_DIR/config/hypr/hyprlock.conf" "$CONFIG_HOME/hypr/hyprlock.conf"
-backup_and_link "$REPO_DIR/config/hypr/hypridle.conf" "$CONFIG_HOME/hypr/hypridle.conf"
 
 backup_and_link "$REPO_DIR/config/foot/foot.ini" "$CONFIG_HOME/foot/foot.ini"
 backup_and_link "$REPO_DIR/config/starship/starship.toml" "$CONFIG_HOME/starship.toml"

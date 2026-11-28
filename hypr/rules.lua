@@ -158,7 +158,7 @@ hl.window_rule({
 hl.layer_rule({
     name = "kaze-shell-no-anim",
     match = {
-        namespace = "^(kaze-bar-.+|kaze-island|kaze-osd|kaze-notify|kaze-launcher|kaze-cc|kaze-tray-menu)$",
+        namespace = "^(kaze-bar-.+|kaze-island|kaze-osd|kaze-notify|kaze-launcher|kaze-cc|kaze-tray-menu|kaze-clipboard|kaze-polkit|kaze-session-menu|kaze-capture-.*|kaze-color-picker|kaze-lock)$",
     },
     no_anim = true,
 })
@@ -167,10 +167,8 @@ hl.layer_rule({
 hl.layer_rule({
     name = "kaze-shell-blur",
     match = {
-        namespace = "^(kaze-island|kaze-cc)$",
+        namespace = "^(kaze-island|kaze-cc|kaze-polkit|kaze-session-menu)$",
     },
     blur = true,
     ignore_alpha = 0.25,
 })
-
-hl.layer_rule({ match = { namespace = "^(selection|hyprpicker)$" }, no_anim = true })

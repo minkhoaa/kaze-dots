@@ -29,11 +29,9 @@ PORTALS = {
 PORTAL_COMMS = {"xdg-desktop-por", "xdg-document-po", "xdg-permission-"}
 SESSION = PORTALS | {
     "dconf.service", "kaze-fcitx5.service", "at-spi-dbus-bus.service", "gvfs-daemon.service",
-    "kaze-hypridle.service", "kaze-polkit.service", "kaze-cliphist.service",
 }
 SESSION_COMMS = PORTAL_COMMS | {
     "fcitx5", "at-spi-bus-laun", "at-spi2-registr", "gvfsd", "gvfsd-fuse",
-    "hypridle", "hyprpolkitagent", "wl-paste",
 }
 UNIT_STARTING = "7d4958e842da4a758f6c1cdc7b36dcc5"  # systemd SD_MESSAGE_UNIT_STARTING
 OUTSIDE = {

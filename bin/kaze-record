@@ -243,10 +243,10 @@ local function start_recording(dir, opts)
 
     local output, geom
     if opts.region then
-        if not fs.command_exists("slurp") then fail("slurp not found in PATH") end
+        if not fs.command_exists("kaze-shell") then fail("kaze-shell not found in PATH") end
         -- Crop to the selected output. wf-recorder can otherwise silently fall
         -- back to recording the whole display for an out-of-bounds rectangle.
-        local picked = fs.capture("slurp -f " .. q("%x,%y %Wx%H\n%o\n") .. " </dev/null")
+        local picked = fs.capture("kaze-shell msg capture region --geom-only </dev/null")
         if not picked or picked == "" then return end
         geom, output = picked:match("^(%-?%d+,%-?%d+ [1-9]%d*x[1-9]%d*)\n([%w_.:%-]+)\n$")
         if not output then fail("selection does not belong to a single output") end

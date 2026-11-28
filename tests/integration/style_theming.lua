@@ -605,15 +605,9 @@ local function create_sandbox(abs_repo)
     "foot",
     "footclient",
     "hyprland",
-    "hyprlock",
-    "hypridle",
-    "cliphist",
-    "grim",
-    "slurp",
     "wl-copy",
     "wl-paste",
     "wpctl",
-    "brightnessctl",
   }
   for _, tool in ipairs(noop_tools) do
     write_executable(

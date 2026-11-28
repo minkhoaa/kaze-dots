@@ -137,17 +137,15 @@ function M.stop()
 end
 
 function M.lock()
-    if fs.command_exists("hyprlock") then
-        local ok, why, code = os.execute("pgrep -x hyprlock >/dev/null 2>&1 || hyprlock >/dev/null 2>&1")
-        -- Signal exit (e.g. SIGUSR1 unlock -> sh code 138) means hyprlock already ran and exited
-        -- externally; do not fall through to `loginctl lock-session` (which would re-lock via hypridle).
-        if ok or why == "signal" or (type(code) == "number" and code >= 128) then
+    if fs.command_exists("kaze-shell") then
+        local ok = os.execute("kaze-shell msg lock >/dev/null 2>&1")
+        if ok == true or ok == 0 then
             return true
         end
     end
     local id = fs.capture('loginctl show-user "$(id -u)" -p Display --value')
     id = id and id:match("^([%w_-]+)\n?$")
-    if not id then return nil, "could not lock session via hyprlock or logind" end
+    if not id then return nil, "could not lock session via kaze-shell or logind" end
     if not os.execute("loginctl lock-session " .. fs.shell_quote(id)) then
         return nil, "logind refused the lock request"
     end

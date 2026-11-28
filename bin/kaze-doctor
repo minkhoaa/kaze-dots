@@ -174,15 +174,14 @@ end
 
 -- 1. Required binaries in PATH for active profile
 local MINIMAL_BINS = {
-    "hyprland", "hyprctl", "kaze-shell", "hyprlock", "hypridle",
-    "cliphist", "grim", "slurp", "notify-send",
+    "hyprland", "hyprctl", "kaze-shell", "notify-send",
     "foot", "footclient", "zsh", "wl-copy", "wl-paste",
-    "wpctl", "brightnessctl", "playerctl",
+    "wpctl", "playerctl",
     "lua", "busctl", "systemctl", "flock",
 }
 
 local FULL_EXTRA_BINS = {
-    "wf-recorder", "ffmpeg", "ffprobe", "hyprpicker",
+    "wf-recorder", "ffmpeg", "ffprobe",
     "thunar", "yazi", "imv", "zathura", "gnome-keyring-daemon", "fcitx5",
     "fzf", "zoxide", "eza", "bat", "rg", "fd", "starship",
     "wl-mirror",
@@ -228,8 +227,6 @@ do
     local scan_script = string.format([[
 for p in %s/hypr/*.lua \
          %s/hypr/xdph.conf \
-         %s/hypr/hyprlock.conf \
-         %s/hypr/hypridle.conf \
          %s/foot/foot.ini \
          %s/starship.toml \
          %s/yazi/*.toml \
@@ -299,8 +296,6 @@ done
         data_home .. "/applications/yazi.desktop",
         config_home .. "/hypr/hyprland.lua",
         config_home .. "/hypr/xdph.conf",
-        config_home .. "/hypr/hyprlock.conf",
-        config_home .. "/hypr/hypridle.conf",
         config_home .. "/foot/foot.ini",
         config_home .. "/starship.toml",
         config_home .. "/yazi/yazi.toml",
@@ -597,6 +592,26 @@ else
                 report_ok("kaze-shell: owns D-Bus org.kde.StatusNotifierWatcher")
             else
                 report_fail("kaze-shell: does not own D-Bus org.kde.StatusNotifierWatcher")
+            end
+
+            local owns_polkit = inspect_out:find('"polkit_bus_owned"%s*:%s*true') ~= nil
+            if owns_polkit then
+                report_ok("kaze-shell: registered native Polkit AuthenticationAgent")
+            else
+                report_warn("kaze-shell: polkit_bus_owned=false in inspect")
+            end
+
+            local native_caps = {
+                { key = "has_data_control", label = "native Wayland clipboard (data-control)" },
+                { key = "has_idle_notify", label = "native idle manager (ext-idle-notify-v1)" },
+                { key = "has_screencopy", label = "native screencopy (wlr-screencopy)" },
+            }
+            for _, cap in ipairs(native_caps) do
+                if inspect_out:find('"' .. cap.key .. '"%s*:%s*true') then
+                    report_ok("kaze-shell: " .. cap.label .. " ready")
+                else
+                    report_warn("kaze-shell: " .. cap.label .. " unavailable")
+                end
             end
         else
             report_fail("kaze-shell: kaze-shell.service is inactive")

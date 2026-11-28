@@ -147,14 +147,14 @@ local COREUTILS_WHITELIST = {
 }
 
 local MINIMAL_BINS = {
-  "hyprland", "hyprctl", "kaze-shell", "hyprlock", "hypridle", "cliphist",
-  "grim", "slurp", "notify-send", "foot", "footclient", "zsh",
-  "wl-copy", "wl-paste", "wpctl", "brightnessctl", "playerctl", "lua", "busctl",
+  "hyprland", "hyprctl", "kaze-shell",
+  "notify-send", "foot", "footclient", "zsh",
+  "wl-copy", "wl-paste", "wpctl", "playerctl", "lua", "busctl",
   "systemctl", "flock",
 }
 
 local FULL_EXTRA_BINS = {
-  "wf-recorder", "ffmpeg", "ffprobe", "hyprpicker", "thunar", "yazi",
+  "wf-recorder", "ffmpeg", "ffprobe", "thunar", "yazi",
   "imv", "zathura", "gnome-keyring-daemon", "fcitx5", "fzf", "zoxide", "eza",
   "bat", "rg", "fd", "starship", "wl-mirror",
 }

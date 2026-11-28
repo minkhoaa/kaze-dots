@@ -686,7 +686,7 @@ local function has_lock_layer(tbl)
     if type(tbl) ~= "table" then return false end
     if type(tbl.namespace) == "string" then
         local ns = tbl.namespace:lower()
-        if ns == "lockscreen" or ns:find("hyprlock") then
+        if ns == "lockscreen" or ns == "kaze-lock" or ns:find("hyprlock") then
             return true
         end
     end

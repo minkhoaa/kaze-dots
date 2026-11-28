@@ -50,12 +50,6 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             local min_out, min_ok = read_all(env .. " " .. installer .. " --profile minimal --dry-run 2>&1")
             assert_true(min_ok, "minimal --dry-run exit 0")
             assert_contains(min_out, "  hyprland\n", "minimal includes hyprland")
-            assert_contains(min_out, "  hyprlock\n", "minimal includes hyprlock")
-            assert_contains(min_out, "  hypridle\n", "minimal includes hypridle")
-            assert_contains(min_out, "  hyprpolkitagent\n", "minimal includes hyprpolkitagent")
-            assert_contains(min_out, "  cliphist\n", "minimal includes cliphist")
-            assert_contains(min_out, "  grim\n", "minimal includes grim")
-            assert_contains(min_out, "  slurp\n", "minimal includes slurp")
             assert_contains(min_out, "  pipewire\n", "minimal includes pipewire")
             assert_contains(min_out, "  pipewire-pulse\n", "minimal includes pipewire-pulse")
             assert_contains(min_out, "  pipewire-alsa\n", "minimal includes pipewire-alsa")
@@ -74,20 +68,26 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
                 local pat = "%f[%w_-]" .. word:gsub("%-", "%%-") .. "%f[^%w_-]"
                 return text:find(pat) ~= nil
             end
-            for _, removed in ipairs({ "noctalia", "waybar", "swaybg", "fuzzel", "fnott", "hyprsunset", "matugen", "mate-polkit", "swappy" }) do
+            for _, removed in ipairs({
+                "noctalia", "waybar", "swaybg", "fuzzel", "fnott", "hyprsunset", "matugen", "mate-polkit", "swappy",
+                "hyprlock", "hypridle", "hyprpolkitagent", "cliphist", "grim", "slurp", "brightnessctl",
+            }) do
                 assert_true(not has_word(min_out, removed), "removed package leaked into minimal: " .. removed)
             end
 
             local full_out, full_ok = read_all(env .. " " .. installer .. " --profile full --dry-run --yes 2>&1")
             assert_true(full_ok, "full --dry-run exit 0")
             for _, pkg in ipairs({
-                "hyprlock", "hypridle", "cliphist", "grim", "slurp", "wf-recorder", "ffmpeg", "hyprpicker",
+                "wf-recorder", "ffmpeg",
                 "thunar", "adw-gtk-theme", "yazi", "zathura", "zathura-pdf-poppler", "fcitx5", "fcitx5-bamboo",
                 "fzf", "zoxide", "eza", "bat", "ripgrep", "fd", "starship", "wl-mirror",
             }) do
                 assert_contains(full_out, "  " .. pkg .. "\n", "full includes " .. pkg)
             end
-            for _, removed in ipairs({ "noctalia", "waybar", "swaybg", "fuzzel", "fnott", "hyprsunset", "matugen", "mate-polkit", "swappy", "gst-plugin-pipewire", "zathura-pdf-mupdf" }) do
+            for _, removed in ipairs({
+                "noctalia", "waybar", "swaybg", "fuzzel", "fnott", "hyprsunset", "matugen", "mate-polkit", "swappy",
+                "gst-plugin-pipewire", "zathura-pdf-mupdf", "hyprpicker",
+            }) do
                 assert_true(not has_word(full_out, removed), "removed package leaked into full: " .. removed)
             end
 
@@ -157,13 +157,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
 
             for _, link_path in ipairs({
                 cfg .. "/systemd/user/kaze-shell.service",
-                cfg .. "/systemd/user/kaze-hypridle.service",
-                cfg .. "/systemd/user/kaze-polkit.service",
-                cfg .. "/systemd/user/kaze-cliphist.service",
                 cfg .. "/systemd/user/kaze-fcitx5.service",
                 cfg .. "/hypr/xdph.conf",
-                cfg .. "/hypr/hyprlock.conf",
-                cfg .. "/hypr/hypridle.conf",
                 cfg .. "/foot/foot.ini",
                 cfg .. "/starship.toml",
                 cfg .. "/yazi/yazi.toml",
@@ -203,13 +198,8 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
             assert_eq(fs.read_file(cfg .. "/noctalia/config.toml"), "# pre-existing user noctalia\n")
             for _, gone in ipairs({
                 cfg .. "/systemd/user/kaze-shell.service",
-                cfg .. "/systemd/user/kaze-hypridle.service",
-                cfg .. "/systemd/user/kaze-polkit.service",
-                cfg .. "/systemd/user/kaze-cliphist.service",
                 cfg .. "/systemd/user/kaze-fcitx5.service",
                 cfg .. "/hypr/xdph.conf",
-                cfg .. "/hypr/hyprlock.conf",
-                cfg .. "/hypr/hypridle.conf",
                 cfg .. "/foot/foot.ini",
                 cfg .. "/starship.toml",
                 cfg .. "/yazi/yazi.toml",
@@ -276,9 +266,9 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
 
             link_host_bin(stub_bin, "lua")
             for _, b in ipairs({
-                "hyprland", "hyprctl", "hyprlock", "hypridle", "cliphist", "grim", "slurp",
+                "hyprland", "hyprctl",
                 "notify-send", "foot", "footclient", "wl-copy", "wl-paste",
-                "wpctl", "brightnessctl", "playerctl",
+                "wpctl", "playerctl",
                 "busctl", "systemctl", "flock",
             }) do
                 write_stub(stub_bin, b, "exit 0")
@@ -724,8 +714,8 @@ fi
             assert_true(lock_ok, "--hotplug should exit 0 silently when locked")
             assert_true(not fs.file_exists(home .. "/noc-calls"), "locked hotplug must not invoke noctalia dmenu")
 
-            local _, layer_lock_ok = read_all(cli_env .. ' TEST_LAYERS=\'{"eDP-1":{"levels":{"3":[{"namespace":"hyprlock"}]}}}\' ' .. kdisplay .. " --hotplug HDMI-A-1 2>&1")
-            assert_true(layer_lock_ok, "--hotplug should exit 0 silently on hyprlock layer")
+            local _, layer_lock_ok = read_all(cli_env .. ' TEST_LAYERS=\'{"eDP-1":{"levels":{"3":[{"namespace":"kaze-lock"}]}}}\' ' .. kdisplay .. " --hotplug HDMI-A-1 2>&1")
+            assert_true(layer_lock_ok, "--hotplug should exit 0 silently on kaze-lock layer")
             assert_true(not fs.file_exists(home .. "/noc-calls"), "lock-layer hotplug must not invoke kaze-shell dmenu")
 
             local _, hypr_lock_ok = read_all(cli_env .. " TEST_HYPR_LOCKED=1 " .. kdisplay .. " --hotplug HDMI-A-1 2>&1")
@@ -1368,7 +1358,7 @@ fi
             return table.concat(list, "\n"), #list
         end
 
-        for _, prof in ipairs({ { name = "minimal", count = 32 }, { name = "full", count = 59 } }) do
+        for _, prof in ipairs({ { name = "minimal", count = 25 }, { name = "full", count = 51 } }) do
             local p_out, p_ok = read_all(pkg_script .. " --profile " .. prof.name .. " --dry-run 2>&1")
             local i_out, i_ok = read_all(inst_script .. " --profile " .. prof.name .. " --dry-run 2>&1")
             assert_true(p_ok, "install-packages.sh --dry-run failed for " .. prof.name .. ": " .. p_out)
@@ -1429,10 +1419,10 @@ fi
             for _, d in ipairs({ home, cfg .. "/noctalia", data, cache, runtime, stub_bin }) do fs.mkdir_p(d) end
             link_host_bin(stub_bin, "lua")
             for _, b in ipairs({
-                "hyprland", "hyprctl", "kaze-shell", "hyprlock", "hypridle",
-                "cliphist", "grim", "slurp", "noctalia", "notify-send",
+                "hyprland", "hyprctl", "kaze-shell",
+                "noctalia", "notify-send",
                 "foot", "footclient", "zsh", "wl-copy", "wl-paste",
-                "wpctl", "brightnessctl", "playerctl",
+                "wpctl", "playerctl",
                 "busctl", "systemctl", "flock",
             }) do
                 write_stub(stub_bin, b, "exit 0")
@@ -2089,7 +2079,7 @@ exit 0
 ]])
             write_stub(stub_bin, "makepkg", [[printf 'makepkg %s\n' "$*" >> "$HOME/makepkg-calls"]])
 
-            for _, b in ipairs({ "hyprland", "hyprctl", "noctalia", "notify-send", "foot", "footclient", "wl-copy", "wl-paste", "wpctl", "brightnessctl", "playerctl", "busctl", "flock" }) do
+            for _, b in ipairs({ "hyprland", "hyprctl", "noctalia", "notify-send", "foot", "footclient", "wl-copy", "wl-paste", "wpctl", "playerctl", "busctl", "flock" }) do
                 write_stub(stub_bin, b, "exit 0")
             end
 

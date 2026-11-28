@@ -364,7 +364,12 @@ MOCK=%s
 printf '%%s\n' "$*" >> "$MOCK/noctalia_raw.log"
 
 if [ "$1" = "msg" ]; then
-  if [ "$2" = "display-status" ]; then
+  if [ "$2" = "capture" ] && [ "$3" = "region" ]; then
+    printf '%%s\n' "$*" >> "$MOCK/slurp.log"
+    cat "$MOCK/slurp_stdout"
+    cat "$MOCK/slurp_stderr" >&2
+    exit $(cat "$MOCK/slurp_rc")
+  elif [ "$2" = "display-status" ]; then
     printf 'SET\tdisplay.status\t%%s\n' "$3" >> "$MOCK/noctalia.log"
   elif [ "$2" = "island-activity" ]; then
     printf 'SET\tisland.activity.%%s\t%%s\n' "$3" "$4" >> "$MOCK/noctalia.log"
@@ -1101,15 +1106,15 @@ local function run_suite(test, assert_eq, assert_true, assert_contains, repo_dir
       assert_contains(r.out:lower(), "ffprobe", "missing ffprobe should mention ffprobe")
     end)
 
-    -- Missing slurp (fails on --region, ok without --region)
-    with_sandbox(kaze_record_bin, { omit_tools = { ["slurp"] = true } }, function(sb)
+    -- Missing kaze-shell (fails on --region, ok without --region)
+    with_sandbox(kaze_record_bin, { omit_tools = { ["kaze-shell"] = true } }, function(sb)
       local r_reg = sb:run({ "start", "--region" })
-      assert_true(r_reg.code ~= 0, "missing slurp with --region must fail non-zero")
-      assert_true(not sb:systemctl_called_with("start "), "missing slurp must not start service")
-      assert_contains(r_reg.out:lower(), "slurp", "missing slurp should mention slurp")
+      assert_true(r_reg.code ~= 0, "missing kaze-shell with --region must fail non-zero")
+      assert_true(not sb:systemctl_called_with("start "), "missing kaze-shell must not start service")
+      assert_contains(r_reg.out:lower(), "kaze-shell", "missing kaze-shell should mention kaze-shell")
 
       local r_full = sb:run({ "start" })
-      assert_eq(r_full.code, 0, "full-screen start should not require slurp (err=" .. r_full.stderr .. ")")
+      assert_eq(r_full.code, 0, "full-screen start should not require kaze-shell (err=" .. r_full.stderr .. ")")
     end)
 
     -- Missing ffmpeg (fails on --gif, ok for regular mp4)
