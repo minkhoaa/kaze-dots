@@ -10,6 +10,71 @@ const LOGIND_DEST: &str = "org.freedesktop.login1";
 const LOGIND_PATH: &str = "/org/freedesktop/login1";
 const LOGIND_IFACE: &str = "org.freedesktop.login1.Manager";
 const SESSION_IFACE: &str = "org.freedesktop.login1.Session";
+const USER_IFACE: &str = "org.freedesktop.login1.User";
+
+/// Resolves the active `(session_id, object_path)` for the current user, handling both
+/// direct session processes (`GetSessionByPID`) and `systemd --user` services (`User.Display` / `ListSessions`).
+pub async fn resolve_active_session(conn: &Connection) -> Option<(String, OwnedObjectPath)> {
+    let mgr = Proxy::new(conn, LOGIND_DEST, LOGIND_PATH, LOGIND_IFACE)
+        .await
+        .ok()?;
+
+    if let Ok(sess_path) = mgr
+        .call::<_, _, OwnedObjectPath>("GetSessionByPID", &(std::process::id(),))
+        .await
+    {
+        if let Ok(sess) = Proxy::new(conn, LOGIND_DEST, sess_path.as_str(), SESSION_IFACE).await {
+            if let Ok(id) = sess.get_property::<String>("Id").await {
+                if !id.is_empty() {
+                    return Some((id, sess_path));
+                }
+            }
+        }
+    }
+
+    // SAFETY: `geteuid` is always valid and thread-safe.
+    let uid = unsafe { libc::geteuid() };
+    if let Ok(user_path) = mgr.call::<_, _, OwnedObjectPath>("GetUser", &(uid,)).await {
+        if let Ok(user_proxy) = Proxy::new(conn, LOGIND_DEST, user_path.as_str(), USER_IFACE).await
+        {
+            if let Ok((id, sess_path)) = user_proxy
+                .get_property::<(String, OwnedObjectPath)>("Display")
+                .await
+            {
+                if !id.is_empty() && sess_path.as_str() != "/" {
+                    return Some((id, sess_path));
+                }
+            }
+        }
+    }
+
+    for env_key in ["XDG_SESSION_ID", "KAZE_SESSION_ID"] {
+        if let Ok(id) = std::env::var(env_key) {
+            let trimmed = id.trim();
+            if !trimmed.is_empty() {
+                if let Ok(sess_path) = mgr
+                    .call::<_, _, OwnedObjectPath>("GetSession", &(trimmed,))
+                    .await
+                {
+                    return Some((trimmed.to_string(), sess_path));
+                }
+            }
+        }
+    }
+
+    if let Ok(list) = mgr
+        .call::<_, _, Vec<(String, u32, String, String, OwnedObjectPath)>>("ListSessions", &())
+        .await
+    {
+        if let Some((id, _, _, _, path)) =
+            list.into_iter().find(|(_, s_uid, _, _, _)| *s_uid == uid)
+        {
+            return Some((id, path));
+        }
+    }
+
+    None
+}
 
 pub async fn acquire_idle_inhibit(conn: &Connection) -> Option<OwnedFd> {
     let proxy = Proxy::new(conn, LOGIND_DEST, LOGIND_PATH, LOGIND_IFACE)
@@ -91,10 +156,7 @@ pub async fn run_logind_task(
     let mut sleep_fd = acquire_sleep_delay_inhibit(&conn).await;
     let mut sleep_stream = mgr.receive_signal("PrepareForSleep").await.ok();
 
-    let session_path = mgr
-        .call::<_, _, OwnedObjectPath>("GetSessionByPID", &(std::process::id(),))
-        .await
-        .ok();
+    let session_path = resolve_active_session(&conn).await.map(|(_, p)| p);
     let sess_proxy = match session_path.as_ref() {
         Some(path) => Proxy::new(&conn, LOGIND_DEST, path.as_str(), SESSION_IFACE)
             .await

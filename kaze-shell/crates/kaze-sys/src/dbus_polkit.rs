@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
-use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+use zbus::zvariant::{OwnedValue, Value};
 use zbus::{Connection, Proxy};
 use zeroize::Zeroizing;
 
@@ -189,36 +189,12 @@ impl PolkitAgentInterface {
 }
 
 async fn resolve_session_id(conn: &Connection) -> Option<String> {
-    if let Ok(mgr) = Proxy::new(
-        conn,
-        "org.freedesktop.login1",
-        "/org/freedesktop/login1",
-        "org.freedesktop.login1.Manager",
-    )
-    .await
-    {
-        if let Ok(sess_path) = mgr
-            .call::<_, _, OwnedObjectPath>("GetSessionByPID", &(std::process::id(),))
-            .await
-        {
-            if let Ok(sess) = Proxy::new(
-                conn,
-                "org.freedesktop.login1",
-                sess_path.as_str(),
-                "org.freedesktop.login1.Session",
-            )
-            .await
-            {
-                if let Ok(id) = sess.get_property::<String>("Id").await {
-                    if !id.is_empty() {
-                        return Some(id);
-                    }
-                }
-            }
-        }
+    if let Some((id, _)) = crate::dbus_logind::resolve_active_session(conn).await {
+        return Some(id);
     }
     std::env::var("XDG_SESSION_ID")
         .ok()
+        .or_else(|| std::env::var("KAZE_SESSION_ID").ok())
         .filter(|s| !s.trim().is_empty())
 }
 
@@ -324,21 +300,30 @@ pub async fn run_polkit_task(
 
 async fn register_with_authority(conn: &Connection) -> bool {
     let Some(session_id) = resolve_session_id(conn).await else {
+        eprintln!("kaze-sys: polkit agent skipped — no active logind session_id found");
         return false;
     };
     let Ok(auth) = Proxy::new(conn, AUTHORITY_DEST, AUTHORITY_PATH, AUTHORITY_IFACE).await else {
+        eprintln!("kaze-sys: polkit authority proxy unavailable");
         return false;
     };
     let mut subject_details: HashMap<&str, Value<'_>> = HashMap::new();
     subject_details.insert("session-id", Value::from(session_id));
     let subject = ("unix-session", subject_details);
     let locale = std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_string());
-    auth.call::<_, _, ()>(
-        "RegisterAuthenticationAgent",
-        &(subject, locale, AGENT_OBJECT_PATH),
-    )
-    .await
-    .is_ok()
+    match auth
+        .call::<_, _, ()>(
+            "RegisterAuthenticationAgent",
+            &(subject, locale, AGENT_OBJECT_PATH),
+        )
+        .await
+    {
+        Ok(()) => true,
+        Err(err) => {
+            eprintln!("kaze-sys: RegisterAuthenticationAgent failed: {err}");
+            false
+        }
+    }
 }
 
 async fn run_polkit_coordinator(
