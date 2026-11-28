@@ -723,6 +723,7 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
         hit_targets,
         animating: false,
         input_regions: None,
+        ime_cursor_rect: None,
     })
 }
 

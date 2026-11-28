@@ -5,6 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
+use crate::dconf_read::read_gnome_text_scaling_factor;
+use crate::i18n::Locale;
 use crate::layout::LayoutPreset;
 use crate::theme::ResolvedPalette;
 
@@ -435,16 +437,34 @@ pub struct AppState {
     pub history_notifications: usize,
     pub notifications_bus_owned: bool,
     pub offline_mode: bool,
+    pub locale: Locale,
+    pub effective_font_scale: f32,
     pub user_account: UserAccountState,
     pub clock: ClockTime,
     pub hypr_connected: bool,
 }
 
 impl AppState {
+    pub fn compute_effective_font_scale(config: &Config) -> f32 {
+        let mut scale = config.accessibility.font_scale.clamp(0.75, 2.0);
+        if config.accessibility.sync_gnome_text_scale {
+            if let Ok(cfg_home) = crate::config::xdg_config_home() {
+                if let Some(gnome_scale) =
+                    read_gnome_text_scaling_factor(&cfg_home.join("dconf").join("user"))
+                {
+                    scale = gnome_scale;
+                }
+            }
+        }
+        scale.clamp(0.75, 2.0)
+    }
+
     pub fn new(config: Config) -> Self {
         let layout_preset = config.layout.preset;
         let theme_mode = config.theme.mode;
         let offline_mode = config.network.offline_mode;
+        let locale = Locale::resolve(&config.general.locale);
+        let effective_font_scale = Self::compute_effective_font_scale(&config);
         let palette =
             ResolvedPalette::load(&config.theme.palette, config.theme.palettes_dir.as_deref());
         let (clock, _) = ClockTime::now_and_duration_to_next_minute();
@@ -487,6 +507,8 @@ impl AppState {
             history_notifications: 0,
             notifications_bus_owned: false,
             offline_mode,
+            locale,
+            effective_font_scale,
             user_account,
             clock,
             hypr_connected: false,

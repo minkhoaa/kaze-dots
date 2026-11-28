@@ -7,7 +7,7 @@ use calloop_wayland_source::WaylandSource;
 use kaze_core::layout::{layout_state_path, load_persisted_preset, save_persisted_preset};
 use kaze_core::theme::generate_all_templates;
 use kaze_core::{
-    AppState, ClockTime, Config, DirtyFlags, IpcResult, KazeExtension, LayoutPreset,
+    AppState, ClockTime, Config, DirtyFlags, IpcResult, KazeExtension, LayoutPreset, Locale,
     ResolvedPalette, SettingsStore, ShellAction, ShellContext, SystemEvent, ThemePaths,
 };
 use kaze_ext_bar::BarExtension;
@@ -29,6 +29,7 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use smithay_client_toolkit::reexports::client::Connection;
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -328,6 +329,10 @@ impl Daemon {
             SystemEvent::OfflineModeChanged(offline) => {
                 self.state.offline_mode = *offline;
             }
+            SystemEvent::LocaleChanged(locale) => {
+                self.state.locale = *locale;
+            }
+            SystemEvent::ClipboardTextPasted { .. } => {}
         }
 
         let prev_unread = self.state.unread_notifications;
@@ -590,6 +595,37 @@ impl Daemon {
                 } => {
                     self.fire_hook(&event, old, new, value);
                 }
+                ShellAction::SetClipboardText(text) => {
+                    // ponytail: temporary wl-copy fallback in 5B, replaced by native data-control in 5C.
+                    if let Ok(mut child) = Command::new("wl-copy")
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .spawn()
+                    {
+                        if let Some(mut stdin) = child.stdin.take() {
+                            let _ = stdin.write_all(text.as_bytes());
+                        }
+                        self.children.push(child);
+                    }
+                }
+                ShellAction::RequestClipboardPaste { surface_id } => {
+                    // ponytail: temporary wl-paste fallback in 5B, replaced by native data-control in 5C.
+                    let tx = self.event_tx.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("kaze-paste-tmp".to_string())
+                        .spawn(move || {
+                            if let Ok(out) = Command::new("wl-paste").arg("--no-newline").output() {
+                                if out.status.success() {
+                                    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                                    let _ = tx.send(SystemEvent::ClipboardTextPasted {
+                                        surface_id,
+                                        text,
+                                    });
+                                }
+                            }
+                        });
+                }
             }
         }
     }
@@ -792,17 +828,27 @@ impl Daemon {
             Ok(new_cfg) => {
                 let mode = new_cfg.theme.mode;
                 let offline = new_cfg.network.offline_mode;
+                let prev_locale = self.state.locale;
+                let new_locale = Locale::resolve(&new_cfg.general.locale);
+                let new_font_scale = AppState::compute_effective_font_scale(&new_cfg);
+                let high_contrast = new_cfg.accessibility.high_contrast;
                 let palette = ResolvedPalette::load(
                     &new_cfg.theme.palette,
                     new_cfg.theme.palettes_dir.as_deref(),
                 );
                 self.ui.set_font(&new_cfg.bar.font);
+                self.ui.set_accessibility(new_font_scale, high_contrast);
                 self.state.config = new_cfg;
                 self.state.theme_mode = mode;
                 self.state.offline_mode = offline;
+                self.state.locale = new_locale;
+                self.state.effective_font_scale = new_font_scale;
                 self.state.palette = palette;
                 if let Err(err) = self.apply_templates() {
                     eprintln!("kaze-shell: template regeneration after reload failed: {err}");
+                }
+                if prev_locale != new_locale {
+                    self.dispatch_system_event(SystemEvent::LocaleChanged(new_locale));
                 }
                 self.dispatch_system_event(SystemEvent::ConfigReloaded);
                 Ok(())
@@ -1081,6 +1127,16 @@ impl Daemon {
                 }
                 _ => IpcResponse::err("usage: offline-mode-set <on|off>"),
             },
+            "locale-status" => IpcResponse::ok(self.state.locale.as_str()),
+            "locale-set" => {
+                let Some(code) = req.args.first().map(String::as_str) else {
+                    responder.send(&IpcResponse::err("usage: locale-set <en|vi>"));
+                    return;
+                };
+                let next = Locale::from_code(code).unwrap_or(Locale::En);
+                self.dispatch_system_event(SystemEvent::LocaleChanged(next));
+                IpcResponse::ok(next.as_str())
+            }
             "config-set" => {
                 let (Some(key), Some(val)) = (req.args.first(), req.args.get(1)) else {
                     responder.send(&IpcResponse::err("usage: config-set <dotted_key> <value>"));
@@ -1118,7 +1174,7 @@ impl Daemon {
             "status" | "inspect" => {
                 let outputs: Vec<&String> = self.state.outputs.keys().collect();
                 let hidden: Vec<&String> = self.state.hidden_bars.iter().collect();
-                let data = serde_json::json!({
+                let mut data = serde_json::json!({
                     "pid": std::process::id(),
                     "version": env!("CARGO_PKG_VERSION"),
                     "layout_preset": self.state.layout_preset.as_str(),
@@ -1159,6 +1215,17 @@ impl Daemon {
                     "animating_surfaces": self.ui.animating_surface_count(),
                     "namespaces": self.ui.active_namespaces(),
                 });
+                if let Some(obj) = data.as_object_mut() {
+                    obj.insert("locale".into(), serde_json::json!(self.state.locale.as_str()));
+                    obj.insert(
+                        "effective_font_scale".into(),
+                        serde_json::json!(self.state.effective_font_scale),
+                    );
+                    obj.insert(
+                        "high_contrast".into(),
+                        serde_json::json!(self.state.config.accessibility.high_contrast),
+                    );
+                }
                 IpcResponse::ok_data("ok", data)
             }
             _ => {
@@ -1511,6 +1578,10 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
 
     let layout_state_file = layout_state_path().ok();
     let mut state = AppState::new(config);
+    ui.set_accessibility(
+        state.effective_font_scale,
+        state.config.accessibility.high_contrast,
+    );
     let has_persisted_layout = if let Some(ref path) = layout_state_file {
         if let Some(saved) = load_persisted_preset(path) {
             state.layout_preset = saved;

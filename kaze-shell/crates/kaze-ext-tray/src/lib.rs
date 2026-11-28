@@ -306,6 +306,7 @@ fn build_tray_menu_surface(state: &AppState, menu: &TrayMenuState) -> SurfaceSpe
         hit_targets,
         animating: false,
         input_regions: None,
+        ime_cursor_rect: None,
     }
 }
 

@@ -153,6 +153,7 @@ pub struct UiState {
     nightlight_temp_k: u32,
     ime_surface: Option<ObjectId>,
     ime_pending: PendingIme,
+    last_ime_cursor_rect: Option<(i32, i32, i32, i32)>,
     qh: QueueHandle<Self>,
     pointer: Option<wl_pointer::WlPointer>,
     pointer_surface: Option<ObjectId>,
@@ -213,6 +214,7 @@ impl UiState {
             nightlight_temp_k: 4000,
             ime_surface: None,
             ime_pending: PendingIme::default(),
+            last_ime_cursor_rect: None,
             qh,
             pointer: None,
             pointer_surface: None,
@@ -237,6 +239,10 @@ impl UiState {
 
     pub fn set_font(&mut self, font_hint: &str) {
         self.renderer.reload_font_if_needed(font_hint);
+    }
+
+    pub fn set_accessibility(&mut self, font_scale: f32, high_contrast: bool) {
+        self.renderer.set_accessibility(font_scale, high_contrast);
     }
 
     pub fn drain_events(&mut self) -> Vec<SystemEvent> {
@@ -560,6 +566,7 @@ impl UiState {
         for id in ids_to_draw {
             self.draw_surface(&id);
         }
+        self.update_ime_cursor_rect_for_focused();
     }
 
     fn create_surface(&mut self, spec: SurfaceSpec) {
@@ -767,14 +774,62 @@ impl UiState {
 
     fn enable_ime(&self) {
         if let Some(ref ti) = self.text_input {
+            let (rx, ry, rw, rh) = self
+                .ime_surface
+                .as_ref()
+                .and_then(|obj| self.surface_key_by_obj.get(obj))
+                .and_then(|key| self.surfaces.get(key))
+                .and_then(|s| s.spec.ime_cursor_rect)
+                .map(|r| {
+                    (
+                        r.x.round() as i32,
+                        r.y.round() as i32,
+                        (r.w.round() as i32).max(2),
+                        (r.h.round() as i32).max(16),
+                    )
+                })
+                .unwrap_or((120, 14, 2, 20));
             ti.enable();
             ti.set_content_type(ContentHint::None, ContentPurpose::Normal);
-            ti.set_cursor_rectangle(120, 14, 2, 20);
+            ti.set_cursor_rectangle(rx, ry, rw, rh);
             ti.commit();
         }
     }
 
-    fn disable_ime(&self) {
+    fn update_ime_cursor_rect_for_focused(&mut self) {
+        let Some(ref ti) = self.text_input else {
+            return;
+        };
+        let Some(ref obj) = self.ime_surface else {
+            return;
+        };
+        let Some(key) = self.surface_key_by_obj.get(obj) else {
+            return;
+        };
+        let Some(managed) = self.surfaces.get(key) else {
+            return;
+        };
+        if managed.spec.keyboard_interactivity == KeyboardMode::None {
+            return;
+        }
+        let Some(r) = managed.spec.ime_cursor_rect else {
+            return;
+        };
+        let rect_tuple = (
+            r.x.round() as i32,
+            r.y.round() as i32,
+            (r.w.round() as i32).max(2),
+            (r.h.round() as i32).max(16),
+        );
+        if self.last_ime_cursor_rect != Some(rect_tuple) {
+            self.last_ime_cursor_rect = Some(rect_tuple);
+            ti.set_cursor_rectangle(rect_tuple.0, rect_tuple.1, rect_tuple.2, rect_tuple.3);
+            ti.commit();
+        }
+    }
+
+    fn disable_ime(&mut self) {
+        self.last_ime_cursor_rect = None;
         if let Some(ref ti) = self.text_input {
             ti.disable();
             ti.commit();
@@ -1400,6 +1455,7 @@ impl PointerHandler for UiState {
                                         surface_id: surface_id.clone(),
                                         target_id: target.id.clone(),
                                         delta_y: delta,
+                                        modifiers: self.modifiers,
                                     });
                                     break;
                                 }

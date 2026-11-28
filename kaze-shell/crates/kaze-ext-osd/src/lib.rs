@@ -260,6 +260,7 @@ fn build_osd_surface(state: &AppState, kind: OsdKind) -> SurfaceSpec {
         hit_targets: Vec::new(),
         animating: false,
         input_regions: None,
+        ime_cursor_rect: None,
     }
 }
 

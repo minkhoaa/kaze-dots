@@ -1,6 +1,7 @@
 use bitflags::bitflags;
 use std::path::PathBuf;
 
+use crate::i18n::Locale;
 use crate::layout::LayoutPreset;
 use crate::state::{
     AppState, AudioState, BacklightState, BatteryState, BluetoothState, ClockTime, MediaState,
@@ -126,6 +127,7 @@ pub enum SystemEvent {
         surface_id: String,
         target_id: String,
         delta_y: f64,
+        modifiers: KeyModifiers,
     },
     KeyInput {
         surface_id: String,
@@ -191,6 +193,11 @@ pub enum SystemEvent {
     ApplicationsChanged,
     UserAccountChanged(UserAccountState),
     OfflineModeChanged(bool),
+    LocaleChanged(Locale),
+    ClipboardTextPasted {
+        surface_id: String,
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -273,6 +280,10 @@ pub enum ShellAction {
         old: Option<String>,
         new: Option<String>,
         value: Option<String>,
+    },
+    SetClipboardText(String),
+    RequestClipboardPaste {
+        surface_id: String,
     },
 }
 

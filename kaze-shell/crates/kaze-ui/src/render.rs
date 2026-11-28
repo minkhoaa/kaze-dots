@@ -63,6 +63,8 @@ impl RichTextEngine {
             font_hint,
             "JetBrainsMono Nerd Font",
             "Noto Color Emoji",
+            "Noto Sans Arabic",
+            "Noto Sans Hebrew",
         ];
 
         for query in queries {
@@ -80,6 +82,8 @@ impl RichTextEngine {
             "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf",
             "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Bold.ttf",
             "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+            "/usr/share/fonts/noto/NotoSansArabic-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSansHebrew-Regular.ttf",
             "/usr/share/fonts/TTF/DejaVuSans.ttf",
         ] {
             let p = PathBuf::from(static_path);
@@ -251,6 +255,317 @@ impl RichTextEngine {
             }
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text_input(
+        &mut self,
+        pixmap: &mut Pixmap,
+        rect: Rect,
+        text: &str,
+        preedit: &str,
+        cursor_byte: usize,
+        selection: Option<(usize, usize)>,
+        placeholder: &str,
+        password_mode: bool,
+        color: Color,
+        preedit_color: Color,
+        selection_color: Color,
+        placeholder_color: Color,
+        px_size: f32,
+        scale: f32,
+    ) {
+        let rx = rect.x * scale;
+        let ry = rect.y * scale;
+        let rw = (rect.w * scale).max(1.0);
+        let rh = (rect.h * scale).max(1.0);
+
+        if text.is_empty() && preedit.is_empty() {
+            if !placeholder.is_empty() {
+                self.draw(
+                    pixmap,
+                    rect,
+                    placeholder,
+                    placeholder_color,
+                    px_size,
+                    false,
+                    TextAlign::Left,
+                    1,
+                    scale,
+                );
+            }
+            if let Some(caret) =
+                SkiaRect::from_xywh(rx, ry + 2.0 * scale, (2.0 * scale).max(1.0), (rh - 4.0 * scale).max(6.0))
+            {
+                let mut paint = Paint::default();
+                paint.set_color(to_skia_color(color));
+                pixmap.fill_rect(caret, &paint, Transform::identity(), None);
+            }
+            return;
+        }
+
+        let safe_cursor = clamp_char_boundary(text, cursor_byte.min(text.len()));
+        let mut display = String::new();
+        let mut sel_disp: Option<(usize, usize)> = None;
+        let (sel_start_orig, sel_end_orig) = selection
+            .map(|(a, b)| {
+                let s = clamp_char_boundary(text, a.min(text.len()));
+                let e = clamp_char_boundary(text, b.min(text.len()));
+                if s <= e { (s, e) } else { (e, s) }
+            })
+            .unwrap_or((safe_cursor, safe_cursor));
+
+        let pre_start_disp;
+        let pre_end_disp;
+        if password_mode {
+            let mut d_sel_s = 0usize;
+            let mut d_sel_e = 0usize;
+            for (idx, _) in text[..safe_cursor].char_indices() {
+                if idx == sel_start_orig {
+                    d_sel_s = display.len();
+                }
+                if idx == sel_end_orig {
+                    d_sel_e = display.len();
+                }
+                display.push('•');
+            }
+            if sel_start_orig == safe_cursor {
+                d_sel_s = display.len();
+            }
+            if sel_end_orig == safe_cursor {
+                d_sel_e = display.len();
+            }
+            pre_start_disp = display.len();
+            for _ in preedit.chars() {
+                display.push('•');
+            }
+            pre_end_disp = display.len();
+            let post_base = display.len();
+            for (rel_idx, _) in text[safe_cursor..].char_indices() {
+                let orig = safe_cursor + rel_idx;
+                if orig == sel_start_orig {
+                    d_sel_s = post_base + rel_idx * '•'.len_utf8();
+                }
+                if orig == sel_end_orig {
+                    d_sel_e = display.len();
+                }
+                display.push('•');
+            }
+            if sel_start_orig >= safe_cursor && sel_start_orig == text.len() {
+                d_sel_s = display.len();
+            }
+            if sel_end_orig >= safe_cursor && sel_end_orig == text.len() {
+                d_sel_e = display.len();
+            }
+            if selection.is_some() && d_sel_s < d_sel_e {
+                sel_disp = Some((d_sel_s, d_sel_e));
+            }
+        } else {
+            display.push_str(&text[..safe_cursor]);
+            pre_start_disp = display.len();
+            display.push_str(preedit);
+            pre_end_disp = display.len();
+            display.push_str(&text[safe_cursor..]);
+            if selection.is_some() && sel_start_orig < sel_end_orig {
+                let pre_len = preedit.len();
+                let map_orig = |pos: usize| if pos <= safe_cursor { pos } else { pos + pre_len };
+                sel_disp = Some((map_orig(sel_start_orig), map_orig(sel_end_orig)));
+            }
+        }
+
+        let line_height = (px_size * 1.32).max(px_size + 2.0);
+        let mut buffer =
+            CosmicBuffer::new(&mut self.font_system, Metrics::new(px_size, line_height));
+        buffer.set_wrap(Wrap::None);
+        buffer.set_size(Some(rw * 4.0), Some(rh));
+
+        let attrs = Attrs::new().family(Family::SansSerif);
+        buffer.set_text(&display, &attrs, Shaping::Advanced, None);
+        buffer.shape_until_scroll(&mut self.font_system, false);
+
+        let pm_w = pixmap.width() as i32;
+        let pm_h = pixmap.height() as i32;
+        let clip_x0 = rx.floor() as i32;
+        let clip_y0 = ry.floor() as i32;
+        let clip_x1 = (rx + rw).ceil() as i32;
+        let clip_y1 = (ry + rh).ceil() as i32;
+
+        // First pass: selection highlights & preedit underlines + compute visual caret X.
+        let mut caret_x = rx;
+        if let Some(run) = buffer.layout_runs().next() {
+            let baseline_y = ry + run.line_y;
+            let caret_target = pre_end_disp;
+            for glyph in run.glyphs.iter() {
+                let gx = rx + glyph.x;
+                let gw = glyph.w.max(1.0);
+                if let Some((ss, se)) = sel_disp {
+                    if glyph.start < se && glyph.end > ss {
+                        let clamped_x = gx.max(rx);
+                        let max_w = ((rx + rw) - clamped_x).max(0.0);
+                        if max_w > 0.0 {
+                            if let Some(sr) = SkiaRect::from_xywh(clamped_x, ry, gw.min(max_w), rh)
+                            {
+                                let mut paint = Paint::default();
+                                paint.set_color(to_skia_color(selection_color));
+                                pixmap.fill_rect(sr, &paint, Transform::identity(), None);
+                            }
+                        }
+                    }
+                }
+                if !preedit.is_empty() && glyph.start >= pre_start_disp && glyph.end <= pre_end_disp
+                {
+                    let clamped_x = gx.max(rx);
+                    let max_w = ((rx + rw) - clamped_x).max(0.0);
+                    if max_w > 0.0 {
+                        if let Some(ur) = SkiaRect::from_xywh(
+                            clamped_x,
+                            (baseline_y + 2.0 * scale).min(ry + rh - 2.0),
+                            gw.min(max_w),
+                            (1.5 * scale).max(1.0),
+                        ) {
+                            let mut paint = Paint::default();
+                            paint.set_color(to_skia_color(preedit_color));
+                            pixmap.fill_rect(ur, &paint, Transform::identity(), None);
+                        }
+                    }
+                }
+                if glyph.end <= caret_target {
+                    caret_x = (gx + gw).min(rx + rw - 2.0 * scale);
+                }
+            }
+        }
+
+        // Second pass: rasterize shaped glyphs with color discrimination for preedit.
+        let data = pixmap.data_mut();
+        if let Some(run) = buffer.layout_runs().next() {
+            for glyph in run.glyphs.iter() {
+                let is_preedit =
+                    !preedit.is_empty() && glyph.start >= pre_start_disp && glyph.end <= pre_end_disp;
+                let glyph_color = if is_preedit { preedit_color } else { color };
+                let physical = glyph.physical((rx, ry + run.line_y), 1.0);
+                let Some(image) = self
+                    .swash_cache
+                    .get_image_uncached(&mut self.font_system, physical.cache_key)
+                else {
+                    continue;
+                };
+                let gw = image.placement.width as usize;
+                let gh = image.placement.height as usize;
+                if gw == 0 || gh == 0 {
+                    continue;
+                }
+                let gx = physical.x + image.placement.left;
+                let gy = physical.y - image.placement.top;
+
+                match image.content {
+                    SwashContent::Mask => {
+                        for row in 0..gh {
+                            let py = gy + row as i32;
+                            if py < 0 || py >= pm_h || py < clip_y0 || py >= clip_y1 {
+                                continue;
+                            }
+                            for col in 0..gw {
+                                let px = gx + col as i32;
+                                if px < 0 || px >= pm_w || px < clip_x0 || px >= clip_x1 {
+                                    continue;
+                                }
+                                let cov = image.data[row * gw + col];
+                                if cov > 0 {
+                                    blend_pixel_premul(
+                                        data,
+                                        (py * pm_w + px) as usize * 4,
+                                        glyph_color,
+                                        cov,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    SwashContent::Color => {
+                        for row in 0..gh {
+                            let py = gy + row as i32;
+                            if py < 0 || py >= pm_h || py < clip_y0 || py >= clip_y1 {
+                                continue;
+                            }
+                            for col in 0..gw {
+                                let px = gx + col as i32;
+                                if px < 0 || px >= pm_w || px < clip_x0 || px >= clip_x1 {
+                                    continue;
+                                }
+                                let sidx = (row * gw + col) * 4;
+                                if sidx + 3 >= image.data.len() {
+                                    continue;
+                                }
+                                let src = Color::rgba(
+                                    image.data[sidx],
+                                    image.data[sidx + 1],
+                                    image.data[sidx + 2],
+                                    image.data[sidx + 3],
+                                );
+                                if src.a > 0 {
+                                    blend_pixel_premul(
+                                        data,
+                                        (py * pm_w + px) as usize * 4,
+                                        src,
+                                        glyph_color.a,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    SwashContent::SubpixelMask => {
+                        for row in 0..gh {
+                            let py = gy + row as i32;
+                            if py < 0 || py >= pm_h || py < clip_y0 || py >= clip_y1 {
+                                continue;
+                            }
+                            for col in 0..gw {
+                                let px = gx + col as i32;
+                                if px < 0 || px >= pm_w || px < clip_x0 || px >= clip_x1 {
+                                    continue;
+                                }
+                                let sidx = (row * gw + col) * 3;
+                                if sidx + 2 >= image.data.len() {
+                                    continue;
+                                }
+                                let cov = ((u16::from(image.data[sidx])
+                                    + u16::from(image.data[sidx + 1])
+                                    + u16::from(image.data[sidx + 2]))
+                                    / 3) as u8;
+                                if cov > 0 {
+                                    blend_pixel_premul(
+                                        data,
+                                        (py * pm_w + px) as usize * 4,
+                                        glyph_color,
+                                        cov,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Third pass: draw vertical caret bar.
+        if let Some(caret) = SkiaRect::from_xywh(
+            caret_x.clamp(rx, (rx + rw - 2.0).max(rx)),
+            ry + 2.0 * scale,
+            (2.0 * scale).max(1.0),
+            (rh - 4.0 * scale).max(6.0),
+        ) {
+            let mut paint = Paint::default();
+            paint.set_color(to_skia_color(color));
+            pixmap.fill_rect(caret, &paint, Transform::identity(), None);
+        }
+    }
+}
+
+fn clamp_char_boundary(s: &str, mut idx: usize) -> usize {
+    idx = idx.min(s.len());
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
 }
 
 pub struct Renderer {
@@ -259,6 +574,8 @@ pub struct Renderer {
     bold_font: Option<MmappedFont>,
     glyph_cache: HashMap<(bool, char, u16), CachedGlyph>,
     rich_text: Option<RichTextEngine>,
+    font_scale: f32,
+    high_contrast: bool,
 }
 
 impl Renderer {
@@ -271,7 +588,14 @@ impl Renderer {
             bold_font,
             glyph_cache: HashMap::new(),
             rich_text: None,
+            font_scale: 1.0,
+            high_contrast: false,
         }
+    }
+
+    pub fn set_accessibility(&mut self, font_scale: f32, high_contrast: bool) {
+        self.font_scale = font_scale.clamp(0.75, 2.0);
+        self.high_contrast = high_contrast;
     }
 
     pub fn has_rich_text_engine(&self) -> bool {
@@ -338,15 +662,30 @@ impl Renderer {
         }
 
         // Border frame (inset by half stroke width so edges stay crisp and unclipped)
-        if spec.border_width > 0.0 && spec.border_color.a > 0 {
-            let bw = spec.border_width * s;
+        let eff_border_w = if self.high_contrast && spec.background.a > 0 {
+            spec.border_width.max(2.0)
+        } else {
+            spec.border_width
+        };
+        let eff_border_color = if self.high_contrast && spec.background.a > 0 {
+            Color::rgba(
+                spec.border_color.r.max(0xb0),
+                spec.border_color.g.max(0xb0),
+                spec.border_color.b.max(0xb0),
+                255,
+            )
+        } else {
+            spec.border_color
+        };
+        if eff_border_w > 0.0 && eff_border_color.a > 0 {
+            let bw = eff_border_w * s;
             let inset = bw * 0.5;
             if w > bw && h > bw {
                 if let Some(border_path) =
                     rounded_rect_path(inset, inset, w - bw, h - bw, (radius - inset).max(0.0))
                 {
                     let mut paint = Paint::default();
-                    paint.set_color(to_skia_color(spec.border_color));
+                    paint.set_color(to_skia_color(eff_border_color));
                     paint.anti_alias = radius > 0.0;
                     let stroke = Stroke {
                         width: bw,
@@ -547,12 +886,14 @@ impl Renderer {
                     bold,
                     align,
                 } => {
+                    let eff_size = (*size * self.font_scale * s)
+                        .clamp(6.0 * s, (rect.h * s * 0.92).max(6.0 * s));
                     self.draw_text(
                         &mut pixmap,
                         *rect,
                         text,
                         *color,
-                        *size * s,
+                        eff_size,
                         *bold,
                         *align,
                         s,
@@ -567,6 +908,8 @@ impl Renderer {
                     align,
                     max_lines,
                 } => {
+                    let eff_size = (*size * self.font_scale * s)
+                        .clamp(6.0 * s, (rect.h * s * 0.92).max(6.0 * s));
                     let hint = self.font_hint.clone();
                     let engine = self
                         .rich_text
@@ -576,10 +919,47 @@ impl Renderer {
                         *rect,
                         text,
                         *color,
-                        *size * s,
+                        eff_size,
                         *bold,
                         *align,
                         *max_lines,
+                        s,
+                    );
+                }
+                PaintCmd::TextInputField {
+                    rect,
+                    text,
+                    preedit,
+                    cursor_byte,
+                    selection,
+                    placeholder,
+                    password_mode,
+                    color,
+                    preedit_color,
+                    selection_color,
+                    placeholder_color,
+                    size,
+                } => {
+                    let eff_size = (*size * self.font_scale * s)
+                        .clamp(6.0 * s, (rect.h * s * 0.92).max(6.0 * s));
+                    let hint = self.font_hint.clone();
+                    let engine = self
+                        .rich_text
+                        .get_or_insert_with(|| RichTextEngine::new(&hint));
+                    engine.draw_text_input(
+                        &mut pixmap,
+                        *rect,
+                        text,
+                        preedit,
+                        *cursor_byte,
+                        *selection,
+                        placeholder,
+                        *password_mode,
+                        *color,
+                        *preedit_color,
+                        *selection_color,
+                        *placeholder_color,
+                        eff_size,
                         s,
                     );
                 }
@@ -1554,6 +1934,7 @@ mod tests {
             hit_targets: vec![],
             animating: false,
             input_regions: None,
+            ime_cursor_rect: None,
         }
     }
 
@@ -1620,5 +2001,60 @@ mod tests {
         // Bottom-left outside the flare (x=2, y=38) must remain transparent.
         let outside_idx = (38 * 240 + 2) * 4;
         assert_eq!(buf[outside_idx + 3], 0);
+    }
+
+    #[test]
+    fn accessibility_font_scale_extremes_and_high_contrast_render_cleanly() {
+        for scale_factor in [0.75f32, 2.0f32] {
+            let mut renderer = Renderer::new("JetBrainsMono Nerd Font");
+            renderer.set_accessibility(scale_factor, true);
+            let mut spec = make_spec(vec![
+                PaintCmd::Text {
+                    rect: Rect::new(4.0, 4.0, 120.0, 24.0),
+                    text: "12:34".into(),
+                    color: Color::rgba(0xdc, 0xd7, 0xba, 0xff),
+                    size: 14.0,
+                    bold: true,
+                    align: TextAlign::Left,
+                },
+                PaintCmd::RichText {
+                    rect: Rect::new(4.0, 30.0, 220.0, 26.0),
+                    text: "Tiếng Việt".into(),
+                    color: Color::rgba(0xdc, 0xd7, 0xba, 0xff),
+                    size: 14.0,
+                    bold: false,
+                    align: TextAlign::Left,
+                    max_lines: 1,
+                },
+            ]);
+            spec.border_width = 0.0;
+            let mut buf = vec![0u8; 240 * 60 * 4];
+            renderer.render_spec(&spec, 240, 60, 1, &mut buf);
+            // High contrast applies a border even when spec.border_width was 0.0.
+            assert_eq!(buf[3], 255);
+        }
+    }
+
+    #[test]
+    fn text_input_field_renders_bidi_selection_and_preedit_without_panic() {
+        let mut renderer = Renderer::new("JetBrainsMono Nerd Font");
+        let spec = make_spec(vec![PaintCmd::TextInputField {
+            rect: Rect::new(8.0, 14.0, 224.0, 28.0),
+            text: "Xin chào مرحبا 👨\u{200d}👩\u{200d}👧\u{200d}👦 123".into(),
+            preedit: "đang".into(),
+            cursor_byte: 4,
+            selection: Some((0, 3)),
+            placeholder: "Type...".into(),
+            password_mode: false,
+            color: Color::rgba(0xdc, 0xd7, 0xba, 0xff),
+            preedit_color: Color::rgba(0x7e, 0x9c, 0xd8, 0xff),
+            selection_color: Color::rgba(0x2d, 0x4f, 0x67, 0xc0),
+            placeholder_color: Color::rgba(0x72, 0x71, 0x69, 0xff),
+            size: 13.5,
+        }]);
+        let mut buf = vec![0u8; 240 * 60 * 4];
+        renderer.render_spec(&spec, 240, 60, 1, &mut buf);
+        let (chunks, _) = buf.as_chunks::<4>();
+        assert!(chunks.iter().any(|px| px[3] == 255 && px[0] != 0x28));
     }
 }

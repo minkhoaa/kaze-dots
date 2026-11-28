@@ -4,26 +4,22 @@ pub mod desktop;
 
 use desktop::{scan_applications, DesktopApp};
 use kaze_core::{
-    Anchor, AppState, DirtyFlags, EdgeInsets, HitTarget, ImeEvent, IpcResult, KazeExtension,
-    KeyEvent, KeyboardMode, Layer, PaintCmd, PointerButton, Rect, ShellAction, ShellContext,
-    SurfaceSpec, SystemEvent, TextAlign,
+    t, Anchor, AppState, DirtyFlags, EdgeInsets, HitTarget, I18nKey, ImeEvent, IpcResult,
+    KazeExtension, KeyEvent, KeyboardMode, Layer, PaintCmd, PointerButton, Rect, ShellAction,
+    ShellContext, SurfaceSpec, SystemEvent, TextAlign, TextInputOutcome, TextInputState,
 };
 
 const SURFACE_ID: &str = "launcher:main";
 const NAMESPACE: &str = "kaze-launcher";
 
 // Standard X11 / XKB keysym raw values (`xkbcommon`)
-const KEY_BACKSPACE: u32 = 0xff08;
 const KEY_TAB: u32 = 0xff09;
-const KEY_RETURN: u32 = 0xff0d;
-const KEY_ESCAPE: u32 = 0xff1b;
 const KEY_HOME: u32 = 0xff50;
 const KEY_UP: u32 = 0xff52;
 const KEY_DOWN: u32 = 0xff54;
 const KEY_PAGE_UP: u32 = 0xff55;
 const KEY_PAGE_DOWN: u32 = 0xff56;
 const KEY_END: u32 = 0xff57;
-const KEY_KP_ENTER: u32 = 0xff8d;
 const KEY_ISO_LEFT_TAB: u32 = 0xfe20;
 const KEY_DELETE: u32 = 0xffff;
 
@@ -60,8 +56,7 @@ pub struct LauncherExtension {
     apps: Vec<DesktopApp>,
     apps_loaded: bool,
     apps_dirty: bool,
-    query: String,
-    preedit: String,
+    input: TextInputState,
     filtered: Vec<FilteredItem>,
     selected: usize,
     scroll_offset: usize,
@@ -81,8 +76,7 @@ impl LauncherExtension {
             apps: Vec::new(),
             apps_loaded: false,
             apps_dirty: false,
-            query: String::new(),
-            preedit: String::new(),
+            input: TextInputState::new(false),
             filtered: Vec::new(),
             selected: 0,
             scroll_offset: 0,
@@ -109,10 +103,16 @@ impl LauncherExtension {
     }
 
     fn effective_query(&self) -> String {
-        if self.preedit.is_empty() {
-            self.query.clone()
+        if self.input.preedit.is_empty() {
+            self.input.text.clone()
         } else {
-            format!("{}{}", self.query, self.preedit)
+            let safe_cur = self.input.cursor.min(self.input.text.len());
+            format!(
+                "{}{}{}",
+                &self.input.text[..safe_cur],
+                self.input.preedit,
+                &self.input.text[safe_cur..]
+            )
         }
     }
 
@@ -212,8 +212,7 @@ impl LauncherExtension {
         }
         self.ensure_apps_loaded();
         self.mode = LauncherMode::Apps;
-        self.query.clear();
-        self.preedit.clear();
+        self.input.clear();
         self.selected = 0;
         self.scroll_offset = 0;
         self.refilter(ctx.state.config.launcher.max_rows);
@@ -228,8 +227,7 @@ impl LauncherExtension {
             .filter(|l| !l.is_empty())
             .collect();
         self.mode = LauncherMode::Dmenu { prompt, items };
-        self.query.clear();
-        self.preedit.clear();
+        self.input.clear();
         self.selected = 0;
         self.scroll_offset = 0;
         self.refilter(ctx.state.config.launcher.max_rows);
@@ -243,8 +241,7 @@ impl LauncherExtension {
         }
         let entries = parse_cliphist_output(raw_payload);
         self.mode = LauncherMode::Clipboard { entries };
-        self.query.clear();
-        self.preedit.clear();
+        self.input.clear();
         self.selected = 0;
         self.scroll_offset = 0;
         self.refilter(ctx.state.config.launcher.max_rows);
@@ -283,8 +280,7 @@ impl LauncherExtension {
         }
         let was_dmenu = matches!(self.mode, LauncherMode::Dmenu { .. });
         self.mode = LauncherMode::Closed;
-        self.query.clear();
-        self.preedit.clear();
+        self.input.clear();
         self.filtered.clear();
         self.selected = 0;
         self.scroll_offset = 0;
@@ -305,8 +301,7 @@ impl LauncherExtension {
             LauncherMode::Dmenu { items, .. } => {
                 let selected_line = items.get(chosen.index).cloned();
                 self.mode = LauncherMode::Closed;
-                self.query.clear();
-                self.preedit.clear();
+                self.input.clear();
                 self.filtered.clear();
                 self.selected = 0;
                 self.scroll_offset = 0;
@@ -322,8 +317,7 @@ impl LauncherExtension {
                     .get(chosen.index)
                     .and_then(DesktopApp::build_command);
                 self.mode = LauncherMode::Closed;
-                self.query.clear();
-                self.preedit.clear();
+                self.input.clear();
                 self.filtered.clear();
                 self.selected = 0;
                 self.scroll_offset = 0;
@@ -336,8 +330,7 @@ impl LauncherExtension {
             LauncherMode::Clipboard { entries } => {
                 let raw = entries.get(chosen.index).map(|e| e.raw_line.clone());
                 self.mode = LauncherMode::Closed;
-                self.query.clear();
-                self.preedit.clear();
+                self.input.clear();
                 self.filtered.clear();
                 self.selected = 0;
                 self.scroll_offset = 0;
@@ -367,46 +360,26 @@ impl LauncherExtension {
         if key.modifiers.ctrl {
             match key.keysym {
                 0x006e | 0x004e => {
-                    // Ctrl+N
                     self.move_selection(1, max_rows);
                     self.rebuild(ctx.state);
                     return DirtyFlags::LAUNCHER;
                 }
                 0x0070 | 0x0050 => {
-                    // Ctrl+P
                     self.move_selection(-1, max_rows);
                     self.rebuild(ctx.state);
                     return DirtyFlags::LAUNCHER;
                 }
-                0x0075 | 0x0055 => {
-                    // Ctrl+U: clear query
-                    self.query.clear();
-                    self.preedit.clear();
-                    self.selected = 0;
-                    self.refilter(max_rows);
-                    self.rebuild(ctx.state);
-                    return DirtyFlags::LAUNCHER;
-                }
-                0x0077 | 0x0057 => {
-                    // Ctrl+W: delete previous word
-                    delete_prev_word(&mut self.query);
-                    self.preedit.clear();
-                    self.selected = 0;
-                    self.refilter(max_rows);
-                    self.rebuild(ctx.state);
-                    return DirtyFlags::LAUNCHER;
-                }
-                0x0063 | 0x0043 | 0x0067 | 0x0047 => {
-                    // Ctrl+C / Ctrl+G: cancel
+                0x0067 | 0x0047 => {
                     return self.close_cancel(ctx);
                 }
-                _ => return DirtyFlags::NONE,
+                0x0063 | 0x0043 if self.input.selection_range().is_none() => {
+                    return self.close_cancel(ctx);
+                }
+                _ => {}
             }
         }
 
         match key.keysym {
-            KEY_ESCAPE => self.close_cancel(ctx),
-            KEY_RETURN | KEY_KP_ENTER => self.activate_selected(ctx),
             KEY_DOWN => {
                 self.move_selection(1, max_rows);
                 self.rebuild(ctx.state);
@@ -438,54 +411,47 @@ impl LauncherExtension {
                 self.rebuild(ctx.state);
                 DirtyFlags::LAUNCHER
             }
-            KEY_HOME => {
-                if !self.filtered.is_empty() {
-                    self.selected = 0;
-                    self.clamp_scroll(max_rows);
-                    self.rebuild(ctx.state);
-                    DirtyFlags::LAUNCHER
-                } else {
-                    DirtyFlags::NONE
-                }
-            }
-            KEY_END => {
-                if !self.filtered.is_empty() {
-                    self.selected = self.filtered.len() - 1;
-                    self.clamp_scroll(max_rows);
-                    self.rebuild(ctx.state);
-                    DirtyFlags::LAUNCHER
-                } else {
-                    DirtyFlags::NONE
-                }
-            }
-            KEY_DELETE if key.modifiers.shift => self.delete_selected_clipboard(ctx),
-            KEY_BACKSPACE => {
-                if !self.preedit.is_empty() {
-                    self.preedit.pop();
-                } else {
-                    self.query.pop();
-                }
+            KEY_HOME if self.input.text.is_empty() && !self.filtered.is_empty() => {
                 self.selected = 0;
-                self.refilter(max_rows);
+                self.clamp_scroll(max_rows);
                 self.rebuild(ctx.state);
                 DirtyFlags::LAUNCHER
             }
-            _ => {
-                if key.modifiers.alt || key.modifiers.logo {
-                    return DirtyFlags::NONE;
-                }
-                if let Some(ref text) = key.utf8 {
-                    let printable: String = text.chars().filter(|c| !c.is_control()).collect();
-                    if !printable.is_empty() {
-                        self.query.push_str(&printable);
-                        self.selected = 0;
-                        self.refilter(max_rows);
-                        self.rebuild(ctx.state);
-                        return DirtyFlags::LAUNCHER;
-                    }
-                }
-                DirtyFlags::NONE
+            KEY_END if self.input.text.is_empty() && !self.filtered.is_empty() => {
+                self.selected = self.filtered.len() - 1;
+                self.clamp_scroll(max_rows);
+                self.rebuild(ctx.state);
+                DirtyFlags::LAUNCHER
             }
+            KEY_DELETE if key.modifiers.shift => self.delete_selected_clipboard(ctx),
+            _ => match self.input.handle_key(key, &ctx.state.config.input.keybinds) {
+                TextInputOutcome::Cancel => self.close_cancel(ctx),
+                TextInputOutcome::Submit => self.activate_selected(ctx),
+                TextInputOutcome::Copy(s) => {
+                    ctx.push_action(ShellAction::SetClipboardText(s));
+                    DirtyFlags::NONE
+                }
+                TextInputOutcome::Cut(s) => {
+                    ctx.push_action(ShellAction::SetClipboardText(s));
+                    self.selected = 0;
+                    self.refilter(max_rows);
+                    self.rebuild(ctx.state);
+                    DirtyFlags::LAUNCHER
+                }
+                TextInputOutcome::RequestPaste => {
+                    ctx.push_action(ShellAction::RequestClipboardPaste {
+                        surface_id: SURFACE_ID.to_string(),
+                    });
+                    DirtyFlags::NONE
+                }
+                TextInputOutcome::Changed => {
+                    self.selected = 0;
+                    self.refilter(max_rows);
+                    self.rebuild(ctx.state);
+                    DirtyFlags::LAUNCHER
+                }
+                TextInputOutcome::None => DirtyFlags::NONE,
+            },
         }
     }
 
@@ -494,25 +460,11 @@ impl LauncherExtension {
             return DirtyFlags::NONE;
         }
         let max_rows = ctx.state.config.launcher.max_rows;
-        match ime {
-            ImeEvent::Preedit { text, .. } => {
-                self.preedit = text.clone();
-            }
-            ImeEvent::Commit(text) => {
-                self.preedit.clear();
-                let printable: String = text.chars().filter(|c| !c.is_control()).collect();
-                self.query.push_str(&printable);
-                self.selected = 0;
-            }
-            ImeEvent::DeleteSurrounding { before, .. } => {
-                let target_len = self.query.len().saturating_sub(*before as usize);
-                let mut boundary = target_len;
-                while boundary > 0 && !self.query.is_char_boundary(boundary) {
-                    boundary -= 1;
-                }
-                self.query.truncate(boundary);
-                self.selected = 0;
-            }
+        if !self.input.handle_ime(ime) {
+            return DirtyFlags::NONE;
+        }
+        if matches!(ime, ImeEvent::Commit(_) | ImeEvent::DeleteSurrounding { .. }) {
+            self.selected = 0;
         }
         self.refilter(max_rows);
         self.rebuild(ctx.state);
@@ -527,8 +479,7 @@ impl LauncherExtension {
         self.cached_spec = Some(build_launcher_surface(
             state,
             &self.mode,
-            &self.query,
-            &self.preedit,
+            &self.input,
             &self.filtered,
             self.selected,
             self.scroll_offset,
@@ -597,7 +548,20 @@ impl KazeExtension for LauncherExtension {
                 }
                 DirtyFlags::NONE
             }
+            SystemEvent::ClipboardTextPasted { surface_id, text }
+                if surface_id == SURFACE_ID && self.is_open() =>
+            {
+                if self.input.paste_text(text) {
+                    self.selected = 0;
+                    self.refilter(ctx.state.config.launcher.max_rows);
+                    self.rebuild(ctx.state);
+                    DirtyFlags::LAUNCHER
+                } else {
+                    DirtyFlags::NONE
+                }
+            }
             SystemEvent::ConfigReloaded
+            | SystemEvent::LocaleChanged(_)
             | SystemEvent::ThemeChanged(_)
             | SystemEvent::LayoutPresetChanged(_) => {
                 if !ctx.state.config.launcher.enabled {
@@ -657,8 +621,7 @@ impl KazeExtension for LauncherExtension {
                     };
                 }
                 if let Some(q) = args.first() {
-                    self.query = q.clone();
-                    self.preedit.clear();
+                    self.input.set_text(q);
                     self.selected = 0;
                     self.refilter(ctx.state.config.launcher.max_rows);
                 }
@@ -765,18 +728,6 @@ pub fn parse_cliphist_output(raw: &str) -> Vec<ClipboardEntry> {
         .collect()
 }
 
-fn delete_prev_word(s: &mut String) {
-    while s.ends_with(char::is_whitespace) {
-        s.pop();
-    }
-    while let Some(c) = s.chars().last() {
-        if c.is_whitespace() {
-            break;
-        }
-        s.pop();
-    }
-}
-
 fn score_desktop_app(query: &str, app: &DesktopApp) -> Option<i32> {
     if query.trim().is_empty() {
         return Some(0);
@@ -874,8 +825,7 @@ fn score_single_token(tok: &str, cand_lower: &str, cand_chars: &[char]) -> Optio
 fn build_launcher_surface(
     state: &AppState,
     mode: &LauncherMode,
-    query: &str,
-    preedit: &str,
+    input: &TextInputState,
     filtered: &[FilteredItem],
     selected: usize,
     scroll_offset: usize,
@@ -883,6 +833,7 @@ fn build_launcher_surface(
     let cfg = &state.config.launcher;
     let bar = &state.config.bar;
     let colors = state.palette.for_mode(state.theme_mode);
+    let loc = state.locale;
 
     let bg = colors.surface_color().with_opacity(bar.background_opacity);
     let primary = colors.primary_color();
@@ -892,13 +843,14 @@ fn build_launcher_surface(
     let outline_variant = colors.outline_variant_color();
     let surface_container = colors.surface_container_color();
     let surface_variant = colors.surface_variant_color();
+    let selection_color = colors.secondary_color().with_opacity(0.35);
 
     let is_apps = matches!(mode, LauncherMode::Apps);
     let is_clip = matches!(mode, LauncherMode::Clipboard { .. });
     let prompt = match mode {
-        LauncherMode::Apps => "Apps > ".to_string(),
+        LauncherMode::Apps => t(loc, I18nKey::LauncherPromptApps).to_string(),
         LauncherMode::Dmenu { prompt, .. } => prompt.clone(),
-        LauncherMode::Clipboard { .. } => "Clip > ".to_string(),
+        LauncherMode::Clipboard { .. } => t(loc, I18nKey::LauncherPromptClip).to_string(),
         LauncherMode::Closed => String::new(),
     };
     let total_count = match mode {
@@ -939,7 +891,7 @@ fn build_launcher_surface(
     };
     let count_w = 56.0f32;
     let prompt_w = ((prompt.chars().count() as f32) * 8.4 + 8.0).clamp(44.0, 180.0);
-    let input_y = border_w + 11.0;
+    let input_y = border_w + 10.0;
 
     commands.push(PaintCmd::RichText {
         rect: Rect::new(pad_x, input_y, prompt_w, 24.0),
@@ -953,43 +905,31 @@ fn build_launcher_surface(
 
     let query_x = pad_x + prompt_w + 4.0;
     let query_w = (w - query_x - count_w - pad_x - 6.0).max(80.0);
-    if query.is_empty() && preedit.is_empty() {
-        let placeholder = if is_apps {
-            "Type to launch..."
-        } else if is_clip {
-            "Filter clipboard (Shift+Del removes)..."
-        } else {
-            "Type to filter..."
-        };
-        commands.push(PaintCmd::RichText {
-            rect: Rect::new(query_x, input_y, query_w, 24.0),
-            text: placeholder.to_string(),
-            color: muted,
-            size: 13.5,
-            bold: false,
-            align: TextAlign::Left,
-            max_lines: 1,
-        });
+    let placeholder = if is_apps {
+        t(loc, I18nKey::LauncherPlaceholderApps)
+    } else if is_clip {
+        t(loc, I18nKey::LauncherPlaceholderClip)
     } else {
-        let display_query = if preedit.is_empty() {
-            format!("{query}|")
-        } else {
-            format!("{query}[{preedit}]")
-        };
-        commands.push(PaintCmd::RichText {
-            rect: Rect::new(query_x, input_y, query_w, 24.0),
-            text: display_query,
-            color: if preedit.is_empty() {
-                on_surface
-            } else {
-                tertiary
-            },
-            size: 13.5,
-            bold: false,
-            align: TextAlign::Left,
-            max_lines: 1,
-        });
-    }
+        t(loc, I18nKey::LauncherPlaceholderFilter)
+    };
+    commands.push(PaintCmd::TextInputField {
+        rect: Rect::new(query_x, input_y, query_w, 24.0),
+        text: input.text.clone(),
+        preedit: input.preedit.clone(),
+        cursor_byte: input.cursor,
+        selection: input.selection_range(),
+        placeholder: placeholder.to_string(),
+        password_mode: false,
+        color: on_surface,
+        preedit_color: tertiary,
+        selection_color,
+        placeholder_color: muted,
+        size: 13.5,
+    });
+    let safe_cur = input.cursor.min(input.text.len());
+    let chars_before = input.text[..safe_cur].chars().count() + input.preedit.chars().count();
+    let caret_x = (query_x + (chars_before as f32) * 8.0).min(query_x + query_w - 4.0);
+    let ime_cursor_rect = Some(Rect::new(caret_x, input_y, 2.0, 24.0));
 
     commands.push(PaintCmd::Text {
         rect: Rect::new(w - pad_x - count_w, border_w, count_w, input_h),
@@ -1015,7 +955,7 @@ fn build_launcher_surface(
     if filtered.is_empty() {
         commands.push(PaintCmd::RichText {
             rect: Rect::new(pad_x, list_y + 6.0, w - pad_x * 2.0, row_h - 8.0),
-            text: "No matches".to_string(),
+            text: t(loc, I18nKey::LauncherNoMatches).to_string(),
             color: muted,
             size: 12.5,
             bold: false,
@@ -1112,6 +1052,7 @@ fn build_launcher_surface(
         hit_targets,
         animating: false,
         input_regions: None,
+        ime_cursor_rect,
     }
 }
 
@@ -1119,6 +1060,9 @@ fn build_launcher_surface(
 mod tests {
     use super::*;
     use kaze_core::{Config, KeyModifiers};
+
+    const KEY_RETURN: u32 = 0xff0d;
+    const KEY_ESCAPE: u32 = 0xff1b;
 
     fn key(keysym: u32, utf8: Option<&str>, ctrl: bool) -> SystemEvent {
         SystemEvent::KeyInput {
@@ -1332,6 +1276,76 @@ mod tests {
                 if program == "sh" && args.iter().any(|s| s.contains("cliphist decode | wl-copy"))
             )));
         }
+        assert!(ext.surfaces().is_empty());
+    }
+
+    #[test]
+    fn launcher_input_handles_grapheme_zwj_preedit_escape_copy_and_vi_locale() {
+        use kaze_core::Locale;
+
+        let mut state = AppState::new(Config::default());
+        state.locale = Locale::Vi;
+        let mut ext = LauncherExtension::new();
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_ipc("launcher-toggle", &[], &mut ctx);
+        }
+        let specs = ext.surfaces();
+        assert_eq!(specs.len(), 1);
+        assert!(specs[0].ime_cursor_rect.is_some());
+        assert!(specs[0].commands.iter().any(|c| matches!(
+            c,
+            PaintCmd::RichText { text, .. } if text.contains("Ứng dụng")
+        )));
+
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            let sample = "Xin chào مرحبا 👨\u{200d}👩\u{200d}👧\u{200d}👦";
+            ext.on_event(
+                &SystemEvent::ImeInput {
+                    surface_id: SURFACE_ID.into(),
+                    ime: ImeEvent::Commit(sample.into()),
+                },
+                &mut ctx,
+            );
+            // 1 Backspace deletes the full ZWJ emoji grapheme cluster cleanly.
+            ext.on_event(&key(0xff08, None, false), &mut ctx);
+            assert_eq!(ext.input.text, "Xin chào مرحبا ");
+
+            // Ctrl+A -> Ctrl+C emits SetClipboardText preserving exact UTF-8.
+            ext.on_event(&key(b'a' as u32, None, true), &mut ctx);
+            ext.on_event(&key(b'c' as u32, None, true), &mut ctx);
+            assert!(ctx
+                .actions
+                .contains(&ShellAction::SetClipboardText("Xin chào مرحبا ".into())));
+
+            // Live switch back to English updates surface labels without restarting daemon.
+            ctx.state.locale = Locale::En;
+            ext.on_event(&SystemEvent::LocaleChanged(Locale::En), &mut ctx);
+        }
+        let updated = ext.surfaces();
+        assert!(updated[0].commands.iter().any(|c| matches!(
+            c,
+            PaintCmd::RichText { text, .. } if text.contains("Apps")
+        )));
+
+        // Preedit + Escape clears preedit cleanly and closes launcher.
+        {
+            let mut ctx = ShellContext::new(&mut state);
+            ext.on_event(
+                &SystemEvent::ImeInput {
+                    surface_id: SURFACE_ID.into(),
+                    ime: ImeEvent::Preedit {
+                        text: "đang".into(),
+                        cursor_begin: 0,
+                        cursor_end: 4,
+                    },
+                },
+                &mut ctx,
+            );
+            ext.on_event(&key(KEY_ESCAPE, None, false), &mut ctx);
+        }
+        assert!(ext.input.preedit.is_empty());
         assert!(ext.surfaces().is_empty());
     }
 }

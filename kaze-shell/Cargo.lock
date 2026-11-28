@@ -651,6 +651,8 @@ dependencies = [
  "serde_json",
  "toml",
  "toml_edit",
+ "unicode-bidi",
+ "unicode-segmentation",
  "zeroize",
 ]
 

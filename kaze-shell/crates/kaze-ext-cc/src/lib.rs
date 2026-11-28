@@ -1,9 +1,9 @@
 #![deny(clippy::unwrap_used)]
 
 use kaze_core::{
-    Anchor, AppState, Color, DirtyFlags, EdgeInsets, HitTarget, IconKind, IpcResult, KazeExtension,
-    KeyEvent, KeyboardMode, Layer, LayoutPreset, MediaPlayback, NetworkKind, PaintCmd,
-    PointerButton, Rect, ShellAction, ShellContext, SurfaceSpec, SystemEvent, TextAlign,
+    t, Anchor, AppState, Color, DirtyFlags, EdgeInsets, HitTarget, I18nKey, IconKind, IpcResult,
+    KazeExtension, KeyEvent, KeyboardMode, Layer, LayoutPreset, MediaPlayback, NetworkKind,
+    PaintCmd, PointerButton, Rect, ShellAction, ShellContext, SurfaceSpec, SystemEvent, TextAlign,
 };
 
 const SURFACE_ID: &str = "cc:main";
@@ -265,6 +265,21 @@ impl KazeExtension for ControlCenterExtension {
             } if surface_id == SURFACE_ID && target_id.starts_with("cc:slider:") => {
                 self.handle_slider(target_id, *x, ctx)
             }
+            SystemEvent::PointerScroll {
+                surface_id,
+                target_id,
+                delta_y,
+                modifiers,
+            } if surface_id == SURFACE_ID && target_id.starts_with("cc:slider:") => {
+                let mag = if modifiers.shift { 1 } else { 5 };
+                let step = if *delta_y < 0.0 { mag } else { -mag };
+                match target_id.as_str() {
+                    "cc:slider:vol" => ctx.push_action(ShellAction::AudioStepVolume(step)),
+                    "cc:slider:bright" => ctx.push_action(ShellAction::BacklightStep(step)),
+                    _ => {}
+                }
+                DirtyFlags::NONE
+            }
             SystemEvent::KeyInput {
                 surface_id,
                 key:
@@ -303,6 +318,7 @@ impl KazeExtension for ControlCenterExtension {
             | SystemEvent::NotificationsCountChanged(_)
             | SystemEvent::LayoutPresetChanged(_)
             | SystemEvent::ThemeChanged(_)
+            | SystemEvent::LocaleChanged(_)
             | SystemEvent::ConfigReloaded => {
                 if self.open {
                     self.rebuild(ctx.state);
@@ -400,18 +416,21 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
     let mut hit_targets = Vec::with_capacity(28);
     let mut y = border_w + 12.0;
 
+    let loc = state.locale;
     // Header strip: title + clock + battery summary
     let header_left = format!(
-        "CONTROL CENTER · {}",
+        "{} · {}",
+        t(loc, I18nKey::ControlCenterTitle),
         state.layout_preset.as_str().to_uppercase()
     );
-    commands.push(PaintCmd::Text {
+    commands.push(PaintCmd::RichText {
         rect: Rect::new(PAD_X, y, inner_w - 86.0, 18.0),
         text: header_left,
         color: muted,
         size: 10.5,
         bold: true,
         align: TextAlign::Left,
+        max_lines: 1,
     });
     let header_right = if state.battery.present {
         format!(
@@ -434,25 +453,25 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
 
     // 1. Quick Toggles (2x3 grid)
     let wifi_sub = if !state.network.available {
-        "N/A".to_string()
+        t(loc, I18nKey::StateUnavailable).to_string()
     } else if state.network.connected {
         match state.network.kind {
             NetworkKind::Wifi if !state.network.ssid.is_empty() => state.network.ssid.clone(),
             NetworkKind::Wifi => format!("{}%", state.network.strength),
             NetworkKind::Ethernet => "Ethernet".to_string(),
-            NetworkKind::Disconnected => "Off".to_string(),
+            NetworkKind::Disconnected => t(loc, I18nKey::StateOff).to_string(),
         }
     } else {
-        "Off".to_string()
+        t(loc, I18nKey::StateOff).to_string()
     };
     let bt_sub = if !state.bluetooth.available {
-        "N/A".to_string()
+        t(loc, I18nKey::StateUnavailable).to_string()
     } else if !state.bluetooth.powered {
-        "Off".to_string()
+        t(loc, I18nKey::StateOff).to_string()
     } else if !state.bluetooth.connected_device.is_empty() {
         state.bluetooth.connected_device.clone()
     } else {
-        "On".to_string()
+        t(loc, I18nKey::StateOn).to_string()
     };
 
     let tiles = [
@@ -467,14 +486,14 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
             } else {
                 IconKind::WifiOff
             },
-            title: "Wi-Fi",
+            title: t(loc, I18nKey::QuickWifi),
             subtitle: wifi_sub,
             active: state.network.connected,
         },
         ToggleTile {
             id: "cc:toggle:bt",
             icon: IconKind::Bluetooth,
-            title: "Bluetooth",
+            title: t(loc, I18nKey::QuickBluetooth),
             subtitle: bt_sub,
             active: state.bluetooth.available && state.bluetooth.powered,
         },
@@ -485,41 +504,45 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
             } else {
                 IconKind::Bell
             },
-            title: "DND",
+            title: t(loc, I18nKey::QuickDnd),
             subtitle: if state.dnd {
-                "Muted".into()
+                t(loc, I18nKey::StateOn).into()
             } else {
-                "Off".into()
+                t(loc, I18nKey::StateOff).into()
             },
             active: state.dnd,
         },
         ToggleTile {
             id: "cc:toggle:nightlight",
             icon: IconKind::NightLight,
-            title: "Night Light",
+            title: t(loc, I18nKey::QuickNightLight),
             subtitle: if state.nightlight_enabled {
                 format!("{}K", state.nightlight_temp_k)
             } else {
-                "Off".into()
+                t(loc, I18nKey::StateOff).into()
             },
             active: state.nightlight_enabled,
         },
         ToggleTile {
             id: "cc:toggle:caffeine",
             icon: IconKind::Caffeine,
-            title: "Caffeine",
+            title: t(loc, I18nKey::QuickCaffeine),
             subtitle: if state.caffeine_enabled {
-                "Awake".into()
+                t(loc, I18nKey::StateOn).into()
             } else {
-                "Off".into()
+                t(loc, I18nKey::StateOff).into()
             },
             active: state.caffeine_enabled,
         },
         ToggleTile {
             id: "cc:toggle:theme",
             icon: IconKind::ThemeMode,
-            title: "Theme",
-            subtitle: state.theme_mode.as_str().to_string(),
+            title: t(loc, I18nKey::QuickTheme),
+            subtitle: if state.theme_mode == kaze_core::ThemeMode::Light {
+                t(loc, I18nKey::StateLight).into()
+            } else {
+                t(loc, I18nKey::StateDark).into()
+            },
             active: state.theme_mode == kaze_core::ThemeMode::Light,
         },
     ];
@@ -556,13 +579,14 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
             stroke_width: 1.5,
             level: None,
         });
-        commands.push(PaintCmd::Text {
+        commands.push(PaintCmd::RichText {
             rect: Rect::new(tx + 28.0, ty + 8.0, tile_w - 34.0, 16.0),
             text: tile.title.to_string(),
             color: fg,
             size: 11.0,
             bold: true,
             align: TextAlign::Left,
+            max_lines: 1,
         });
         commands.push(PaintCmd::RichText {
             rect: Rect::new(tx + 9.0, ty + 28.0, tile_w - 16.0, 16.0),
@@ -630,10 +654,10 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
 
     // 3. Quick Kaze Ops (4 buttons)
     let ops = [
-        ("cc:op:layout", IconKind::Layout, "Layout"),
-        ("cc:op:display", IconKind::Display, "Display"),
-        ("cc:op:record", IconKind::Record, "Record"),
-        ("cc:op:settings", IconKind::Settings, "Config"),
+        ("cc:op:layout", IconKind::Layout, t(loc, I18nKey::OpLayout)),
+        ("cc:op:display", IconKind::Display, t(loc, I18nKey::OpDisplay)),
+        ("cc:op:record", IconKind::Record, t(loc, I18nKey::OpRecord)),
+        ("cc:op:settings", IconKind::Settings, t(loc, I18nKey::OpSettings)),
     ];
     let op_w = (inner_w - gap * 3.0) / 4.0;
     let op_h = 34.0f32;
@@ -654,13 +678,14 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
             stroke_width: 1.5,
             level: None,
         });
-        commands.push(PaintCmd::Text {
+        commands.push(PaintCmd::RichText {
             rect: Rect::new(ox + 24.0, y, op_w - 28.0, op_h),
             text: (*label).to_string(),
             color: on_surface,
             size: 10.5,
             bold: false,
             align: TextAlign::Center,
+            max_lines: 1,
         });
         hit_targets.push(HitTarget {
             rect,
@@ -744,16 +769,20 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
 
     // 4b. Notification History
     let hist_count = state.notification_history.len();
-    commands.push(PaintCmd::Text {
+    commands.push(PaintCmd::RichText {
         rect: Rect::new(PAD_X, y, inner_w - 64.0, 18.0),
-        text: format!("NOTIFICATIONS ({hist_count})"),
+        text: format!(
+            "{} ({hist_count})",
+            t(loc, I18nKey::NotificationsHeader).to_uppercase()
+        ),
         color: muted,
         size: 10.0,
         bold: true,
         align: TextAlign::Left,
+        max_lines: 1,
     });
     if hist_count > 0 || state.unread_notifications > 0 {
-        let clear_rect = Rect::new(PAD_X + inner_w - 58.0, y - 2.0, 58.0, 20.0);
+        let clear_rect = Rect::new(PAD_X + inner_w - 72.0, y - 2.0, 72.0, 20.0);
         commands.push(PaintCmd::RoundedRect {
             rect: clear_rect,
             radius: tile_r.min(5.0),
@@ -761,13 +790,14 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
             stroke: Some(outline_variant),
             stroke_width: 1.0,
         });
-        commands.push(PaintCmd::Text {
+        commands.push(PaintCmd::RichText {
             rect: clear_rect,
-            text: "Clear".to_string(),
+            text: t(loc, I18nKey::NotificationsClearAll).to_string(),
             color: primary,
             size: 10.0,
             bold: true,
             align: TextAlign::Center,
+            max_lines: 1,
         });
         hit_targets.push(HitTarget {
             rect: clear_rect,
@@ -785,13 +815,14 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
             stroke: None,
             stroke_width: 0.0,
         });
-        commands.push(PaintCmd::Text {
+        commands.push(PaintCmd::RichText {
             rect: empty_rect,
-            text: "No recent notifications".to_string(),
+            text: t(loc, I18nKey::NotificationsEmpty).to_string(),
             color: muted,
             size: 11.0,
             bold: false,
             align: TextAlign::Center,
+            max_lines: 1,
         });
         y += 38.0;
     } else {
@@ -861,10 +892,10 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
     y += 10.0;
 
     let power_btns = [
-        ("cc:power:lock", "lock", IconKind::Lock, "Lock"),
-        ("cc:power:suspend", "suspend", IconKind::Suspend, "Sleep"),
-        ("cc:power:reboot", "reboot", IconKind::Reboot, "Reboot"),
-        ("cc:power:poweroff", "poweroff", IconKind::PowerOff, "Off"),
+        ("cc:power:lock", "lock", IconKind::Lock, t(loc, I18nKey::PowerLock)),
+        ("cc:power:suspend", "suspend", IconKind::Suspend, t(loc, I18nKey::PowerSuspend)),
+        ("cc:power:reboot", "reboot", IconKind::Reboot, t(loc, I18nKey::PowerReboot)),
+        ("cc:power:poweroff", "poweroff", IconKind::PowerOff, t(loc, I18nKey::PowerShutdown)),
     ];
     let pw = (inner_w - gap * 3.0) / 4.0;
     let ph = 32.0f32;
@@ -889,13 +920,14 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
             stroke_width: if confirming { 0.0 } else { 1.0 },
         });
         if confirming {
-            commands.push(PaintCmd::Text {
+            commands.push(PaintCmd::RichText {
                 rect,
-                text: "Confirm?".to_string(),
+                text: t(loc, I18nKey::ConfirmPrompt).to_string(),
                 color: fg,
                 size: 10.0,
                 bold: true,
                 align: TextAlign::Center,
+                max_lines: 1,
             });
         } else {
             commands.push(PaintCmd::Icon {
@@ -905,13 +937,14 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
                 stroke_width: 1.5,
                 level: None,
             });
-            commands.push(PaintCmd::Text {
+            commands.push(PaintCmd::RichText {
                 rect: Rect::new(px + 24.0, y, pw - 28.0, ph),
                 text: (*label).to_string(),
                 color: fg,
                 size: 10.5,
                 bold: false,
                 align: TextAlign::Center,
+                max_lines: 1,
             });
         }
         hit_targets.push(HitTarget {
@@ -959,6 +992,7 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
         hit_targets,
         animating: false,
         input_regions: None,
+        ime_cursor_rect: None,
     }
 }
 
@@ -1142,6 +1176,37 @@ mod tests {
             assert!(ctx
                 .actions
                 .contains(&ShellAction::SystemPower("reboot".into())));
+
+            // Scroll on sliders adjusts by 5%, or 1% when Shift is held.
+            ctx.actions.clear();
+            ext.on_event(
+                &SystemEvent::PointerScroll {
+                    surface_id: SURFACE_ID.into(),
+                    target_id: "cc:slider:vol".into(),
+                    delta_y: -1.0,
+                    modifiers: KeyModifiers::default(),
+                },
+                &mut ctx,
+            );
+            ext.on_event(
+                &SystemEvent::PointerScroll {
+                    surface_id: SURFACE_ID.into(),
+                    target_id: "cc:slider:bright".into(),
+                    delta_y: 1.0,
+                    modifiers: KeyModifiers {
+                        shift: true,
+                        ..KeyModifiers::default()
+                    },
+                },
+                &mut ctx,
+            );
+            assert_eq!(
+                ctx.actions,
+                vec![
+                    ShellAction::AudioStepVolume(5),
+                    ShellAction::BacklightStep(-1),
+                ]
+            );
         }
         assert!(ext.surfaces().is_empty());
     }

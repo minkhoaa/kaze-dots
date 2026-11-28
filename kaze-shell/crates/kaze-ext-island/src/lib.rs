@@ -1577,6 +1577,7 @@ fn build_island_surface(
         } else {
             None
         },
+        ime_cursor_rect: None,
     }
 }
 

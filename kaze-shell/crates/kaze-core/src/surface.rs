@@ -234,6 +234,21 @@ pub enum PaintCmd {
         height: u32,
         rgba_premul: Arc<[u8]>,
     },
+    /// Full BiDi/RTL + grapheme-aware text input widget with selection, preedit underline, and caret.
+    TextInputField {
+        rect: Rect,
+        text: String,
+        preedit: String,
+        cursor_byte: usize,
+        selection: Option<(usize, usize)>,
+        placeholder: String,
+        password_mode: bool,
+        color: Color,
+        preedit_color: Color,
+        selection_color: Color,
+        placeholder_color: Color,
+        size: f32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -265,6 +280,8 @@ pub struct SurfaceSpec {
     pub animating: bool,
     /// Optional explicit pointer input regions (click-through outside these rects).
     pub input_regions: Option<Vec<Rect>>,
+    /// Logical cursor rectangle reported to `zwp_text_input_v3.set_cursor_rectangle` for IME popups.
+    pub ime_cursor_rect: Option<Rect>,
 }
 
 impl SurfaceSpec {

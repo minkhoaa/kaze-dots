@@ -2,9 +2,9 @@
 
 use kaze_core::{
     Anchor, AppState, BarPosition, Color, DirtyFlags, DisplayStatus, EdgeInsets, HitTarget,
-    IconKind, IpcResult, KazeExtension, KeyboardMode, Layer, LayoutPreset, NetworkKind, OutputInfo,
-    PaintCmd, PointerButton, Rect, ShellAction, ShellContext, Spring, SurfaceSpec, SystemEvent,
-    TextAlign,
+    IconKind, IpcResult, KazeExtension, KeyboardMode, Layer, LayoutPreset,
+    NetworkKind, OutputInfo, PaintCmd, PointerButton, Rect, ShellAction, ShellContext, Spring,
+    SurfaceSpec, SystemEvent, TextAlign,
 };
 use std::collections::{BTreeMap, HashMap};
 
@@ -324,10 +324,12 @@ impl KazeExtension for BarExtension {
                 surface_id,
                 target_id,
                 delta_y,
+                modifiers,
             } => {
                 if surface_id.starts_with("bar:") && target_id == "vol" {
                     // Wayland negative delta_y = scroll up (raise volume), positive = scroll down.
-                    let step = if *delta_y < 0.0 { 5 } else { -5 };
+                    let mag = if modifiers.shift { 1 } else { 5 };
+                    let step = if *delta_y < 0.0 { mag } else { -mag };
                     ctx.push_action(ShellAction::AudioStepVolume(step));
                 }
                 DirtyFlags::NONE
@@ -350,7 +352,9 @@ impl KazeExtension for BarExtension {
             | SystemEvent::KeyboardFocusLost { .. }
             | SystemEvent::ApplicationsChanged
             | SystemEvent::UserAccountChanged(_)
-            | SystemEvent::OfflineModeChanged(_) => DirtyFlags::NONE,
+            | SystemEvent::OfflineModeChanged(_)
+            | SystemEvent::LocaleChanged(_)
+            | SystemEvent::ClipboardTextPasted { .. } => DirtyFlags::NONE,
         }
     }
 
@@ -1226,6 +1230,7 @@ fn build_bar_surface(
         hit_targets,
         animating,
         input_regions: None,
+        ime_cursor_rect: None,
     }
 }
 
@@ -1384,6 +1389,7 @@ fn build_island_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpe
         hit_targets,
         animating: false,
         input_regions: Some(input_regions),
+        ime_cursor_rect: None,
     }
 }
 
@@ -1600,6 +1606,7 @@ fn build_swiss_bar_surface(state: &AppState, output: &OutputInfo) -> SurfaceSpec
         hit_targets,
         animating: false,
         input_regions: None,
+        ime_cursor_rect: None,
     }
 }
 
@@ -1670,6 +1677,7 @@ mod tests {
 
     #[test]
     fn pointer_clicks_and_scroll_emit_expected_actions() {
+        use kaze_core::KeyModifiers;
         let mut state = AppState::new(Config::default());
         let mut ext = BarExtension::new();
         let mut ctx = ShellContext::new(&mut state);
@@ -1710,6 +1718,7 @@ mod tests {
                 surface_id: "bar:Virtual-1".into(),
                 target_id: "vol".into(),
                 delta_y: -1.0,
+                modifiers: KeyModifiers::default(),
             },
             &mut ctx,
         );
