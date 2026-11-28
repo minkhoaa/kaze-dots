@@ -221,10 +221,12 @@ impl LauncherExtension {
             for entry in rd.flatten() {
                 let p = entry.path();
                 if p.is_file() {
-                    let is_img = p
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "webp"));
+                    let is_img = p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                        matches!(
+                            e.to_ascii_lowercase().as_str(),
+                            "png" | "jpg" | "jpeg" | "webp"
+                        )
+                    });
                     if is_img && !self.wallpapers.contains(&p) {
                         self.wallpapers.push(p);
                     }
@@ -581,7 +583,8 @@ impl LauncherExtension {
         let max_rows = ctx.state.config.launcher.max_rows;
 
         if matches!(self.mode, LauncherMode::Apps)
-            && (key.keysym == KEY_TAB || matches_binding(key, &ctx.state.config.input.keybinds.toggle_layout))
+            && (key.keysym == KEY_TAB
+                || matches_binding(key, &ctx.state.config.input.keybinds.toggle_layout))
         {
             if key.modifiers.shift {
                 let idx = AppCategory::ALL
@@ -702,7 +705,10 @@ impl LauncherExtension {
         if !self.input.handle_ime(ime) {
             return DirtyFlags::NONE;
         }
-        if matches!(ime, ImeEvent::Commit(_) | ImeEvent::DeleteSurrounding { .. }) {
+        if matches!(
+            ime,
+            ImeEvent::Commit(_) | ImeEvent::DeleteSurrounding { .. }
+        ) {
             self.selected = 0;
         }
         self.refilter(ctx.state);
@@ -1094,7 +1100,10 @@ fn build_launcher_surface(
     let max_rows = cfg.max_rows.max(1);
     let grid_active = is_apps && grid_mode && !filtered.is_empty();
     let visible_rows = if grid_active {
-        let vis_items = filtered.len().saturating_sub(scroll_offset).min(max_rows * 3);
+        let vis_items = filtered
+            .len()
+            .saturating_sub(scroll_offset)
+            .min(max_rows * 3);
         vis_items.div_ceil(3).max(1)
     } else {
         filtered.len().clamp(1, max_rows)
@@ -1265,7 +1274,11 @@ fn build_launcher_surface(
             commands.push(PaintCmd::RoundedRect {
                 rect: tile_rect,
                 radius: 6.0,
-                fill: Some(if is_sel { surface_variant } else { surface_container }),
+                fill: Some(if is_sel {
+                    surface_variant
+                } else {
+                    surface_container
+                }),
                 stroke: if is_sel { Some(primary) } else { None },
                 stroke_width: if is_sel { 1.5 } else { 0.0 },
             });
@@ -1446,8 +1459,7 @@ mod tests {
                 "dmenu-open",
                 &[
                     "Display > ".into(),
-                    "󰍹  Extend Right\n󰐕  New clean workspace (WS 2)\n󰈈  Tiếng Việt có dấu\n"
-                        .into(),
+                    "󰍹  Extend Right\n󰐕  New clean workspace (WS 2)\n󰈈  Tiếng Việt có dấu\n".into(),
                 ],
                 &mut ctx,
             );
@@ -1533,7 +1545,9 @@ mod tests {
                 &mut ctx,
             );
             ext.on_event(&key(KEY_RETURN, None, false), &mut ctx);
-            assert!(ctx.actions.contains(&ShellAction::SetClipboardText("70".into())));
+            assert!(ctx
+                .actions
+                .contains(&ShellAction::SetClipboardText("70".into())));
         }
         assert!(ext.surfaces().is_empty());
 
@@ -1549,7 +1563,9 @@ mod tests {
                 &mut ctx,
             );
             ext.on_event(&key(KEY_RETURN, None, false), &mut ctx);
-            assert!(ctx.actions.contains(&ShellAction::SetClipboardText("🔥".into())));
+            assert!(ctx
+                .actions
+                .contains(&ShellAction::SetClipboardText("🔥".into())));
         }
     }
 }

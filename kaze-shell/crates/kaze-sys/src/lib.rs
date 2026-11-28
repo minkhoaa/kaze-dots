@@ -282,16 +282,21 @@ fn run_sys_thread(
                     let _ = audio_cmd_tx.send(pulse_native::AudioCmd::SetDefaultSource(name));
                 }
                 SysCommand::AudioSetStreamVolume { index, pct } => {
-                    let _ = audio_cmd_tx.send(pulse_native::AudioCmd::SetStreamVolume { index, pct });
+                    let _ =
+                        audio_cmd_tx.send(pulse_native::AudioCmd::SetStreamVolume { index, pct });
                 }
                 SysCommand::AudioSetStreamMute { index, muted } => {
-                    let _ = audio_cmd_tx.send(pulse_native::AudioCmd::SetStreamMute { index, muted });
+                    let _ =
+                        audio_cmd_tx.send(pulse_native::AudioCmd::SetStreamMute { index, muted });
                 }
                 SysCommand::AudioSetSpectrumSubscribers { count, fps } => {
-                    let _ = audio_cmd_tx.send(pulse_native::AudioCmd::SetSpectrumSubscribers { count, fps });
+                    let _ = audio_cmd_tx
+                        .send(pulse_native::AudioCmd::SetSpectrumSubscribers { count, fps });
                 }
                 SysCommand::BacklightStep(delta) => {
-                    if let Some(state) = backlight::step_backlight_async(sys_conn.as_ref(), delta).await {
+                    if let Some(state) =
+                        backlight::step_backlight_async(sys_conn.as_ref(), delta).await
+                    {
                         let _ = event_tx.send(SystemEvent::BacklightChanged {
                             state,
                             trigger_osd: true,
@@ -299,7 +304,9 @@ fn run_sys_thread(
                     }
                 }
                 SysCommand::BacklightSet(pct) => {
-                    if let Some(state) = backlight::set_backlight_async(sys_conn.as_ref(), pct).await {
+                    if let Some(state) =
+                        backlight::set_backlight_async(sys_conn.as_ref(), pct).await
+                    {
                         let _ = event_tx.send(SystemEvent::BacklightChanged {
                             state,
                             trigger_osd: false,
@@ -313,7 +320,8 @@ fn run_sys_thread(
                     let _ = power_cmd_tx.send(prof);
                 }
                 SysCommand::HyprScreencastUpdate(active) => {
-                    let _ = privacy_tx.send(pipewire_privacy::PrivacyUpdate::HyprScreencast(active));
+                    let _ =
+                        privacy_tx.send(pipewire_privacy::PrivacyUpdate::HyprScreencast(active));
                 }
                 SysCommand::ReleaseSleepInhibitor => {
                     let _ = sleep_rel_tx.send(());
@@ -409,7 +417,8 @@ fn run_sys_thread(
                 } => {
                     let sess = sess_conn.clone();
                     tokio::spawn(async move {
-                        let res = dbus_secrets::resolve_master_key(sess.as_ref(), &fallback_path).await;
+                        let res =
+                            dbus_secrets::resolve_master_key(sess.as_ref(), &fallback_path).await;
                         let _ = reply.send(res);
                     });
                 }
@@ -425,10 +434,8 @@ fn run_sys_thread(
                         if let Some(bytes) = read_nonblocking_pipe_bounded(fd, max_bytes).await {
                             if let Some(surface_id) = paste_surface_id {
                                 let text = String::from_utf8_lossy(&bytes).into_owned();
-                                let _ = tx.send(SystemEvent::ClipboardTextPasted {
-                                    surface_id,
-                                    text,
-                                });
+                                let _ =
+                                    tx.send(SystemEvent::ClipboardTextPasted { surface_id, text });
                             } else {
                                 let _ = tx.send(SystemEvent::ClipboardOfferCaptured {
                                     mime,

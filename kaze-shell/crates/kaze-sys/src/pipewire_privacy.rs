@@ -138,15 +138,10 @@ pub fn parse_pod(buf: &[u8]) -> Option<(PodVal, usize)> {
             }
             PodVal::Struct(fields)
         }
-        SPA_TYPE_FLOAT
-        | SPA_TYPE_DOUBLE
-        | SPA_TYPE_BYTES
-        | SPA_TYPE_RECTANGLE
-        | SPA_TYPE_FRACTION
-        | SPA_TYPE_BITMAP
-        | SPA_TYPE_ARRAY
-        | SPA_TYPE_OBJECT
-        | SPA_TYPE_POD => PodVal::Other,
+        SPA_TYPE_FLOAT | SPA_TYPE_DOUBLE | SPA_TYPE_BYTES | SPA_TYPE_RECTANGLE
+        | SPA_TYPE_FRACTION | SPA_TYPE_BITMAP | SPA_TYPE_ARRAY | SPA_TYPE_OBJECT | SPA_TYPE_POD => {
+            PodVal::Other
+        }
         _ => PodVal::Other,
     };
     Some((val, total))

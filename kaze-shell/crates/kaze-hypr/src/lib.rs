@@ -1,4 +1,4 @@
-use kaze_core::{HyprGeometrySpec, MonitorState, WorkspaceState};
+use kaze_core::{HyprGeometrySpec, MonitorState, WindowGeometry, WorkspaceState};
 use serde::Deserialize;
 use std::env;
 use std::fmt;
@@ -199,6 +199,11 @@ impl HyprClient {
         parse_snapshot(&monitors_raw, &workspaces_raw, &active_raw)
     }
 
+    pub fn clients(&self) -> Result<Vec<WindowGeometry>, HyprError> {
+        let raw = self.request("j/clients")?;
+        parse_clients(&raw)
+    }
+
     pub fn connect_event_stream(&self) -> Result<HyprEventStream, HyprError> {
         HyprEventStream::connect(&self.paths.event_sock)
     }
@@ -278,6 +283,45 @@ pub fn parse_snapshot(
         active_workspace_id,
         focused_monitor,
     })
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+struct RawClient {
+    address: String,
+    title: String,
+    class: String,
+    at: [i32; 2],
+    size: [i32; 2],
+    mapped: bool,
+    hidden: bool,
+    floating: bool,
+    monitor: serde_json::Value,
+    workspace: RawWorkspaceRef,
+}
+
+pub fn parse_clients(clients_json: &str) -> Result<Vec<WindowGeometry>, HyprError> {
+    let raw: Vec<RawClient> = serde_json::from_str(clients_json)?;
+    Ok(raw
+        .into_iter()
+        .filter(|c| c.mapped && !c.hidden && c.size[0] > 0 && c.size[1] > 0)
+        .map(|c| WindowGeometry {
+            address: c.address,
+            title: c.title,
+            class: c.class,
+            workspace_id: c.workspace.id,
+            monitor: match c.monitor {
+                serde_json::Value::String(s) => s,
+                serde_json::Value::Number(n) => n.to_string(),
+                _ => String::new(),
+            },
+            x: c.at[0],
+            y: c.at[1],
+            w: c.size[0],
+            h: c.size[1],
+            floating: c.floating,
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

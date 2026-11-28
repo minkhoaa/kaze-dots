@@ -25,9 +25,7 @@ use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
 use smithay_client_toolkit::reexports::client::protocol::{
     wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface,
 };
-use smithay_client_toolkit::reexports::client::{
-    Connection, EventQueue, Proxy, QueueHandle,
-};
+use smithay_client_toolkit::reexports::client::{Connection, EventQueue, Proxy, QueueHandle};
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
 use smithay_client_toolkit::seat::keyboard::{
     KeyEvent as SctkKeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers,
@@ -462,7 +460,12 @@ impl LockWorkerState {
             &self.cfg.real_name
         };
         commands.push(PaintCmd::RichText {
-            rect: Rect::new(card_x + 16.0, avatar_y + avatar_size + 10.0, card_w - 32.0, 26.0),
+            rect: Rect::new(
+                card_x + 16.0,
+                avatar_y + avatar_size + 10.0,
+                card_w - 32.0,
+                26.0,
+            ),
             text: display_name.to_string(),
             color: Color::rgba(235, 238, 245, 255),
             size: 16.0,

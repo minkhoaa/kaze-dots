@@ -104,9 +104,7 @@ pub fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     }
     let tmp = parent.join(format!(
         ".{}.tmp.{}",
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("kaze"),
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("kaze"),
         std::process::id()
     ));
     let mut file = OpenOptions::new()
@@ -168,11 +166,7 @@ pub fn open_zeroizing(key: &MasterKey, blob: &[u8]) -> Result<Zeroizing<Vec<u8>>
 pub struct EncryptedRecordStore;
 
 impl EncryptedRecordStore {
-    pub fn save_records(
-        path: &Path,
-        key: &MasterKey,
-        records: &[&[u8]],
-    ) -> Result<(), String> {
+    pub fn save_records(path: &Path, key: &MasterKey, records: &[&[u8]]) -> Result<(), String> {
         let mut raw = Vec::with_capacity(STORE_MAGIC.len() + records.len() * 64);
         raw.extend_from_slice(STORE_MAGIC);
         for rec in records {
@@ -288,11 +282,7 @@ mod tests {
         let key_path = dir.join("master.key");
 
         let k1 = load_or_create_keyfile(&key_path).expect("create keyfile");
-        let mode = fs::metadata(&key_path)
-            .expect("meta")
-            .permissions()
-            .mode()
-            & 0o777;
+        let mode = fs::metadata(&key_path).expect("meta").permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
         let k2 = load_or_create_keyfile(&key_path).expect("reload keyfile");
         assert_eq!(k1.as_bytes(), k2.as_bytes());

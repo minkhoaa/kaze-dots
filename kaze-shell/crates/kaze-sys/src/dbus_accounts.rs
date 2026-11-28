@@ -90,12 +90,7 @@ mod tests {
         std::fs::write(&acct_icon, b"png").expect("write acct");
         std::fs::write(&face_icon, b"face").expect("write face");
 
-        let s1 = resolve_account_fallback(
-            acct_icon.to_str(),
-            "khoa",
-            "Khoa Nguyen",
-            Some(&dir),
-        );
+        let s1 = resolve_account_fallback(acct_icon.to_str(), "khoa", "Khoa Nguyen", Some(&dir));
         assert_eq!(s1.icon_path.as_deref(), Some(acct_icon.as_path()));
         assert_eq!(s1.initials, "KN");
 

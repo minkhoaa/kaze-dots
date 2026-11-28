@@ -102,11 +102,19 @@ pub async fn run_ddc_task(mut rx: mpsc::UnboundedReceiver<DdcRequest>) {
         for (monitor, (raw_pct, cfg)) in batch {
             let buses = if let Some(mon_cfg) = cfg.monitors.get(&monitor) {
                 let min = mon_cfg.min_pct.min(100);
-                let max = if mon_cfg.max_pct == 0 { 100 } else { mon_cfg.max_pct.min(100) };
+                let max = if mon_cfg.max_pct == 0 {
+                    100
+                } else {
+                    mon_cfg.max_pct.min(100)
+                };
                 let scaled = raw_pct.clamp(min, max.max(min));
                 if let Some(bus_id) = mon_cfg.i2c_bus {
                     let p = PathBuf::from(format!("/dev/i2c-{bus_id}"));
-                    if p.exists() { vec![(p, scaled)] } else { Vec::new() }
+                    if p.exists() {
+                        vec![(p, scaled)]
+                    } else {
+                        Vec::new()
+                    }
                 } else {
                     discover_i2c_buses()
                         .into_iter()

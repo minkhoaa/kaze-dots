@@ -50,14 +50,9 @@ impl Locale {
         lc_messages: Option<&str>,
         lang: Option<&str>,
     ) -> Self {
-        for candidate in [
-            Some(config_locale),
-            lc_all,
-            lc_messages,
-            lang,
-        ]
-        .into_iter()
-        .flatten()
+        for candidate in [Some(config_locale), lc_all, lc_messages, lang]
+            .into_iter()
+            .flatten()
         {
             let c = candidate.trim();
             if c.is_empty() || c.eq_ignore_ascii_case("C") || c.eq_ignore_ascii_case("POSIX") {
@@ -240,8 +235,12 @@ pub fn t(locale: Locale, key: I18nKey) -> &'static str {
         (Locale::Vi, I18nKey::LauncherPromptApps) => "Ứng dụng > ",
         (Locale::En, I18nKey::LauncherPromptClip) => "Clip > ",
         (Locale::Vi, I18nKey::LauncherPromptClip) => "Nhớ tạm > ",
-        (Locale::En, I18nKey::LauncherPlaceholderApps) => "Type to launch (= calc, /emoji, /pan, /wall)...",
-        (Locale::Vi, I18nKey::LauncherPlaceholderApps) => "Gõ để mở (= tính toán, /emoji, /pan, /wall)...",
+        (Locale::En, I18nKey::LauncherPlaceholderApps) => {
+            "Type to launch (= calc, /emoji, /pan, /wall)..."
+        }
+        (Locale::Vi, I18nKey::LauncherPlaceholderApps) => {
+            "Gõ để mở (= tính toán, /emoji, /pan, /wall)..."
+        }
         (Locale::En, I18nKey::LauncherPlaceholderFilter) => "Type to filter...",
         (Locale::Vi, I18nKey::LauncherPlaceholderFilter) => "Gõ để lọc...",
         (Locale::En, I18nKey::LauncherPlaceholderClip) => "Filter clipboard (Shift+Del removes)...",
@@ -282,8 +281,14 @@ mod tests {
     #[test]
     fn all_keys_have_non_empty_en_and_vi_translations() {
         for &key in I18nKey::ALL {
-            assert!(!t(Locale::En, key).trim().is_empty(), "empty En for {key:?}");
-            assert!(!t(Locale::Vi, key).trim().is_empty(), "empty Vi for {key:?}");
+            assert!(
+                !t(Locale::En, key).trim().is_empty(),
+                "empty En for {key:?}"
+            );
+            assert!(
+                !t(Locale::Vi, key).trim().is_empty(),
+                "empty Vi for {key:?}"
+            );
         }
     }
 

@@ -655,9 +655,17 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
     // 3. Quick Kaze Ops (4 buttons)
     let ops = [
         ("cc:op:layout", IconKind::Layout, t(loc, I18nKey::OpLayout)),
-        ("cc:op:display", IconKind::Display, t(loc, I18nKey::OpDisplay)),
+        (
+            "cc:op:display",
+            IconKind::Display,
+            t(loc, I18nKey::OpDisplay),
+        ),
         ("cc:op:record", IconKind::Record, t(loc, I18nKey::OpRecord)),
-        ("cc:op:settings", IconKind::Settings, t(loc, I18nKey::OpSettings)),
+        (
+            "cc:op:settings",
+            IconKind::Settings,
+            t(loc, I18nKey::OpSettings),
+        ),
     ];
     let op_w = (inner_w - gap * 3.0) / 4.0;
     let op_h = 34.0f32;
@@ -892,10 +900,30 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
     y += 10.0;
 
     let power_btns = [
-        ("cc:power:lock", "lock", IconKind::Lock, t(loc, I18nKey::PowerLock)),
-        ("cc:power:suspend", "suspend", IconKind::Suspend, t(loc, I18nKey::PowerSuspend)),
-        ("cc:power:reboot", "reboot", IconKind::Reboot, t(loc, I18nKey::PowerReboot)),
-        ("cc:power:poweroff", "poweroff", IconKind::PowerOff, t(loc, I18nKey::PowerShutdown)),
+        (
+            "cc:power:lock",
+            "lock",
+            IconKind::Lock,
+            t(loc, I18nKey::PowerLock),
+        ),
+        (
+            "cc:power:suspend",
+            "suspend",
+            IconKind::Suspend,
+            t(loc, I18nKey::PowerSuspend),
+        ),
+        (
+            "cc:power:reboot",
+            "reboot",
+            IconKind::Reboot,
+            t(loc, I18nKey::PowerReboot),
+        ),
+        (
+            "cc:power:poweroff",
+            "poweroff",
+            IconKind::PowerOff,
+            t(loc, I18nKey::PowerShutdown),
+        ),
     ];
     let pw = (inner_w - gap * 3.0) / 4.0;
     let ph = 32.0f32;

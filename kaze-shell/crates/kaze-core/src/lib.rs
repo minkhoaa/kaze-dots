@@ -25,8 +25,8 @@ pub use config::{
 pub use crypto::{check_network_allowed, EncryptedRecordStore, MasterKey};
 pub use dconf_read::read_gnome_text_scaling_factor;
 pub use extension::{
-    DirtyFlags, ImeEvent, IpcResult, KazeExtension, KeyEvent, KeyModifiers, OsdKind,
-    PointerButton, PolkitRequest, ShellAction, ShellContext, SystemEvent,
+    CapturedOutputFrame, DirtyFlags, ImeEvent, IpcResult, KazeExtension, KeyEvent, KeyModifiers,
+    OsdKind, PointerButton, PolkitRequest, ShellAction, ShellContext, SystemEvent, WindowGeometry,
 };
 pub use i18n::{t, I18nKey, Locale};
 pub use layout::{

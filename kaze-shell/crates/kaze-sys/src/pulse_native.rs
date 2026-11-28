@@ -514,7 +514,10 @@ impl PulseConn {
     }
 
     async fn get_source_output_apps(&mut self) -> Vec<String> {
-        let Ok(body) = self.call(PA_COMMAND_GET_SOURCE_OUTPUT_INFO_LIST, |_| {}).await else {
+        let Ok(body) = self
+            .call(PA_COMMAND_GET_SOURCE_OUTPUT_INFO_LIST, |_| {})
+            .await
+        else {
             return Vec::new();
         };
         parse_source_output_apps(&body)
@@ -669,27 +672,48 @@ fn parse_device_list(body: &[u8], default_name: &str) -> Vec<AudioDeviceInfo> {
     let mut out = Vec::new();
     while r.pos < body.len() {
         let Some(index) = r.read_u32() else { break };
-        let Some(Some(name)) = r.read_string() else { break };
+        let Some(Some(name)) = r.read_string() else {
+            break;
+        };
         let desc = r.read_string().unwrap_or(None).unwrap_or_default();
         if r.skip_sample_spec().is_none() || r.skip_channel_map().is_none() {
             break;
         }
-        if r.read_u32().is_none() { break }
-        let Some(cvol) = r.read_cvolume() else { break };
-        let Some(muted) = r.read_bool() else { break };
-        if r.read_u32().is_none() || r.read_string().is_none() || r.read_usec().is_none() || r.read_string().is_none() || r.read_u32().is_none() {
+        if r.read_u32().is_none() {
             break;
         }
-        if r.read_proplist().is_none() || r.read_usec().is_none() || r.read_volume_single().is_none() || r.read_u32().is_none() || r.read_u32().is_none() || r.read_u32().is_none() {
+        let Some(cvol) = r.read_cvolume() else { break };
+        let Some(muted) = r.read_bool() else { break };
+        if r.read_u32().is_none()
+            || r.read_string().is_none()
+            || r.read_usec().is_none()
+            || r.read_string().is_none()
+            || r.read_u32().is_none()
+        {
+            break;
+        }
+        if r.read_proplist().is_none()
+            || r.read_usec().is_none()
+            || r.read_volume_single().is_none()
+            || r.read_u32().is_none()
+            || r.read_u32().is_none()
+            || r.read_u32().is_none()
+        {
             break;
         }
         let Some(n_ports) = r.read_u32() else { break };
         for _ in 0..n_ports.min(64) {
-            if r.read_string().is_none() || r.read_string().is_none() || r.read_u32().is_none() || r.read_u32().is_none() {
+            if r.read_string().is_none()
+                || r.read_string().is_none()
+                || r.read_u32().is_none()
+                || r.read_u32().is_none()
+            {
                 return out;
             }
         }
-        if r.read_string().is_none() { break }
+        if r.read_string().is_none() {
+            break;
+        }
         if let Some(n_formats) = r.read_u8_val() {
             for _ in 0..n_formats.min(32) {
                 let _ = r.skip_any();
@@ -722,11 +746,17 @@ fn parse_sink_input_list(body: &[u8]) -> Vec<AudioStreamInfo> {
             break;
         }
         let Some(cvol) = r.read_cvolume() else { break };
-        if r.read_usec().is_none() || r.read_usec().is_none() || r.read_string().is_none() || r.read_string().is_none() {
+        if r.read_usec().is_none()
+            || r.read_usec().is_none()
+            || r.read_string().is_none()
+            || r.read_string().is_none()
+        {
             break;
         }
         let Some(muted) = r.read_bool() else { break };
-        let Some(props) = r.read_proplist() else { break };
+        let Some(props) = r.read_proplist() else {
+            break;
+        };
         if r.read_bool().is_none() || r.read_bool().is_none() || r.read_bool().is_none() {
             break;
         }
@@ -752,23 +782,42 @@ fn parse_source_output_apps(body: &[u8]) -> Vec<String> {
     let mut r = TagReader::new(body);
     let mut out = Vec::new();
     while r.pos < body.len() {
-        if r.read_u32().is_none() || r.read_string().is_none() || r.read_u32().is_none() || r.read_u32().is_none() || r.read_u32().is_none() {
+        if r.read_u32().is_none()
+            || r.read_string().is_none()
+            || r.read_u32().is_none()
+            || r.read_u32().is_none()
+            || r.read_u32().is_none()
+        {
             break;
         }
         if r.skip_sample_spec().is_none() || r.skip_channel_map().is_none() {
             break;
         }
-        if r.read_usec().is_none() || r.read_usec().is_none() || r.read_string().is_none() || r.read_string().is_none() {
+        if r.read_usec().is_none()
+            || r.read_usec().is_none()
+            || r.read_string().is_none()
+            || r.read_string().is_none()
+        {
             break;
         }
-        let Some(props) = r.read_proplist() else { break };
-        if r.read_bool().is_none() || r.read_cvolume().is_none() || r.read_bool().is_none() || r.read_bool().is_none() || r.read_bool().is_none() {
+        let Some(props) = r.read_proplist() else {
+            break;
+        };
+        if r.read_bool().is_none()
+            || r.read_cvolume().is_none()
+            || r.read_bool().is_none()
+            || r.read_bool().is_none()
+            || r.read_bool().is_none()
+        {
             break;
         }
         let _ = r.skip_any(); // format_info
         if let Some(app) = props.get("application.name").filter(|s| !s.is_empty()) {
             let lower = app.to_ascii_lowercase();
-            if !lower.contains("kaze-shell") && !lower.contains("kaze-spectrum") && !out.contains(app) {
+            if !lower.contains("kaze-shell")
+                && !lower.contains("kaze-spectrum")
+                && !out.contains(app)
+            {
                 out.push(app.clone());
             }
         }
@@ -996,7 +1045,10 @@ async fn run_spectrum_monitor(
     let Ok(stream) = UnixStream::connect(sock).await else {
         return;
     };
-    let mut conn = PulseConn { stream, next_tag: 1 };
+    let mut conn = PulseConn {
+        stream,
+        next_tag: 1,
+    };
     let cookie = read_pulse_cookie();
     if conn
         .call(PA_COMMAND_AUTH, |w| {
@@ -1237,6 +1289,9 @@ mod tests {
             .max_by_key(|(_, &v)| v)
             .map(|(idx, _)| idx)
             .unwrap_or(0);
-        assert!((2..=5).contains(&peak_idx), "peak bar={peak_idx}, bars={bars:?}");
+        assert!(
+            (2..=5).contains(&peak_idx),
+            "peak bar={peak_idx}, bars={bars:?}"
+        );
     }
 }

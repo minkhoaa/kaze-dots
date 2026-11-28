@@ -61,7 +61,8 @@ async fn apply_raw_brightness(
         .and_then(|n| n.to_str())
         .unwrap_or("backlight");
     if let Some(c) = conn {
-        if let Ok(proxy) = Proxy::new(c, LOGIND_DEST, LOGIND_AUTO_SESSION, LOGIND_SESSION_IFACE).await
+        if let Ok(proxy) =
+            Proxy::new(c, LOGIND_DEST, LOGIND_AUTO_SESSION, LOGIND_SESSION_IFACE).await
         {
             if proxy
                 .call::<_, _, ()>("SetBrightness", &("backlight", device, raw_val))
@@ -77,7 +78,10 @@ async fn apply_raw_brightness(
 
 /// Steps screen brightness by `delta_pct` via `logind.Session.SetBrightness`
 /// with direct sysfs fallback (0 `brightnessctl` dependency).
-pub async fn step_backlight_async(conn: Option<&Connection>, delta_pct: i32) -> Option<BacklightState> {
+pub async fn step_backlight_async(
+    conn: Option<&Connection>,
+    delta_pct: i32,
+) -> Option<BacklightState> {
     let dir = discover_device()?;
     let cur = fs::read_to_string(dir.join("brightness"))
         .ok()?

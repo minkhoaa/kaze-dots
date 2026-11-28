@@ -146,7 +146,10 @@ fn parse_integer_literal(s: &str) -> Option<i128> {
 
 fn try_base_conversion(lhs: &str, rhs: &str) -> Option<CalcResult> {
     let target = rhs.trim().to_ascii_lowercase();
-    if !matches!(target.as_str(), "dec" | "decimal" | "hex" | "bin" | "binary" | "oct" | "octal") {
+    if !matches!(
+        target.as_str(),
+        "dec" | "decimal" | "hex" | "bin" | "binary" | "oct" | "octal"
+    ) {
         return None;
     }
     let val = parse_integer_literal(lhs)?;
@@ -197,7 +200,10 @@ fn try_unit_conversion(lhs: &str, rhs: &str) -> Option<CalcResult> {
     let to_unit = rhs.trim();
 
     // Temperature
-    let temp = match (from_unit.to_ascii_uppercase().as_str(), to_unit.to_ascii_uppercase().as_str()) {
+    let temp = match (
+        from_unit.to_ascii_uppercase().as_str(),
+        to_unit.to_ascii_uppercase().as_str(),
+    ) {
         ("C", "F") => Some(val * 9.0 / 5.0 + 32.0),
         ("F", "C") => Some((val - 32.0) * 5.0 / 9.0),
         ("C", "K") => Some(val + 273.15),
@@ -501,11 +507,23 @@ mod tests {
         let overflow = evaluate_calculator("= 9999^999999", false);
         assert!(overflow.is_error);
 
-        assert_eq!(evaluate_calculator("= 0xff to dec", false).copy_value, "255");
-        assert_eq!(evaluate_calculator("= 42 to bin", false).copy_value, "0b101010");
-        assert_eq!(evaluate_calculator("= 1024 MiB to GiB", false).copy_value, "1");
+        assert_eq!(
+            evaluate_calculator("= 0xff to dec", false).copy_value,
+            "255"
+        );
+        assert_eq!(
+            evaluate_calculator("= 42 to bin", false).copy_value,
+            "0b101010"
+        );
+        assert_eq!(
+            evaluate_calculator("= 1024 MiB to GiB", false).copy_value,
+            "1"
+        );
         assert_eq!(evaluate_calculator("= 30 C to F", false).copy_value, "86");
-        assert_eq!(evaluate_calculator("= 10 km to mi", false).copy_value, "6.21371192");
+        assert_eq!(
+            evaluate_calculator("= 10 km to mi", false).copy_value,
+            "6.21371192"
+        );
 
         let offline = evaluate_calculator("= 100 USD to VND", true);
         assert!(offline.is_error);

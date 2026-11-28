@@ -642,6 +642,7 @@ dependencies = [
  "calloop-wayland-source",
  "kaze-core",
  "kaze-ext-bar",
+ "kaze-ext-capture",
  "kaze-ext-cc",
  "kaze-ext-clipboard",
  "kaze-ext-idle",
@@ -686,6 +687,17 @@ name = "kaze-ext-bar"
 version = "0.1.0"
 dependencies = [
  "kaze-core",
+]
+
+[[package]]
+name = "kaze-ext-capture"
+version = "0.1.0"
+dependencies = [
+ "cosmic-text",
+ "image",
+ "kaze-core",
+ "tiny-skia",
+ "unicode-segmentation",
 ]
 
 [[package]]

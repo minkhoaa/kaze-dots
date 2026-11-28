@@ -69,10 +69,17 @@ pub fn generate_thumbnail_rgba(payload: &[u8]) -> Option<(u32, u32, Arc<[u8]>)> 
     Some((tw, th, Arc::from(raw)))
 }
 
-fn summarize_entry(mime: &str, bytes: &[u8], thumb: Option<&(u32, u32, Arc<[u8]>)>) -> (bool, String) {
+fn summarize_entry(
+    mime: &str,
+    bytes: &[u8],
+    thumb: Option<&(u32, u32, Arc<[u8]>)>,
+) -> (bool, String) {
     if mime.starts_with("image/") {
         let label = match thumb {
-            Some((tw, th, _)) => format!("Image ({mime} · {tw}×{th} · {} KiB)", (bytes.len() / 1024).max(1)),
+            Some((tw, th, _)) => format!(
+                "Image ({mime} · {tw}×{th} · {} KiB)",
+                (bytes.len() / 1024).max(1)
+            ),
             None => format!("Image ({mime} · {} KiB)", (bytes.len() / 1024).max(1)),
         };
         (true, label)
@@ -185,12 +192,7 @@ impl ClipboardExtension {
         }
     }
 
-    pub fn record_offer(
-        &mut self,
-        mime: &str,
-        bytes: Vec<u8>,
-        state: &AppState,
-    ) -> bool {
+    pub fn record_offer(&mut self, mime: &str, bytes: Vec<u8>, state: &AppState) -> bool {
         let cfg = &state.config.clipboard;
         if !cfg.enabled || bytes.is_empty() || bytes.len() > cfg.max_item_bytes {
             return false;
@@ -270,7 +272,10 @@ impl ClipboardExtension {
         // Pinned items sort first if query is empty? Wait: preserve chronological MRU order,
         // or show [PIN] badge inline so newly copied items are always right at row 0.
         for (idx, entry) in self.entries.iter().enumerate() {
-            if q.is_empty() || entry.preview_text.to_lowercase().contains(&q) || entry.mime.to_lowercase().contains(&q) {
+            if q.is_empty()
+                || entry.preview_text.to_lowercase().contains(&q)
+                || entry.mime.to_lowercase().contains(&q)
+            {
                 self.filtered.push(idx);
             }
         }
@@ -475,7 +480,9 @@ impl KazeExtension for ClipboardExtension {
                 self.rebuild(ctx.state);
                 DirtyFlags::CLIPBOARD
             }
-            SystemEvent::KeyInput { surface_id, key } if surface_id == SURFACE_ID && key.pressed => {
+            SystemEvent::KeyInput { surface_id, key }
+                if surface_id == SURFACE_ID && key.pressed =>
+            {
                 let max_rows = ctx.state.config.launcher.max_rows;
                 if key.modifiers.alt && (key.keysym == KEY_P_LOWER || key.keysym == KEY_P_UPPER) {
                     if let Some(&entry_idx) = self.filtered.get(self.selected) {
@@ -553,7 +560,10 @@ impl KazeExtension for ClipboardExtension {
             }
             SystemEvent::ImeInput { surface_id, ime } if surface_id == SURFACE_ID => {
                 if self.input.handle_ime(ime) {
-                    if matches!(ime, ImeEvent::Commit(_) | ImeEvent::DeleteSurrounding { .. }) {
+                    if matches!(
+                        ime,
+                        ImeEvent::Commit(_) | ImeEvent::DeleteSurrounding { .. }
+                    ) {
                         self.selected = 0;
                     }
                     self.refilter(ctx.state.config.launcher.max_rows);
@@ -938,7 +948,12 @@ fn build_clipboard_surface(
                 align: TextAlign::Left,
             });
 
-            let pin_rect = Rect::new(row_rect.x + row_rect.w - pin_w - 4.0, ry + 10.0, pin_w, 24.0);
+            let pin_rect = Rect::new(
+                row_rect.x + row_rect.w - pin_w - 4.0,
+                ry + 10.0,
+                pin_w,
+                24.0,
+            );
             commands.push(PaintCmd::Text {
                 rect: pin_rect,
                 text: if entry.pinned {
@@ -1000,7 +1015,8 @@ mod tests {
     fn make_png(w: u32, h: u32) -> Vec<u8> {
         let img = RgbaImage::from_pixel(w, h, Rgba([0xe6, 0x19, 0x19, 0xff]));
         let mut cursor = Cursor::new(Vec::new());
-        img.write_to(&mut cursor, ImageFormat::Png).expect("png encode");
+        img.write_to(&mut cursor, ImageFormat::Png)
+            .expect("png encode");
         cursor.into_inner()
     }
 
@@ -1041,7 +1057,10 @@ mod tests {
         ext.on_ipc("clipboard-toggle", &[], &mut ctx);
         let specs = ext.surfaces();
         assert_eq!(specs.len(), 1);
-        assert!(specs[0].commands.iter().any(|c| matches!(c, PaintCmd::Image { .. })));
+        assert!(specs[0]
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCmd::Image { .. })));
     }
 
     #[test]
@@ -1069,7 +1088,9 @@ mod tests {
 
         // Verify zero plaintext leaks into encrypted store on disk!
         let disk_bytes = std::fs::read(&store_path).expect("read encrypted store");
-        assert!(!disk_bytes.windows(b"PINNED_SECRET_TOKEN_XYZ".len()).any(|w| w == b"PINNED_SECRET_TOKEN_XYZ"));
+        assert!(!disk_bytes
+            .windows(b"PINNED_SECRET_TOKEN_XYZ".len())
+            .any(|w| w == b"PINNED_SECRET_TOKEN_XYZ"));
 
         // `clipboard-clear` preserves pinned item; reload from disk still has it.
         {

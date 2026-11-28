@@ -412,9 +412,8 @@ impl KazeExtension for PolkitExtension {
                         // Wrong password or helper error: keep modal open for retry with clear error.
                         a.submitting = false;
                         if a.error.is_none() {
-                            a.error = Some(
-                                t(ctx.state.locale, I18nKey::LockWrongPassword).to_string(),
-                            );
+                            a.error =
+                                Some(t(ctx.state.locale, I18nKey::LockWrongPassword).to_string());
                         }
                         self.input.clear();
                         self.rebuild(ctx.state);
@@ -473,7 +472,9 @@ impl KazeExtension for PolkitExtension {
             SystemEvent::SurfaceClosed { surface_id } if surface_id == SURFACE_ID => {
                 self.cancel_active(ctx)
             }
-            SystemEvent::ConfigReloaded | SystemEvent::ThemeChanged(_) | SystemEvent::LocaleChanged(_)
+            SystemEvent::ConfigReloaded
+            | SystemEvent::ThemeChanged(_)
+            | SystemEvent::LocaleChanged(_)
                 if self.active.is_some() =>
             {
                 self.rebuild(ctx.state);

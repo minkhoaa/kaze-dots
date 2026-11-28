@@ -62,9 +62,14 @@ async fn try_secret_service(conn: &Connection) -> Option<MasterKey> {
     }
 
     // Store a newly generated key only if the default collection exists and is unlocked.
-    let collection = Proxy::new(conn, SECRETS_DEST, DEFAULT_COLLECTION_PATH, COLLECTION_IFACE)
-        .await
-        .ok()?;
+    let collection = Proxy::new(
+        conn,
+        SECRETS_DEST,
+        DEFAULT_COLLECTION_PATH,
+        COLLECTION_IFACE,
+    )
+    .await
+    .ok()?;
     let is_locked: bool = collection.get_property("Locked").await.unwrap_or(true);
     if is_locked {
         return None;

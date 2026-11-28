@@ -1,0 +1,15 @@
+[package]
+name = "kaze-ext-capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cosmic-text.workspace = true
+image.workspace = true
+kaze-core.workspace = true
+tiny-skia.workspace = true
+unicode-segmentation.workspace = true

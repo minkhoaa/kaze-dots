@@ -110,11 +110,7 @@ impl TextInputState {
             return TextDirection::Ltr;
         }
         let info = BidiInfo::new(&self.text, None);
-        if info
-            .paragraphs
-            .first()
-            .is_some_and(|p| p.level.is_rtl())
-        {
+        if info.paragraphs.first().is_some_and(|p| p.level.is_rtl()) {
             TextDirection::Rtl
         } else {
             TextDirection::Ltr
@@ -235,11 +231,17 @@ impl TextInputState {
             };
         }
         if matches_binding_opt(key, &keybinds.word_left, true) {
-            self.move_cursor(prev_word_boundary(&self.text, self.cursor), key.modifiers.shift);
+            self.move_cursor(
+                prev_word_boundary(&self.text, self.cursor),
+                key.modifiers.shift,
+            );
             return TextInputOutcome::Changed;
         }
         if matches_binding_opt(key, &keybinds.word_right, true) {
-            self.move_cursor(next_word_boundary(&self.text, self.cursor), key.modifiers.shift);
+            self.move_cursor(
+                next_word_boundary(&self.text, self.cursor),
+                key.modifiers.shift,
+            );
             return TextInputOutcome::Changed;
         }
 

@@ -96,7 +96,10 @@ mod tests {
         let mut store = FrecencyStore::default();
         store.record_launch_at("foot.desktop", 10_000_000);
         store.record_launch_at("firefox.desktop", 10_000_000 - 30 * 86_400);
-        assert!(store.score_at("foot.desktop", 10_000_100) > store.score_at("firefox.desktop", 10_000_100));
+        assert!(
+            store.score_at("foot.desktop", 10_000_100)
+                > store.score_at("firefox.desktop", 10_000_100)
+        );
 
         let dir = std::env::temp_dir().join("kaze-frecency-test");
         let _ = fs::create_dir_all(&dir);

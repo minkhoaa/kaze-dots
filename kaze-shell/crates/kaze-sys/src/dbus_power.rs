@@ -70,7 +70,9 @@ pub async fn run_power_profiles_task(
         }
     }
 
-    let mut active_stream = proxy.receive_property_changed::<String>("ActiveProfile").await;
+    let mut active_stream = proxy
+        .receive_property_changed::<String>("ActiveProfile")
+        .await;
     let mut degraded_stream = proxy
         .receive_property_changed::<String>("PerformanceDegraded")
         .await;

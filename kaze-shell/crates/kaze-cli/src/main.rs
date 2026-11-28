@@ -22,6 +22,7 @@ Usage:\n\
   kaze-shell inspect\n\
   kaze-shell doctor [--offline] [--config PATH]\n\
   kaze-shell config validate [--strict] [--json] [PATH]\n\
+  kaze-shell annotate <FILE> [--output PATH] [--blur X,Y,W,H] [--backdrop PAD]\n\
   kaze-shell --help | --version\n\n\
 IPC Commands (via `kaze-shell msg`):\n\
   ping                              Check daemon liveness\n\
@@ -44,7 +45,9 @@ IPC Commands (via `kaze-shell msg`):\n\
   caffeine-toggle | caffeine-set <on|off>
   inhibit                           Toggle idle/sleep caffeine inhibitor
   lock | unlock-status              Lock session via ext-session-lock-v1 or inspect lock state
-  session-menu-toggle               Toggle native power/session menu overlay\n\
+  session-menu-toggle               Toggle native power/session menu overlay
+  capture <full|output|region|window> [--save-only PATH] [--geom-only]
+  color-picker [hex|rgb|hsl|oklch]  Pick screen color to native clipboard\n\
   theme-mode-toggle                 Toggle Dark/Light mode & regenerate templates\n\
   templates-apply                   Regenerate Hyprland, Foot, GTK3/4, btop themes\n\
   display-status <mode> [detail]    Update Display Slot dot (idle|present|virtual-share|virtual-control|recording)\n\
@@ -90,6 +93,7 @@ fn main() -> ExitCode {
         "inspect" => run_inspect_cmd(&args[1..]),
         "doctor" => run_doctor_cmd(&args[1..]),
         "config" => run_config_cmd(&args[1..]),
+        "annotate" => run_annotate_cmd(&args[1..]),
         other => {
             eprintln!("kaze-shell: unknown subcommand '{other}'");
             print_usage();
@@ -486,7 +490,15 @@ fn run_msg_cmd(args: &[String]) -> ExitCode {
         args: rest.to_vec(),
     };
 
-    match send_request(&sock, &req) {
+    let send_res = if cmd == "capture" && rest.iter().any(|a| a == "--geom-only") {
+        send_request_with_timeout(&sock, &req, None)
+    } else if cmd == "capture" && rest.iter().any(|a| a == "--save-only") {
+        send_request_with_timeout(&sock, &req, Some(std::time::Duration::from_secs(10)))
+    } else {
+        send_request(&sock, &req)
+    };
+
+    match send_res {
         Ok(resp) => {
             if let Some(data) = resp.data {
                 if let Ok(pretty) = serde_json::to_string_pretty(&data) {
@@ -532,7 +544,9 @@ fn run_config_cmd(args: &[String]) -> ExitCode {
                     }
                     s => {
                         if path_arg.is_some() {
-                            eprintln!("Usage: kaze-shell config validate [--strict] [--json] [PATH]");
+                            eprintln!(
+                                "Usage: kaze-shell config validate [--strict] [--json] [PATH]"
+                            );
                             return ExitCode::from(2);
                         }
                         path_arg = Some(PathBuf::from(s));
@@ -562,13 +576,19 @@ fn run_config_cmd(args: &[String]) -> ExitCode {
                 }
             } else {
                 for w in &report.warnings {
-                    eprintln!("kaze-shell config validate: warning: {}: {}", w.path, w.message);
+                    eprintln!(
+                        "kaze-shell config validate: warning: {}: {}",
+                        w.path, w.message
+                    );
                 }
                 for e in &report.errors {
                     if e.path.is_empty() {
                         eprintln!("kaze-shell config validate: error: {}", e.message);
                     } else {
-                        eprintln!("kaze-shell config validate: error: {}: {}", e.path, e.message);
+                        eprintln!(
+                            "kaze-shell config validate: error: {}: {}",
+                            e.path, e.message
+                        );
                     }
                 }
                 if !strict_fail {
@@ -690,6 +710,25 @@ fn run_lock_worker_cmd(args: &[String]) -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("kaze-shell lock-worker: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_annotate_cmd(args: &[String]) -> ExitCode {
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!(
+            "Usage: kaze-shell annotate <FILE> [--output PATH] [--blur X,Y,W,H] [--backdrop PAD]"
+        );
+        return ExitCode::SUCCESS;
+    }
+    match kaze_ext_capture::editor::run_annotate_cli(args) {
+        Ok(msg) => {
+            println!("{msg}");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("kaze-shell annotate: {err}");
             ExitCode::FAILURE
         }
     }

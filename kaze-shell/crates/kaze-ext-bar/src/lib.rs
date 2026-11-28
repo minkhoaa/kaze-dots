@@ -2,9 +2,9 @@
 
 use kaze_core::{
     Anchor, AppState, BarPosition, Color, DirtyFlags, DisplayStatus, EdgeInsets, HitTarget,
-    IconKind, IpcResult, KazeExtension, KeyboardMode, Layer, LayoutPreset,
-    NetworkKind, OutputInfo, PaintCmd, PointerButton, Rect, ShellAction, ShellContext, Spring,
-    SurfaceSpec, SystemEvent, TextAlign,
+    IconKind, IpcResult, KazeExtension, KeyboardMode, Layer, LayoutPreset, NetworkKind, OutputInfo,
+    PaintCmd, PointerButton, Rect, ShellAction, ShellContext, Spring, SurfaceSpec, SystemEvent,
+    TextAlign,
 };
 use std::collections::{BTreeMap, HashMap};
 
@@ -372,7 +372,11 @@ impl KazeExtension for BarExtension {
             | SystemEvent::PolkitCancel { .. }
             | SystemEvent::PolkitPrompt { .. }
             | SystemEvent::PolkitError { .. }
-            | SystemEvent::PolkitComplete { .. } => DirtyFlags::NONE,
+            | SystemEvent::PolkitComplete { .. }
+            | SystemEvent::PointerMotion { .. }
+            | SystemEvent::PointerRelease { .. }
+            | SystemEvent::ScreencopyReady { .. }
+            | SystemEvent::ScreencopyFailed { .. } => DirtyFlags::NONE,
         }
     }
 

@@ -146,14 +146,24 @@ impl DataControlState {
         self.last_non_secret = Some((mime.to_string(), bytes.to_vec()));
     }
 
-    pub fn set_selection(&mut self, mime: String, bytes: Vec<u8>, qh: &QueueHandle<UiState>) -> bool {
+    pub fn set_selection(
+        &mut self,
+        mime: String,
+        bytes: Vec<u8>,
+        qh: &QueueHandle<UiState>,
+    ) -> bool {
         self.self_owned_pending = true;
         self.last_selection_was_secret = false;
         self.last_non_secret = Some((mime.clone(), bytes.clone()));
 
         let mut advertised = vec![mime.clone()];
         if mime.starts_with("text/plain") {
-            for alias in ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING"] {
+            for alias in [
+                "text/plain;charset=utf-8",
+                "text/plain",
+                "UTF8_STRING",
+                "STRING",
+            ] {
                 if !advertised.iter().any(|m| m == alias) {
                     advertised.push(alias.to_string());
                 }
@@ -235,7 +245,10 @@ impl DataControlState {
         if let Some(old) = self.current_offer.take() {
             old.destroy();
         }
-        let mimes = self.pending_offer_mimes.remove(&offer_id).unwrap_or_default();
+        let mimes = self
+            .pending_offer_mimes
+            .remove(&offer_id)
+            .unwrap_or_default();
         let active = match active {
             ActiveOffer::Ext(o, _) => ActiveOffer::Ext(o, mimes.clone()),
             ActiveOffer::Wlr(o, _) => ActiveOffer::Wlr(o, mimes.clone()),
@@ -320,7 +333,12 @@ fn pick_capture_mime(mimes: &[String]) -> Option<String> {
 }
 
 fn pick_text_mime(mimes: &[String]) -> Option<String> {
-    for preferred in ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "STRING"] {
+    for preferred in [
+        "text/plain;charset=utf-8",
+        "UTF8_STRING",
+        "text/plain",
+        "STRING",
+    ] {
         if let Some(found) = mimes.iter().find(|m| m.eq_ignore_ascii_case(preferred)) {
             return Some(found.clone());
         }
@@ -353,7 +371,10 @@ impl Dispatch<ExtDataControlDeviceV1, ()> for UiState {
     ) {
         match event {
             ext_data_control_device_v1::Event::DataOffer { id } => {
-                state.data_control.pending_offer_mimes.insert(id.id(), Vec::new());
+                state
+                    .data_control
+                    .pending_offer_mimes
+                    .insert(id.id(), Vec::new());
             }
             ext_data_control_device_v1::Event::Selection { id: Some(offer) } => {
                 let oid = offer.id();
@@ -460,7 +481,10 @@ impl Dispatch<ZwlrDataControlDeviceV1, ()> for UiState {
     ) {
         match event {
             zwlr_data_control_device_v1::Event::DataOffer { id } => {
-                state.data_control.pending_offer_mimes.insert(id.id(), Vec::new());
+                state
+                    .data_control
+                    .pending_offer_mimes
+                    .insert(id.id(), Vec::new());
             }
             zwlr_data_control_device_v1::Event::Selection { id: Some(offer) } => {
                 let oid = offer.id();

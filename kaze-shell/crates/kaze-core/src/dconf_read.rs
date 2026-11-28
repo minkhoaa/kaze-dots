@@ -133,8 +133,17 @@ mod tests {
 
     #[test]
     fn handles_missing_or_corrupt_dconf_gracefully() {
-        assert_eq!(read_gnome_text_scaling_factor(Path::new("/nonexistent/dconf")), None);
-        assert_eq!(parse_gvdb_f64(b"not-gvdb", "/org/gnome/desktop/interface/text-scaling-factor"), None);
+        assert_eq!(
+            read_gnome_text_scaling_factor(Path::new("/nonexistent/dconf")),
+            None
+        );
+        assert_eq!(
+            parse_gvdb_f64(
+                b"not-gvdb",
+                "/org/gnome/desktop/interface/text-scaling-factor"
+            ),
+            None
+        );
     }
 
     #[test]
@@ -186,7 +195,10 @@ mod tests {
         buf[20..24].copy_from_slice(&(root_end as u32).to_le_bytes());
 
         assert_eq!(
-            parse_gvdb_f64(&buf[..root_end], "/org/gnome/desktop/interface/text-scaling-factor"),
+            parse_gvdb_f64(
+                &buf[..root_end],
+                "/org/gnome/desktop/interface/text-scaling-factor"
+            ),
             Some(1.25)
         );
     }

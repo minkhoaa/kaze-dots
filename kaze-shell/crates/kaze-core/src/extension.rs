@@ -1,5 +1,6 @@
 use bitflags::bitflags;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::i18n::Locale;
 use crate::layout::LayoutPreset;
@@ -29,7 +30,8 @@ bitflags! {
         const IDLE      = 1 << 11;
         const SESSION   = 1 << 12;
         const POLKIT    = 1 << 13;
-        const ALL       = 0b0011_1111_1111_1111;
+        const CAPTURE   = 1 << 14;
+        const ALL       = 0b0111_1111_1111_1111;
     }
 }
 
@@ -122,6 +124,17 @@ pub enum SystemEvent {
         y: f32,
     },
     PointerDrag {
+        surface_id: String,
+        target_id: String,
+        x: f32,
+        y: f32,
+    },
+    PointerMotion {
+        surface_id: String,
+        x: f32,
+        y: f32,
+    },
+    PointerRelease {
         surface_id: String,
         target_id: String,
         x: f32,
@@ -240,6 +253,42 @@ pub enum SystemEvent {
         cookie: String,
         success: bool,
     },
+    ScreencopyReady {
+        request_id: u64,
+        frames: Vec<CapturedOutputFrame>,
+        windows: Vec<WindowGeometry>,
+    },
+    ScreencopyFailed {
+        request_id: u64,
+        error: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedOutputFrame {
+    pub output_name: String,
+    pub logical_x: i32,
+    pub logical_y: i32,
+    pub logical_w: u32,
+    pub logical_h: u32,
+    pub pixel_w: u32,
+    pub pixel_h: u32,
+    /// Upright straight RGBA8888 pixels.
+    pub rgba: Arc<[u8]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowGeometry {
+    pub address: String,
+    pub title: String,
+    pub class: String,
+    pub workspace_id: i32,
+    pub monitor: String,
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    pub floating: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -368,6 +417,17 @@ pub enum ShellAction {
     },
     PolkitCancel {
         cookie: String,
+    },
+    RequestScreencopy {
+        request_id: u64,
+    },
+    CaptureReply {
+        text: Option<String>,
+    },
+    SendNotification {
+        app_name: String,
+        summary: String,
+        body: String,
     },
 }
 

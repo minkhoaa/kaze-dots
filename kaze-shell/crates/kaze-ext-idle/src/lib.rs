@@ -65,7 +65,8 @@ impl IdleExtension {
     }
 
     fn active_profile(state: &AppState) -> &IdleStageProfileConfig {
-        let on_battery = state.battery.present && !state.battery.ac_online && !state.battery.charging;
+        let on_battery =
+            state.battery.present && !state.battery.ac_online && !state.battery.charging;
         if on_battery {
             &state.config.idle.behavior.battery
         } else {
@@ -85,9 +86,7 @@ impl IdleExtension {
         if state.caffeine_enabled {
             return true;
         }
-        if state.config.idle.inhibit_on_audio
-            && state.audio.streams.iter().any(|s| !s.muted)
-        {
+        if state.config.idle.inhibit_on_audio && state.audio.streams.iter().any(|s| !s.muted) {
             return true;
         }
         false
@@ -111,7 +110,9 @@ impl IdleExtension {
             let prof = Self::active_profile(ctx.state).clone();
             let active: Vec<String> = self.custom_active.drain().collect();
             for id in active {
-                if let Some(idx) = id.strip_prefix("custom:").and_then(|s| s.parse::<usize>().ok())
+                if let Some(idx) = id
+                    .strip_prefix("custom:")
+                    .and_then(|s| s.parse::<usize>().ok())
                 {
                     if let Some(stage) = prof.custom_stages.get(idx) {
                         if let Some(ref cmd) = stage.on_resume {
@@ -181,8 +182,9 @@ impl KazeExtension for IdleExtension {
                         ctx.push_action(ShellAction::SystemPower("suspend".into()));
                     }
                     other => {
-                        if let Some(idx) =
-                            other.strip_prefix("custom:").and_then(|s| s.parse::<usize>().ok())
+                        if let Some(idx) = other
+                            .strip_prefix("custom:")
+                            .and_then(|s| s.parse::<usize>().ok())
                         {
                             if let Some(stage) = prof.custom_stages.get(idx) {
                                 self.custom_active.insert(id.clone());
@@ -281,11 +283,11 @@ mod tests {
         {
             let mut ctx = ShellContext::new(&mut state);
             ext.on_init(&mut ctx);
-            ext.on_event(
-                &SystemEvent::IdleTimeout { id: "dim".into() },
-                &mut ctx,
-            );
-            assert!(ctx.actions.iter().any(|a| matches!(a, ShellAction::BacklightSet(_))));
+            ext.on_event(&SystemEvent::IdleTimeout { id: "dim".into() }, &mut ctx);
+            assert!(ctx
+                .actions
+                .iter()
+                .any(|a| matches!(a, ShellAction::BacklightSet(_))));
             ctx.actions.clear();
             ext.on_event(
                 &SystemEvent::TimerFired {
@@ -296,10 +298,7 @@ mod tests {
             assert!(ctx.actions.contains(&ShellAction::BacklightSet(20))); // default ac dim_percent=20
 
             ctx.actions.clear();
-            ext.on_event(
-                &SystemEvent::IdleResumed { id: "dim".into() },
-                &mut ctx,
-            );
+            ext.on_event(&SystemEvent::IdleResumed { id: "dim".into() }, &mut ctx);
             assert!(ctx.actions.contains(&ShellAction::BacklightSet(80)));
         }
     }

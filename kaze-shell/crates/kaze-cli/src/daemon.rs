@@ -9,9 +9,11 @@ use kaze_core::solar::evaluate_solar_now;
 use kaze_core::theme::generate_all_templates;
 use kaze_core::{
     AppState, ClockTime, Config, DirtyFlags, IpcResult, KazeExtension, LayoutPreset, Locale,
-    ResolvedPalette, SettingsStore, ShellAction, ShellContext, SystemEvent, ThemePaths,
+    NotificationItem, NotificationUrgency, ResolvedPalette, SettingsStore, ShellAction,
+    ShellContext, SystemEvent, ThemePaths,
 };
 use kaze_ext_bar::BarExtension;
+use kaze_ext_capture::CaptureExtension;
 use kaze_ext_cc::ControlCenterExtension;
 use kaze_ext_clipboard::{default_clipboard_store_path, ClipboardExtension};
 use kaze_ext_idle::IdleExtension;
@@ -69,6 +71,7 @@ struct Daemon {
     timers: HashMap<String, RegistrationToken>,
     pending_dmenu: Option<IpcResponder>,
     pending_wallpaper_set: Option<IpcResponder>,
+    pending_capture_reply: Option<IpcResponder>,
     event_tx: channel::Sender<SystemEvent>,
     sys: Option<SysHandle>,
     fs_watcher: Option<RecommendedWatcher>,
@@ -165,6 +168,24 @@ impl Daemon {
                     resp.send(&IpcResponse::err(error.clone()));
                 }
                 SystemEvent::WallpaperFailed { error }
+            }
+            SystemEvent::ScreencopyReady {
+                request_id,
+                frames,
+                mut windows,
+            } => {
+                if windows.is_empty() {
+                    if let Some(ref client) = self.hypr_client {
+                        if let Ok(list) = client.clients() {
+                            windows = list;
+                        }
+                    }
+                }
+                SystemEvent::ScreencopyReady {
+                    request_id,
+                    frames,
+                    windows,
+                }
             }
             other => other,
         };
@@ -268,7 +289,8 @@ impl Daemon {
                 if bat.present && (!prev_present || prev_charging != bat.charging) {
                     self.fire_hook(
                         "ac_state_changed",
-                        prev_present.then(|| if prev_charging { "ac" } else { "battery" }.to_string()),
+                        prev_present
+                            .then(|| if prev_charging { "ac" } else { "battery" }.to_string()),
                         Some(if bat.charging { "ac" } else { "battery" }.to_string()),
                         Some(if bat.charging { "ac" } else { "battery" }.to_string()),
                     );
@@ -410,6 +432,10 @@ impl Daemon {
             SystemEvent::PolkitBusOwned(owned) => {
                 self.state.polkit_bus_owned = *owned;
             }
+            SystemEvent::PointerMotion { .. }
+            | SystemEvent::PointerRelease { .. }
+            | SystemEvent::ScreencopyReady { .. }
+            | SystemEvent::ScreencopyFailed { .. } => {}
         }
         if matches!(&event, SystemEvent::TimerFired { id } if id == "kaze:solar") {
             self.state.nightlight_manual_override = false;
@@ -457,8 +483,18 @@ impl Daemon {
         for ext in &self.extensions {
             specs.extend(ext.surfaces());
         }
+        let has_capture_surface = specs
+            .iter()
+            .any(|s| s.id.starts_with("capture:") || s.id.starts_with("picker:"));
         self.ui.sync_surfaces(specs, dirty);
         let _ = self.wayland_conn.flush();
+        if dirty.contains(DirtyFlags::CAPTURE) && !has_capture_surface {
+            #[cfg(target_env = "gnu")]
+            // SAFETY: immediately returns freed capture RGBA/SlotPool heap pages to kernel.
+            unsafe {
+                libc::malloc_trim(0);
+            }
+        }
     }
 
     fn execute_actions(&mut self, actions: Vec<ShellAction>) {
@@ -677,8 +713,10 @@ impl Daemon {
                     self.fire_hook(&event, old, new, value);
                 }
                 ShellAction::SetClipboardText(text) => {
-                    self.ui
-                        .set_clipboard_selection("text/plain;charset=utf-8".into(), text.into_bytes());
+                    self.ui.set_clipboard_selection(
+                        "text/plain;charset=utf-8".into(),
+                        text.into_bytes(),
+                    );
                     self.pump_clipboard_pipes();
                     let _ = self.wayland_conn.flush();
                 }
@@ -762,6 +800,53 @@ impl Daemon {
                     if let Some(ref sys) = self.sys {
                         sys.send(SysCommand::PolkitCancel { cookie });
                     }
+                }
+                ShellAction::RequestScreencopy { request_id } => {
+                    if let Err(err) = self.ui.request_screencopy(request_id) {
+                        if let Some(resp) = self.pending_capture_reply.take() {
+                            resp.send(&IpcResponse::err(err.clone()));
+                        }
+                        self.dispatch_system_event(SystemEvent::ScreencopyFailed {
+                            request_id,
+                            error: err,
+                        });
+                    } else {
+                        let _ = self.wayland_conn.flush();
+                    }
+                }
+                ShellAction::CaptureReply { text } => {
+                    if let Some(resp) = self.pending_capture_reply.take() {
+                        match text {
+                            Some(t) => resp.send(&IpcResponse::ok(t)),
+                            None => resp.send(&IpcResponse::err("cancelled")),
+                        }
+                    }
+                }
+                ShellAction::SendNotification {
+                    app_name,
+                    summary,
+                    body,
+                } => {
+                    let secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    self.dispatch_system_event(SystemEvent::NotificationReceived(
+                        NotificationItem {
+                            id: 0x8000_0000 | ((secs as u32) & 0x00ff_ffff),
+                            app_name,
+                            summary,
+                            body,
+                            app_icon: String::new(),
+                            urgency: NotificationUrgency::Normal,
+                            actions: Vec::new(),
+                            expire_timeout_ms: 3000,
+                            resident: false,
+                            transient: true,
+                            sync_tag: None,
+                            timestamp_epoch_secs: secs,
+                        },
+                    ));
                 }
             }
         }
@@ -980,44 +1065,48 @@ impl Daemon {
         }
         let mut buf_acc = Vec::<u8>::new();
         let source = Generic::new(parent_sock, Interest::READ, Mode::Level);
-        if let Ok(token) = self.loop_handle.insert_source(source, move |_, sock, daemon| {
-            let mut tmp = [0u8; 128];
-            let sock_ref = unsafe { sock.get_mut() };
-            loop {
-                match sock_ref.read(&mut tmp) {
-                    Ok(0) => {
-                        daemon.lock_pipe_token = None;
-                        daemon.handle_lock_worker_exit();
-                        return Ok(PostAction::Remove);
-                    }
-                    Ok(n) => {
-                        buf_acc.extend_from_slice(&tmp[..n]);
-                        if !daemon.lock_committed
-                            && buf_acc.windows(22).any(|w| w == b"LOCKED_FRAME_COMMITTED")
-                        {
-                            daemon.lock_committed = true;
-                            if daemon.state.config.lockscreen.dnd && daemon.pre_lock_dnd.is_none()
+        if let Ok(token) = self
+            .loop_handle
+            .insert_source(source, move |_, sock, daemon| {
+                let mut tmp = [0u8; 128];
+                let sock_ref = unsafe { sock.get_mut() };
+                loop {
+                    match sock_ref.read(&mut tmp) {
+                        Ok(0) => {
+                            daemon.lock_pipe_token = None;
+                            daemon.handle_lock_worker_exit();
+                            return Ok(PostAction::Remove);
+                        }
+                        Ok(n) => {
+                            buf_acc.extend_from_slice(&tmp[..n]);
+                            if !daemon.lock_committed
+                                && buf_acc.windows(22).any(|w| w == b"LOCKED_FRAME_COMMITTED")
                             {
-                                daemon.pre_lock_dnd = Some(daemon.state.dnd);
-                                if !daemon.state.dnd {
-                                    daemon.dispatch_system_event(SystemEvent::DndChanged(true));
+                                daemon.lock_committed = true;
+                                if daemon.state.config.lockscreen.dnd
+                                    && daemon.pre_lock_dnd.is_none()
+                                {
+                                    daemon.pre_lock_dnd = Some(daemon.state.dnd);
+                                    if !daemon.state.dnd {
+                                        daemon.dispatch_system_event(SystemEvent::DndChanged(true));
+                                    }
                                 }
+                                daemon.fire_hook("session_locked", None, None, None);
+                                daemon.dispatch_system_event(SystemEvent::LockWorkerCommitted);
                             }
-                            daemon.fire_hook("session_locked", None, None, None);
-                            daemon.dispatch_system_event(SystemEvent::LockWorkerCommitted);
+                        }
+                        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                            return Ok(PostAction::Continue);
+                        }
+                        Err(_) => {
+                            daemon.lock_pipe_token = None;
+                            daemon.handle_lock_worker_exit();
+                            return Ok(PostAction::Remove);
                         }
                     }
-                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                        return Ok(PostAction::Continue);
-                    }
-                    Err(_) => {
-                        daemon.lock_pipe_token = None;
-                        daemon.handle_lock_worker_exit();
-                        return Ok(PostAction::Remove);
-                    }
                 }
-            }
-        }) {
+            })
+        {
             self.lock_pipe_token = Some(token);
         }
     }
@@ -1113,7 +1202,12 @@ impl Daemon {
             self.cancel_named_timer("kaze:solar");
             return;
         }
-        let tr = evaluate_solar_now(loc.lat, loc.lon, &loc.fallback_sunrise, &loc.fallback_sunset);
+        let tr = evaluate_solar_now(
+            loc.lat,
+            loc.lon,
+            &loc.fallback_sunrise,
+            &loc.fallback_sunset,
+        );
         if (apply_now || !self.state.nightlight_manual_override)
             && (loc.auto_nightlight || self.state.nightlight_auto)
         {
@@ -1266,6 +1360,54 @@ impl Daemon {
             if !handled {
                 if let Some(resp) = self.pending_dmenu.take() {
                     resp.send(&IpcResponse::err("launcher unavailable"));
+                }
+            }
+            return;
+        }
+
+        if req.cmd == "capture"
+            && req
+                .args
+                .iter()
+                .any(|a| a == "--geom-only" || a == "--save-only")
+        {
+            if let Some(prev) = self.pending_capture_reply.take() {
+                prev.send(&IpcResponse::err("cancelled"));
+            }
+            self.pending_capture_reply = Some(responder);
+
+            let mut handled = false;
+            let mut msg = String::new();
+            let mut dirty = DirtyFlags::NONE;
+            let mut actions = Vec::new();
+            {
+                let mut ctx = ShellContext::new(&mut self.state);
+                for ext in &mut self.extensions {
+                    if let IpcResult::Handled {
+                        ok,
+                        message,
+                        dirty: ext_dirty,
+                    } = ext.on_ipc(&req.cmd, &req.args, &mut ctx)
+                    {
+                        handled = ok;
+                        msg = message;
+                        dirty |= ext_dirty | ctx.dirty;
+                        break;
+                    }
+                }
+                actions.extend(ctx.actions);
+            }
+            self.execute_actions(actions);
+            if !dirty.is_empty() {
+                self.sync_ui_surfaces(dirty);
+            }
+            if !handled {
+                if let Some(resp) = self.pending_capture_reply.take() {
+                    resp.send(&IpcResponse::err(if msg.is_empty() {
+                        "capture failed".into()
+                    } else {
+                        msg
+                    }));
                 }
             }
             return;
@@ -1478,11 +1620,15 @@ impl Daemon {
             },
             "brightness-set" => {
                 let Some(target) = req.args.first().map(String::as_str) else {
-                    responder.send(&IpcResponse::err("usage: brightness-set <mon|all> <1..=100>"));
+                    responder.send(&IpcResponse::err(
+                        "usage: brightness-set <mon|all> <1..=100>",
+                    ));
                     return;
                 };
                 let Some(pct) = req.args.get(1).and_then(|v| v.parse::<u8>().ok()) else {
-                    responder.send(&IpcResponse::err("usage: brightness-set <mon|all> <1..=100>"));
+                    responder.send(&IpcResponse::err(
+                        "usage: brightness-set <mon|all> <1..=100>",
+                    ));
                     return;
                 };
                 self.state.nightlight_manual_override = true;
@@ -1564,7 +1710,10 @@ impl Daemon {
                     req.args.first().and_then(|s| s.parse::<u32>().ok()),
                     req.args.get(1).and_then(|s| s.parse::<u8>().ok()),
                 ) {
-                    self.execute_actions(vec![ShellAction::AudioSetStreamVolume { index: idx, pct }]);
+                    self.execute_actions(vec![ShellAction::AudioSetStreamVolume {
+                        index: idx,
+                        pct,
+                    }]);
                     IpcResponse::ok(format!("stream {idx} {pct}%"))
                 } else {
                     IpcResponse::err("usage: audio-stream-volume <index> <pct>")
@@ -1585,7 +1734,10 @@ impl Daemon {
                                 .find(|s| s.index == idx)
                                 .is_some_and(|s| s.muted)
                         });
-                    self.execute_actions(vec![ShellAction::AudioSetStreamMute { index: idx, muted }]);
+                    self.execute_actions(vec![ShellAction::AudioSetStreamMute {
+                        index: idx,
+                        muted,
+                    }]);
                     IpcResponse::ok(format!("stream {idx} muted={muted}"))
                 } else {
                     IpcResponse::err("usage: audio-stream-mute <index> [on|off]")
@@ -1622,10 +1774,7 @@ impl Daemon {
             },
             "lock" => {
                 self.spawn_lock_worker();
-                IpcResponse::ok(format!(
-                    "locked pid={}",
-                    self.active_lock_pid.unwrap_or(0)
-                ))
+                IpcResponse::ok(format!("locked pid={}", self.active_lock_pid.unwrap_or(0)))
             }
             "unlock-status" => {
                 if let Some(pid) = self.active_lock_pid {
@@ -1648,11 +1797,9 @@ impl Daemon {
                 }
                 _ => IpcResponse::err("usage: caffeine-set <on|off>"),
             },
-            "offline-mode-status" => IpcResponse::ok(if self.state.offline_mode {
-                "on"
-            } else {
-                "off"
-            }),
+            "offline-mode-status" => {
+                IpcResponse::ok(if self.state.offline_mode { "on" } else { "off" })
+            }
             "offline-mode-toggle" => {
                 let next = !self.state.offline_mode;
                 self.dispatch_system_event(SystemEvent::OfflineModeChanged(next));
@@ -1759,7 +1906,10 @@ impl Daemon {
                     "namespaces": self.ui.active_namespaces(),
                 });
                 if let Some(obj) = data.as_object_mut() {
-                    obj.insert("locale".into(), serde_json::json!(self.state.locale.as_str()));
+                    obj.insert(
+                        "locale".into(),
+                        serde_json::json!(self.state.locale.as_str()),
+                    );
                     obj.insert(
                         "effective_font_scale".into(),
                         serde_json::json!(self.state.effective_font_scale),
@@ -1793,6 +1943,10 @@ impl Daemon {
                     obj.insert(
                         "polkit_bus_owned".into(),
                         serde_json::json!(self.state.polkit_bus_owned),
+                    );
+                    obj.insert(
+                        "has_screencopy".into(),
+                        serde_json::json!(self.ui.has_screencopy()),
                     );
                 }
                 IpcResponse::ok_data("ok", data)
@@ -2199,6 +2353,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         Box::new(IdleExtension::new()),
         Box::new(SessionMenuExtension::new()),
         Box::new(PolkitExtension::new()),
+        Box::new(CaptureExtension::new()),
     ];
 
     let mut daemon = Daemon {
@@ -2221,6 +2376,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         timers: HashMap::new(),
         pending_dmenu: None,
         pending_wallpaper_set: None,
+        pending_capture_reply: None,
         event_tx,
         sys: sys_handle,
         fs_watcher,
@@ -2344,14 +2500,18 @@ fn start_shared_watcher(
     if let Some(ref parent) = config_parent {
         let _ = fs::create_dir_all(parent);
     }
-    let settings_parent = settings_path.and_then(|p| p.parent()).map(Path::to_path_buf);
+    let settings_parent = settings_path
+        .and_then(|p| p.parent())
+        .map(Path::to_path_buf);
     if let Some(ref parent) = settings_parent {
         let _ = fs::create_dir_all(parent);
     }
 
     let config_name = config_path.file_name().map(|n| n.to_os_string());
     let config_parent_for_cb = config_parent.clone();
-    let settings_name = settings_path.and_then(|p| p.file_name()).map(|n| n.to_os_string());
+    let settings_name = settings_path
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_os_string());
     let settings_parent_for_cb = settings_parent.clone();
     let bl_dir_owned = backlight_dir.map(Path::to_path_buf);
     let app_dirs_owned: Vec<PathBuf> = app_dirs.to_vec();

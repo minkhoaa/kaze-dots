@@ -293,9 +293,12 @@ impl RichTextEngine {
                     scale,
                 );
             }
-            if let Some(caret) =
-                SkiaRect::from_xywh(rx, ry + 2.0 * scale, (2.0 * scale).max(1.0), (rh - 4.0 * scale).max(6.0))
-            {
+            if let Some(caret) = SkiaRect::from_xywh(
+                rx,
+                ry + 2.0 * scale,
+                (2.0 * scale).max(1.0),
+                (rh - 4.0 * scale).max(6.0),
+            ) {
                 let mut paint = Paint::default();
                 paint.set_color(to_skia_color(color));
                 pixmap.fill_rect(caret, &paint, Transform::identity(), None);
@@ -310,7 +313,11 @@ impl RichTextEngine {
             .map(|(a, b)| {
                 let s = clamp_char_boundary(text, a.min(text.len()));
                 let e = clamp_char_boundary(text, b.min(text.len()));
-                if s <= e { (s, e) } else { (e, s) }
+                if s <= e {
+                    (s, e)
+                } else {
+                    (e, s)
+                }
             })
             .unwrap_or((safe_cursor, safe_cursor));
 
@@ -367,7 +374,13 @@ impl RichTextEngine {
             display.push_str(&text[safe_cursor..]);
             if selection.is_some() && sel_start_orig < sel_end_orig {
                 let pre_len = preedit.len();
-                let map_orig = |pos: usize| if pos <= safe_cursor { pos } else { pos + pre_len };
+                let map_orig = |pos: usize| {
+                    if pos <= safe_cursor {
+                        pos
+                    } else {
+                        pos + pre_len
+                    }
+                };
                 sel_disp = Some((map_orig(sel_start_orig), map_orig(sel_end_orig)));
             }
         }
@@ -438,8 +451,9 @@ impl RichTextEngine {
         let data = pixmap.data_mut();
         if let Some(run) = buffer.layout_runs().next() {
             for glyph in run.glyphs.iter() {
-                let is_preedit =
-                    !preedit.is_empty() && glyph.start >= pre_start_disp && glyph.end <= pre_end_disp;
+                let is_preedit = !preedit.is_empty()
+                    && glyph.start >= pre_start_disp
+                    && glyph.end <= pre_end_disp;
                 let glyph_color = if is_preedit { preedit_color } else { color };
                 let physical = glyph.physical((rx, ry + run.line_y), 1.0);
                 let Some(image) = self
@@ -888,16 +902,7 @@ impl Renderer {
                 } => {
                     let eff_size = (*size * self.font_scale * s)
                         .clamp(6.0 * s, (rect.h * s * 0.92).max(6.0 * s));
-                    self.draw_text(
-                        &mut pixmap,
-                        *rect,
-                        text,
-                        *color,
-                        eff_size,
-                        *bold,
-                        *align,
-                        s,
-                    );
+                    self.draw_text(&mut pixmap, *rect, text, *color, eff_size, *bold, *align, s);
                 }
                 PaintCmd::RichText {
                     rect,

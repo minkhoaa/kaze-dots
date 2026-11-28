@@ -1044,7 +1044,8 @@ impl Config {
 
         collect_schema_warnings(&table, "", &mut warnings);
 
-        if !(0.0..=1.0).contains(&cfg.bar.background_opacity) && cfg.bar.background_opacity.is_finite()
+        if !(0.0..=1.0).contains(&cfg.bar.background_opacity)
+            && cfg.bar.background_opacity.is_finite()
         {
             warnings.push(ValidationIssue {
                 severity: ValidationSeverity::Warning,
@@ -1189,7 +1190,12 @@ fn deprecated_key_message(full: &str) -> Option<&'static str> {
 }
 
 fn is_dynamic_section(full: &str) -> bool {
-    matches!(full, "brightness.monitors" | "idle.behavior.ac.custom_stages" | "idle.behavior.battery.custom_stages")
+    matches!(
+        full,
+        "brightness.monitors"
+            | "idle.behavior.ac.custom_stages"
+            | "idle.behavior.battery.custom_stages"
+    )
 }
 
 fn is_optional_config_key(full: &str) -> bool {

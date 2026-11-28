@@ -1,9 +1,7 @@
 use crate::UiState;
 use kaze_core::SystemEvent;
 use smithay_client_toolkit::reexports::client::globals::GlobalList;
-use smithay_client_toolkit::reexports::client::protocol::{
-    wl_output::WlOutput, wl_seat::WlSeat,
-};
+use smithay_client_toolkit::reexports::client::protocol::{wl_output::WlOutput, wl_seat::WlSeat};
 use smithay_client_toolkit::reexports::client::{Connection, Dispatch, Proxy, QueueHandle};
 use std::collections::HashMap;
 use wayland_protocols::ext::idle_notify::v1::client::{
@@ -27,9 +25,7 @@ pub struct IdlePowerState {
 impl IdlePowerState {
     pub fn bind_globals(globals: &GlobalList, qh: &QueueHandle<UiState>) -> Self {
         Self {
-            idle_notifier: globals
-                .bind::<ExtIdleNotifierV1, _, _>(qh, 1..=2, ())
-                .ok(),
+            idle_notifier: globals.bind::<ExtIdleNotifierV1, _, _>(qh, 1..=2, ()).ok(),
             notifications: Vec::new(),
             pending_stages: None,
             output_power_mgr: globals

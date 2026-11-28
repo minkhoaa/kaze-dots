@@ -3,9 +3,11 @@
 pub mod data_control;
 pub mod idle_power;
 pub mod render;
+pub mod screencopy;
 
 use data_control::{ClipboardPipeRead, ClipboardPipeWrite, DataControlState};
 use idle_power::IdlePowerState;
+use screencopy::{OutputTransform, ScreencopyFrameTag, ScreencopyState};
 
 use kaze_core::{
     Anchor, DirtyFlags, ImeEvent, KeyEvent as CoreKeyEvent, KeyModifiers, KeyboardMode, Layer,
@@ -177,6 +179,7 @@ pub struct UiState {
     renderer: Renderer,
     data_control: DataControlState,
     idle_power: IdlePowerState,
+    screencopy: ScreencopyState,
     pending_events: Vec<SystemEvent>,
 }
 
@@ -204,6 +207,7 @@ impl UiState {
             .ok();
         let data_control = DataControlState::bind_globals(&globals, &qh);
         let idle_power = IdlePowerState::bind_globals(&globals, &qh);
+        let screencopy = ScreencopyState::bind_globals(&globals, &qh);
 
         let state = Self {
             registry_state: RegistryState::new(&globals),
@@ -242,6 +246,7 @@ impl UiState {
             renderer: Renderer::new(font_hint),
             data_control,
             idle_power,
+            screencopy,
             pending_events: Vec::new(),
         };
 
@@ -286,6 +291,46 @@ impl UiState {
 
     pub fn has_output_power(&self) -> bool {
         self.idle_power.has_output_power()
+    }
+
+    pub fn has_screencopy(&self) -> bool {
+        self.screencopy.has_screencopy()
+    }
+
+    pub fn request_screencopy(&mut self, request_id: u64) -> Result<(), String> {
+        let targets: Vec<(ScreencopyFrameTag, wl_output::WlOutput)> = self
+            .outputs_by_obj
+            .values()
+            .filter_map(|tracked| {
+                let parsed = tracked.info.as_ref()?;
+                let sctk_info = self.output_state.info(&tracked.wl_output);
+                let (lx, ly) = sctk_info
+                    .as_ref()
+                    .and_then(|i| i.logical_position.or(Some(i.location)))
+                    .unwrap_or((0, 0));
+                let transform = sctk_info
+                    .as_ref()
+                    .map(|i| OutputTransform::from_wl(i.transform))
+                    .unwrap_or(OutputTransform::Normal);
+                Some((
+                    ScreencopyFrameTag {
+                        request_id,
+                        output_name: parsed.name.clone(),
+                        logical_x: lx,
+                        logical_y: ly,
+                        logical_w: parsed.width.max(1) as u32,
+                        logical_h: parsed.height.max(1) as u32,
+                        transform,
+                    },
+                    tracked.wl_output.clone(),
+                ))
+            })
+            .collect();
+        self.screencopy.capture_outputs(
+            request_id,
+            targets.iter().map(|(t, o)| (t.clone(), o)),
+            &self.qh,
+        )
     }
 
     pub fn configure_idle_timeouts(&mut self, stages: &[(String, u64)]) -> bool {
@@ -1466,10 +1511,25 @@ impl PointerHandler for UiState {
                             x: event.position.0 as f32,
                             y: event.position.1 as f32,
                         });
+                    } else if let Some(surf_id) = self.surface_key_by_obj.get(&event.surface.id()) {
+                        if surf_id.starts_with("capture:") || surf_id.starts_with("picker:") {
+                            self.pending_events.push(SystemEvent::PointerMotion {
+                                surface_id: surf_id.clone(),
+                                x: event.position.0 as f32,
+                                y: event.position.1 as f32,
+                            });
+                        }
                     }
                 }
                 PointerEventKind::Release { .. } => {
-                    self.pointer_drag = None;
+                    if let Some((surf_id, target_id)) = self.pointer_drag.take() {
+                        self.pending_events.push(SystemEvent::PointerRelease {
+                            surface_id: surf_id,
+                            target_id,
+                            x: event.position.0 as f32,
+                            y: event.position.1 as f32,
+                        });
+                    }
                 }
                 PointerEventKind::Press { button, .. } => {
                     let btn = match button {
@@ -1484,7 +1544,9 @@ impl PointerHandler for UiState {
                         if let Some(managed) = self.surfaces.get(surface_id) {
                             for target in &managed.spec.hit_targets {
                                 if target.rect.contains(px, py) {
-                                    if btn == PointerButton::Left && target.id.contains(":slider:")
+                                    if btn == PointerButton::Left
+                                        && (target.id.contains(":slider:")
+                                            || target.id.contains(":canvas"))
                                     {
                                         self.pointer_drag =
                                             Some((surface_id.clone(), target.id.clone()));

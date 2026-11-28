@@ -65,7 +65,11 @@ where
                 if cancel.load(Ordering::Relaxed) {
                     break;
                 }
-                if dev.call::<_, _, ()>("VerifyStart", &("any",)).await.is_err() {
+                if dev
+                    .call::<_, _, ()>("VerifyStart", &("any",))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }

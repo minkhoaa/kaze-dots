@@ -34,14 +34,11 @@ pub fn noaa_sunrise_sunset_local_minutes(
     let doy = f64::from(day_of_year.clamp(1, 366));
     let gamma = (2.0 * PI / 365.0) * (doy - 1.0);
     let eqtime = 229.18
-        * (0.000075
-            + 0.001868 * gamma.cos()
+        * (0.000075 + 0.001868 * gamma.cos()
             - 0.032077 * gamma.sin()
             - 0.014615 * (2.0 * gamma).cos()
             - 0.040849 * (2.0 * gamma).sin());
-    let decl = 0.006918
-        - 0.399912 * gamma.cos()
-        + 0.070257 * gamma.sin()
+    let decl = 0.006918 - 0.399912 * gamma.cos() + 0.070257 * gamma.sin()
         - 0.006758 * (2.0 * gamma).cos()
         + 0.000907 * (2.0 * gamma).sin()
         - 0.002697 * (3.0 * gamma).cos()

@@ -41,22 +41,28 @@ impl AppCategory {
                 .categories
                 .iter()
                 .any(|c| matches!(c.as_str(), "Development" | "IDE" | "RevisionControl")),
-            Self::Internet => app
-                .categories
-                .iter()
-                .any(|c| matches!(c.as_str(), "Network" | "WebBrowser" | "Email" | "InstantMessaging")),
-            Self::Media => app
-                .categories
-                .iter()
-                .any(|c| matches!(c.as_str(), "AudioVideo" | "Audio" | "Video" | "Graphics" | "Photography")),
+            Self::Internet => app.categories.iter().any(|c| {
+                matches!(
+                    c.as_str(),
+                    "Network" | "WebBrowser" | "Email" | "InstantMessaging"
+                )
+            }),
+            Self::Media => app.categories.iter().any(|c| {
+                matches!(
+                    c.as_str(),
+                    "AudioVideo" | "Audio" | "Video" | "Graphics" | "Photography"
+                )
+            }),
             Self::System => app
                 .categories
                 .iter()
                 .any(|c| matches!(c.as_str(), "System" | "Settings" | "Monitor")),
-            Self::Utilities => app
-                .categories
-                .iter()
-                .any(|c| matches!(c.as_str(), "Utility" | "Accessories" | "Archiving" | "TextEditor")),
+            Self::Utilities => app.categories.iter().any(|c| {
+                matches!(
+                    c.as_str(),
+                    "Utility" | "Accessories" | "Archiving" | "TextEditor"
+                )
+            }),
         }
     }
 }

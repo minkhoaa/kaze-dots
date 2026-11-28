@@ -18,6 +18,7 @@ members = [
     "crates/kaze-ext-idle",
     "crates/kaze-ext-session",
     "crates/kaze-ext-polkit",
+    "crates/kaze-ext-capture",
     "crates/kaze-lock",
     "crates/kaze-cli",
 ]
@@ -77,6 +78,7 @@ kaze-ext-clipboard = { path = "crates/kaze-ext-clipboard" }
 kaze-ext-idle = { path = "crates/kaze-ext-idle" }
 kaze-ext-session = { path = "crates/kaze-ext-session" }
 kaze-ext-polkit = { path = "crates/kaze-ext-polkit" }
+kaze-ext-capture = { path = "crates/kaze-ext-capture" }
 kaze-lock = { path = "crates/kaze-lock" }
 
 # Keep variables inspectable in our crates; keep source locations in dependencies.

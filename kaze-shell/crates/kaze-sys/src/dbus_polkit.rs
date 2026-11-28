@@ -175,9 +175,11 @@ impl PolkitAgentInterface {
                 reply: reply_tx,
             })
             .map_err(|_| PolkitDBusError::Failed("Polkit agent stopped".into()))?;
-        reply_rx
-            .await
-            .unwrap_or_else(|_| Err(PolkitDBusError::Cancelled("Authentication cancelled".into())))
+        reply_rx.await.unwrap_or_else(|_| {
+            Err(PolkitDBusError::Cancelled(
+                "Authentication cancelled".into(),
+            ))
+        })
     }
 
     async fn cancel_authentication(&self, cookie: String) -> zbus::fdo::Result<()> {
@@ -243,7 +245,14 @@ async fn spawn_helper_process(
     helper_path: &Path,
     cookie: &str,
     user: &str,
-) -> Result<(Child, tokio::process::ChildStdin, tokio::process::ChildStdout), String> {
+) -> Result<
+    (
+        Child,
+        tokio::process::ChildStdin,
+        tokio::process::ChildStdout,
+    ),
+    String,
+> {
     if !helper_path.exists() {
         return Err(format!("Helper missing: {}", helper_path.display()));
     }
@@ -291,7 +300,12 @@ pub async fn run_polkit_task(
     };
     let (internal_tx, internal_rx) = mpsc::unbounded_channel();
     let iface = PolkitAgentInterface { tx: internal_tx };
-    if conn.object_server().at(AGENT_OBJECT_PATH, iface).await.is_err() {
+    if conn
+        .object_server()
+        .at(AGENT_OBJECT_PATH, iface)
+        .await
+        .is_err()
+    {
         let _ = event_tx.send(SystemEvent::PolkitBusOwned(false));
         return;
     }
@@ -617,6 +631,8 @@ mod tests {
         while let Ok(ev) = ev_rx.try_recv() {
             events.push(ev);
         }
-        assert!(events.iter().any(|e| matches!(e, SystemEvent::PolkitError { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, SystemEvent::PolkitError { .. })));
     }
 }

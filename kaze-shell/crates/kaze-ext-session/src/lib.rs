@@ -267,7 +267,11 @@ impl SessionMenuExtension {
             self.cached_spec = None;
             return;
         }
-        self.cached_spec = Some(build_session_surface(state, self.selected, self.pending_confirm));
+        self.cached_spec = Some(build_session_surface(
+            state,
+            self.selected,
+            self.pending_confirm,
+        ));
     }
 }
 

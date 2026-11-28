@@ -84,9 +84,13 @@ async fn query_battery(conn: &Connection) -> Option<BatteryState> {
     let mut peripherals = Vec::new();
 
     if let Ok(upower) = Proxy::new(conn, UPOWER_DEST, UPOWER_PATH, UPOWER_IFACE).await {
-        if let Ok(paths) = upower.call::<_, _, Vec<OwnedObjectPath>>("EnumerateDevices", &()).await {
+        if let Ok(paths) = upower
+            .call::<_, _, Vec<OwnedObjectPath>>("EnumerateDevices", &())
+            .await
+        {
             for obj_path in paths {
-                let Ok(d) = Proxy::new(conn, UPOWER_DEST, obj_path.as_str(), DEVICE_IFACE).await else {
+                let Ok(d) = Proxy::new(conn, UPOWER_DEST, obj_path.as_str(), DEVICE_IFACE).await
+                else {
                     continue;
                 };
                 let dev_type: u32 = d.get_property("Type").await.unwrap_or(0);
@@ -101,7 +105,12 @@ async fn query_battery(conn: &Connection) -> Option<BatteryState> {
                 if !is_present {
                     continue;
                 }
-                let pct = d.get_property::<f64>("Percentage").await.unwrap_or(0.0).round().clamp(0.0, 100.0) as u8;
+                let pct = d
+                    .get_property::<f64>("Percentage")
+                    .await
+                    .unwrap_or(0.0)
+                    .round()
+                    .clamp(0.0, 100.0) as u8;
                 let st_u32: u32 = d.get_property("State").await.unwrap_or(0);
                 let charging = matches!(st_u32, 1 | 4 | 5);
                 let model: String = d.get_property("Model").await.unwrap_or_default();
@@ -111,7 +120,12 @@ async fn query_battery(conn: &Connection) -> Option<BatteryState> {
                 } else if !native.trim().is_empty() {
                     native.clone()
                 } else {
-                    obj_path.as_str().rsplit('/').next().unwrap_or("device").to_string()
+                    obj_path
+                        .as_str()
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or("device")
+                        .to_string()
                 };
 
                 if dev_type == 2 {

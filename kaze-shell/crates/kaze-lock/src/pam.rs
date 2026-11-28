@@ -128,8 +128,8 @@ unsafe extern "C" fn pam_conversation(
     let count = num_msg as usize;
 
     // SAFETY: libpam expects `resp` to be allocated with `calloc` and frees both `resp` and `resp[i].resp`.
-    let responses = unsafe { libc::calloc(count, std::mem::size_of::<PamResponse>()) }
-        as *mut PamResponse;
+    let responses =
+        unsafe { libc::calloc(count, std::mem::size_of::<PamResponse>()) } as *mut PamResponse;
     if responses.is_null() {
         return PAM_BUF_ERR;
     }
