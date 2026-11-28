@@ -14,6 +14,7 @@ use kaze_core::{
     ShellAction, ShellContext, SystemEvent, ThemePaths,
 };
 use kaze_ext_bar::BarExtension;
+use kaze_ext_canvas::CanvasExtension;
 use kaze_ext_capture::CaptureExtension;
 use kaze_ext_cc::ControlCenterExtension;
 use kaze_ext_clipboard::{default_clipboard_store_path, ClipboardExtension};
@@ -985,6 +986,15 @@ impl Daemon {
                     if let Some(ref sp) = self.settings_path {
                         if let Err(err) = SettingsStore::set_override(sp, &key, &value_toml) {
                             eprintln!("kaze-shell: persist setting '{key}' failed: {err}");
+                        } else {
+                            let _ = self.reload_config();
+                        }
+                    }
+                }
+                ShellAction::PersistCanvasWidgets(widgets) => {
+                    if let Some(ref sp) = self.settings_path {
+                        if let Err(err) = SettingsStore::set_canvas_widgets(sp, &widgets) {
+                            eprintln!("kaze-shell: persist canvas widgets failed: {err}");
                         } else {
                             let _ = self.reload_config();
                         }
@@ -2296,6 +2306,10 @@ impl Daemon {
                         "calendar_sources".into(),
                         serde_json::json!(self.state.calendar.sources.len()),
                     );
+                    obj.insert(
+                        "canvas_widget_count".into(),
+                        serde_json::json!(self.state.config.canvas.widgets.len()),
+                    );
                 }
                 IpcResponse::ok_data("ok", data)
             }
@@ -2760,6 +2774,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         Box::new(SessionMenuExtension::new()),
         Box::new(PolkitExtension::new()),
         Box::new(CaptureExtension::new()),
+        Box::new(CanvasExtension::new()),
     ];
 
     let mut daemon = Daemon {

@@ -13,9 +13,11 @@ use image::{DynamicImage, ImageReader, RgbaImage};
 use kaze_core::config::InputKeybindsConfig;
 use kaze_core::text_input::{TextInputOutcome, TextInputState};
 use kaze_core::{
-    t, Anchor, ClockTime, Color, EdgeInsets, I18nKey, KeyEvent, KeyModifiers, KeyboardMode, Layer,
-    Locale, PaintCmd, Rect, SurfaceSpec, TextAlign,
+    monitor_id_for, t, Anchor, AppState, CanvasWidget, ClockTime, Color, Config, EdgeInsets,
+    I18nKey, KeyEvent, KeyModifiers, KeyboardMode, Layer, Locale, PaintCmd, Rect, SurfaceSpec,
+    TextAlign,
 };
+use kaze_ext_canvas::{render_lockscreen_widgets, ImageCache};
 use kaze_ui::render::Renderer;
 use pam::{authenticate, current_username, PamOutcome};
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
@@ -70,6 +72,7 @@ pub struct LockWorkerConfig {
     pub font_scale: f32,
     pub high_contrast: bool,
     pub locale: Locale,
+    pub canvas_widgets: Vec<CanvasWidget>,
 }
 
 impl Default for LockWorkerConfig {
@@ -91,6 +94,7 @@ impl Default for LockWorkerConfig {
             font_scale: 1.0,
             high_contrast: false,
             locale: Locale::En,
+            canvas_widgets: Vec::new(),
         }
     }
 }
@@ -311,6 +315,8 @@ struct LockWorkerState {
     shake_started: Option<Instant>,
     shake_timer_armed: bool,
     clock: ClockTime,
+    canvas_cache: ImageCache,
+    canvas_state: AppState,
     renderer: Renderer,
     async_tx: CalloopSender<LockAsyncMsg>,
     cancel_fprintd: Arc<AtomicBool>,
@@ -368,7 +374,15 @@ impl LockWorkerState {
         }
     }
 
-    fn build_spec(&mut self, logical_w: u32, logical_h: u32, scale: i32) -> SurfaceSpec {
+    fn build_spec(
+        &mut self,
+        logical_w: u32,
+        logical_h: u32,
+        scale: i32,
+        monitor_id: &str,
+        output_name: &str,
+        is_primary: bool,
+    ) -> SurfaceSpec {
         let lw = logical_w as f32;
         let lh = logical_h as f32;
         let px_w = logical_w.saturating_mul(scale.max(1) as u32);
@@ -392,6 +406,19 @@ impl LockWorkerState {
                 height: cached.height,
                 rgba_premul: cached.rgba_premul,
             });
+        }
+
+        if !self.cfg.canvas_widgets.is_empty() {
+            self.canvas_state.clock = self.clock;
+            let widget_cmds = render_lockscreen_widgets(
+                &self.cfg.canvas_widgets,
+                &self.canvas_state,
+                monitor_id,
+                output_name,
+                is_primary,
+                &mut self.canvas_cache,
+            );
+            commands.extend(widget_cmds);
         }
 
         let shake_dx = self
@@ -566,16 +593,32 @@ impl LockWorkerState {
     }
 
     fn redraw_dirty(&mut self, conn: &Connection) {
-        let keys: Vec<ObjectId> = self
-            .lock_surfaces
+        let keys: Vec<(ObjectId, String, String, bool)> = self
+            .outputs
             .iter()
-            .filter_map(|(oid, s)| (s.configured && s.dirty).then_some(oid.clone()))
+            .enumerate()
+            .filter_map(|(idx, (oid, wl_out))| {
+                let s = self.lock_surfaces.get(oid)?;
+                if !(s.configured && s.dirty) {
+                    return None;
+                }
+                let info = self.output_state.info(wl_out);
+                let out_name = info
+                    .as_ref()
+                    .and_then(|i| i.name.clone())
+                    .unwrap_or_else(|| format!("out-{idx}"));
+                let mid = info
+                    .as_ref()
+                    .map(|i| monitor_id_for(&out_name, &i.make, &i.model, ""))
+                    .unwrap_or_else(|| out_name.clone());
+                Some((oid.clone(), mid, out_name, idx == 0))
+            })
             .collect();
         if keys.is_empty() {
             return;
         }
         let mut any_committed = false;
-        for oid in keys {
+        for (oid, mid, out_name, is_primary) in keys {
             let Some((lw, lh, scale)) = self
                 .lock_surfaces
                 .get(&oid)
@@ -583,7 +626,7 @@ impl LockWorkerState {
             else {
                 continue;
             };
-            let spec = self.build_spec(lw, lh, scale);
+            let spec = self.build_spec(lw, lh, scale, &mid, &out_name, is_primary);
             let px_w = (lw.max(1)).saturating_mul(scale.max(1) as u32);
             let px_h = (lh.max(1)).saturating_mul(scale.max(1) as u32);
             let stride = (px_w * 4) as i32;
@@ -719,6 +762,8 @@ pub fn run_lock_worker(cfg: LockWorkerConfig) -> Result<(), String> {
         shake_started: None,
         shake_timer_armed: false,
         clock,
+        canvas_cache: ImageCache::default(),
+        canvas_state: AppState::new(Config::default()),
         renderer,
         async_tx: async_tx.clone(),
         cancel_fprintd: Arc::clone(&cancel_fprintd),
@@ -1194,5 +1239,34 @@ mod tests {
         assert!(!mask_password_bullets(&st.text).contains("secret"));
         st.clear();
         assert!(st.text.is_empty());
+    }
+
+    #[test]
+    fn lockscreen_canvas_renders_only_lockscreen_layer_widgets() {
+        let widgets = vec![
+            CanvasWidget {
+                id: "desk-1".into(),
+                layer: kaze_core::CanvasLayer::Desktop,
+                kind: kaze_core::CanvasWidgetKind::TodoNote,
+                text: "Desktop only".into(),
+                ..Default::default()
+            },
+            CanvasWidget {
+                id: "lock-1".into(),
+                layer: kaze_core::CanvasLayer::Lockscreen,
+                kind: kaze_core::CanvasWidgetKind::Sticker,
+                text: "star".into(),
+                rotation_deg: 30.0,
+                ..Default::default()
+            },
+        ];
+        let state = AppState::new(Config::default());
+        let mut cache = ImageCache::default();
+        let cmds = render_lockscreen_widgets(&widgets, &state, "DP-1", "DP-1", true, &mut cache);
+        assert_eq!(cmds.len(), 1);
+        assert!(matches!(
+            cmds[0],
+            PaintCmd::TransformedGroup { rotation_deg, .. } if (rotation_deg - 30.0).abs() < 0.01
+        ));
     }
 }

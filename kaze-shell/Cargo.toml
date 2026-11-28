@@ -15,6 +15,7 @@ members = [
     "crates/kaze-ext-launcher",
     "crates/kaze-ext-island",
     "crates/kaze-ext-cc",
+    "crates/kaze-ext-canvas",
     "crates/kaze-ext-tray",
     "crates/kaze-ext-wallpaper",
     "crates/kaze-ext-clipboard",
@@ -78,6 +79,7 @@ kaze-ext-notify = { path = "crates/kaze-ext-notify" }
 kaze-ext-launcher = { path = "crates/kaze-ext-launcher" }
 kaze-ext-island = { path = "crates/kaze-ext-island" }
 kaze-ext-cc = { path = "crates/kaze-ext-cc" }
+kaze-ext-canvas = { path = "crates/kaze-ext-canvas" }
 kaze-ext-tray = { path = "crates/kaze-ext-tray" }
 kaze-ext-wallpaper = { path = "crates/kaze-ext-wallpaper" }
 kaze-ext-clipboard = { path = "crates/kaze-ext-clipboard" }

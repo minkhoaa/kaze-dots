@@ -361,7 +361,7 @@ pub struct PolkitRequest {
     pub details: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ShellAction {
     HyprDispatch(String),
     SpawnCommand {
@@ -494,6 +494,7 @@ pub enum ShellAction {
         key: String,
         value_toml: String,
     },
+    PersistCanvasWidgets(Vec<crate::canvas::CanvasWidget>),
     SetSpectrumSubscriber {
         owner: String,
         active: bool,

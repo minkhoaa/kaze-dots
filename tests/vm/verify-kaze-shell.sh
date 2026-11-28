@@ -643,11 +643,21 @@ notify-send -a "warmup" -t 2000 "Warmup" "Stabilize font engine 🔔" >/dev/null
 wait_layer_present "kaze-notify"
 kaze-shell msg notify-clear >/dev/null
 wait_layer_absent "kaze-notify"
-hyprctl output create headless kaze-share >/dev/null
-wait_layer_present "kaze-bar-kaze-share"
-hyprctl output remove kaze-share >/dev/null
-wait_layer_absent "kaze-bar-kaze-share"
+hyprctl output create headless kaze-hotplug-test >/dev/null
+wait_layer_present "kaze-bar-kaze-hotplug-test"
+hyprctl output remove kaze-hotplug-test >/dev/null
+wait_layer_absent "kaze-bar-kaze-hotplug-test"
 sleep 0.3
+
+# Verify virtual presentation output kaze-share spawns zero shell surfaces
+hyprctl output create headless kaze-share >/dev/null
+sleep 0.4
+if hyprctl layers | grep -Eq 'kaze-(bar|dock|canvas|hot-corner|screen-corner)-.*kaze-share'; then
+    echo "FAIL: kaze-share must remain excluded from shell surfaces" >&2
+    exit 1
+fi
+hyprctl output remove kaze-share >/dev/null
+sleep 0.2
 
 pss_start=$(read_pss_kib "$initial_pid")
 echo "    stress start: PID=$initial_pid PSS=${pss_start} KiB"
@@ -655,14 +665,14 @@ for iter in $(seq 1 20); do
     if (( iter == 1 || iter == 10 )); then
         notify-send -a "stress" -t 2500 "Stress #$iter" "Testing hotplug with active popup 🔔" >/dev/null || true
     fi
-    hyprctl output create headless kaze-share >/dev/null
-    wait_layer_present "kaze-bar-kaze-share"
+    hyprctl output create headless kaze-hotplug-test >/dev/null
+    wait_layer_present "kaze-bar-kaze-hotplug-test"
     if (( iter % 2 == 0 )); then
         hyprctl reload >/dev/null
         sleep 0.2
     fi
-    hyprctl output remove kaze-share >/dev/null
-    wait_layer_absent "kaze-bar-kaze-share"
+    hyprctl output remove kaze-hotplug-test >/dev/null
+    wait_layer_absent "kaze-bar-kaze-hotplug-test"
     if (( iter == 5 || iter == 10 || iter == 15 || iter == 20 )); then
         pss_cur=$(read_pss_kib "$initial_pid")
         printf '    iter %2d/20: PSS=%s KiB\n' "$iter" "$pss_cur"
@@ -761,12 +771,77 @@ if (( memfd_end > memfd_base + 2 )); then
 fi
 
 echo "    [PASS] Gate 6+7: Stress + Lock survival + 10x overlay memory & memfd reclamation PASS"
+
+# --- Gate 8: Wave 2 Smoke (Dock, Switcher, Multi-Tab CC, Canvas Edit) & Zero-Leak Reclamation ---
+echo "==> Gate 8: Wave 2 surfaces + dormant BT/Sysmon + zero-leak check"
+memfd_w2_base=$(ls -l "/proc/$new_pid/fd" 2>/dev/null | grep -c 'memfd:' || true)
+pss_w2_start=$(read_pss_kib "$new_pid")
+
+foot -e sleep 30 >/dev/null 2>&1 &
+sw_pid=$!
+for _ in {1..40}; do
+    win_cnt=$(kaze-shell inspect | python3 -c 'import json,sys; print(json.load(sys.stdin).get("windows_count", 0))' 2>/dev/null || echo 0)
+    if (( win_cnt >= 1 )); then
+        break
+    fi
+    sleep 0.1
+done
+
+kaze-shell msg config-set dock.enabled true >/dev/null
+wait_layer_present "kaze-dock-Virtual-1"
+kaze-shell msg dock-toggle >/dev/null
+wait_layer_absent "kaze-dock-Virtual-1"
+kaze-shell msg config-unset dock.enabled >/dev/null
+
+kaze-shell msg switcher-open next >/dev/null
+wait_layer_present "kaze-switcher"
+kaze-shell msg switcher-cancel >/dev/null
+wait_layer_absent "kaze-switcher"
+kill "$sw_pid" 2>/dev/null || true
+wait "$sw_pid" 2>/dev/null || true
+
+kaze-shell msg cc-open bluetooth >/dev/null
+wait_layer_present "kaze-cc"
+kaze-shell msg cc-open sysmon >/dev/null
+kaze-shell msg cc-close >/dev/null
+wait_layer_absent "kaze-cc"
+w2_inspect=$(kaze-shell inspect)
+echo "$w2_inspect" | grep -Fq '"bt_discovering": false'
+echo "$w2_inspect" | grep -Fq '"sysmon_subscribers": 0'
+
+kaze-shell msg canvas-edit-open >/dev/null
+wait_layer_present "kaze-canvas-edit-Virtual-1"
+kaze-shell msg canvas-add clock >/dev/null
+sleep 0.2
+grim -t png /tmp/shot-07-canvas-edit.png 2>/dev/null || true
+kaze-shell msg canvas-undo >/dev/null
+kaze-shell msg canvas-edit-close >/dev/null
+wait_layer_absent "kaze-canvas-edit-Virtual-1"
+
+sleep 0.4
+w2_inspect=$(kaze-shell inspect)
+memfd_w2_end=$(ls -l "/proc/$new_pid/fd" 2>/dev/null | grep -c 'memfd:' || true)
+pss_w2_end=$(read_pss_kib "$new_pid")
+pss_w2_delta=$(( pss_w2_end - pss_w2_start ))
+echo "    Wave 2 smoke: PSS delta=${pss_w2_delta} KiB memfd=${memfd_w2_base}->${memfd_w2_end}"
+if (( pss_w2_delta > 4096 )); then
+    echo "FAIL: Wave 2 cycle PSS grew by ${pss_w2_delta} KiB" >&2
+    exit 1
+fi
+if (( memfd_w2_end > memfd_w2_base + 2 )); then
+    echo "FAIL: Wave 2 memfd count grew from ${memfd_w2_base} to ${memfd_w2_end}" >&2
+    exit 1
+fi
+test -z "$(hyprctl configerrors)"
+echo "$w2_inspect" | grep -Fq '"surface_count": 1'
+kaze-doctor
+echo "    [PASS] Gate 8: Wave 2 smoke & dormant/zero-leak checks PASS"
 GUEST
 
 if [[ -n "$screenshot_out" ]]; then
     mkdir -p -- "$(dirname -- "$screenshot_out")"
     shot_dir=$(dirname -- "$screenshot_out")
-    for name in shot-01-omarchy.png shot-02-island.png shot-03-swiss.png shot-04-ghost-peek.png shot-05-cc.png shot-06-tray-menu.png; do
+    for name in shot-01-omarchy.png shot-02-island.png shot-03-swiss.png shot-04-ghost-peek.png shot-05-cc.png shot-06-tray-menu.png shot-07-canvas-edit.png; do
         scp -i "$VMDIR/bench_id_ed25519" -P 22222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "bench@127.0.0.1:/tmp/$name" "$shot_dir/$name" 2>/dev/null || true
     done

@@ -706,6 +706,20 @@ fn run_lock_worker_cmd(args: &[String]) -> ExitCode {
         i += 2;
     }
 
+    if let Ok(cfg_path) = kaze_core::Config::default_path() {
+        let settings_path = kaze_core::Config::settings_path().ok();
+        if let Ok(loaded) = kaze_core::Config::load_layered(&cfg_path, settings_path.as_deref()) {
+            if loaded.canvas.enabled && loaded.canvas.show_lockscreen_widgets {
+                cfg.canvas_widgets = loaded
+                    .canvas
+                    .widgets
+                    .into_iter()
+                    .filter(|w| w.layer == kaze_core::CanvasLayer::Lockscreen)
+                    .collect();
+            }
+        }
+    }
+
     match kaze_lock::run_lock_worker(cfg) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {

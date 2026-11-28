@@ -613,6 +613,15 @@ else
                     report_warn("kaze-shell: " .. cap.label .. " unavailable")
                 end
             end
+
+            if inspect_out:find('"bt_discovering"%s*:%s*false') then
+                report_ok("kaze-shell: Bluetooth discovery dormant at idle")
+            elseif inspect_out:find('"bt_discovering"%s*:%s*true') then
+                report_warn("kaze-shell: Bluetooth discovery active")
+            end
+            if inspect_out:find('"canvas_widget_count"%s*:') then
+                report_ok("kaze-shell: Wave 2 canvas & multi-tab CC ready")
+            end
         else
             report_fail("kaze-shell: kaze-shell.service is inactive")
         end

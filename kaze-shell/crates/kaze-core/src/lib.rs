@@ -1,6 +1,7 @@
 #![deny(clippy::unwrap_used)]
 
 pub mod anim;
+pub mod canvas;
 pub mod config;
 pub mod crypto;
 pub mod dconf_read;
@@ -15,9 +16,13 @@ pub mod text_input;
 pub mod theme;
 
 pub use anim::{Spring, SPRING_MAX_DT_SECS, SPRING_POS_EPSILON, SPRING_VEL_EPSILON};
+pub use canvas::{
+    normalize_angle_deg, snap_rotation_15, CanvasLayer, CanvasWidget, CanvasWidgetKind, UndoStack,
+    CANVAS_MIN_DIM, CANVAS_UNDO_CAP,
+};
 pub use config::{
     AccessibilityConfig, AudioConfig, BarConfig, BarInstanceConfig, BarLayerMode,
-    BarMonitorOverride, BarPosition, BrightnessConfig, CalendarConfig, CaptureConfig,
+    BarMonitorOverride, BarPosition, BrightnessConfig, CalendarConfig, CanvasConfig, CaptureConfig,
     ClipboardConfig, Config, ControlCenterConfig, CornersConfig, DisplayConfig, DockConfig,
     DockHideMode, GeneralConfig, HooksConfig, HotCornerActionConfig, IdleConfig, InputConfig,
     InputKeybindsConfig, IslandConfig, IslandStyle, LauncherConfig, LayoutConfig, LocationConfig,

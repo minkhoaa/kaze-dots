@@ -67,3 +67,47 @@ right_click_cmd = ["kaze-display", "toggle-window-share"]
 [wallpaper]
 enabled = true
 dynamic_palette = true
+
+[dock]
+enabled = false
+position = "bottom"
+icon_size = 42
+magnification = 1.45
+icon_saturation = 1.0
+background_opacity = 0.9
+
+[switcher]
+enabled = true
+layout = "carousel"
+hold_mode = true
+show_previews = true
+max_preview_width = 280
+
+[corners]
+hot_enabled = false
+screen_corners_enabled = false
+screen_corners_radius = 12.0
+
+[control_center]
+width = 480
+height = 560
+sidebar_mode = "full"
+
+[weather]
+enabled = false
+refresh_interval_mins = 30
+
+[screentime]
+enabled = true
+retention_days = 14
+
+[calendar]
+enabled = false
+sync_interval_mins = 15
+
+[canvas]
+enabled = true
+grid_size = 16
+snap_to_grid = true
+smart_guides = true
+show_lockscreen_widgets = true

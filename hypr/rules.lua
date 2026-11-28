@@ -158,17 +158,26 @@ hl.window_rule({
 hl.layer_rule({
     name = "kaze-shell-no-anim",
     match = {
-        namespace = "^(kaze-bar-.+|kaze-island|kaze-osd|kaze-notify|kaze-launcher|kaze-cc|kaze-tray-menu|kaze-clipboard|kaze-polkit|kaze-session-menu|kaze-capture-.*|kaze-color-picker|kaze-lock)$",
+        namespace = "^(kaze-bar-.+|kaze-dock-.*|kaze-switcher|kaze-hot-corner-.*|kaze-screen-corner-.*|kaze-canvas-.*|kaze-window-menu|kaze-island|kaze-osd|kaze-notify|kaze-launcher|kaze-cc|kaze-tray-menu|kaze-clipboard|kaze-polkit|kaze-session-menu|kaze-capture-.*|kaze-color-picker|kaze-lock)$",
     },
     no_anim = true,
 })
 
--- Subtle blur for Dynamic Island & Control Center when active preset enables blur.
+-- Subtle blur for Dynamic Island, Control Center, Switcher & Dock when active preset enables blur.
 hl.layer_rule({
     name = "kaze-shell-blur",
     match = {
-        namespace = "^(kaze-island|kaze-cc|kaze-polkit|kaze-session-menu)$",
+        namespace = "^(kaze-island|kaze-cc|kaze-polkit|kaze-session-menu|kaze-switcher|kaze-dock-.+)$",
     },
     blur = true,
     ignore_alpha = 0.25,
+})
+
+-- Explicit override when per-monitor dock config sets compositor_blur = false.
+hl.layer_rule({
+    name = "kaze-dock-noblur",
+    match = {
+        namespace = "^kaze-dock-noblur-.+$",
+    },
+    blur = false,
 })

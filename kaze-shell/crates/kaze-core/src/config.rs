@@ -997,6 +997,30 @@ impl Default for CaptureConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CanvasConfig {
+    pub enabled: bool,
+    pub grid_size: u32,
+    pub snap_to_grid: bool,
+    pub smart_guides: bool,
+    pub show_lockscreen_widgets: bool,
+    pub widgets: Vec<crate::canvas::CanvasWidget>,
+}
+
+impl Default for CanvasConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            grid_size: 16,
+            snap_to_grid: true,
+            smart_guides: true,
+            show_lockscreen_widgets: true,
+            widgets: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
@@ -1030,6 +1054,7 @@ pub struct Config {
     pub weather: WeatherConfig,
     pub screentime: ScreenTimeConfig,
     pub calendar: CalendarConfig,
+    pub canvas: CanvasConfig,
     pub widget: BTreeMap<String, WidgetInstanceConfig>,
 }
 
@@ -1115,6 +1140,64 @@ impl SettingsStore {
             write_atomic(path, &doc.to_string())?;
         }
         Ok(removed)
+    }
+
+    pub fn set_canvas_widgets(
+        path: &Path,
+        widgets: &[crate::canvas::CanvasWidget],
+    ) -> Result<(), String> {
+        let existing = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(err) => return Err(format!("failed reading {}: {err}", path.display())),
+        };
+        let mut doc = existing
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("invalid TOML in {}: {e}", path.display()))?;
+        let item = if widgets.is_empty() {
+            toml_edit::Item::Value(toml_edit::Value::Array(toml_edit::Array::new()))
+        } else {
+            let mut aot = toml_edit::ArrayOfTables::new();
+            for raw in widgets {
+                let mut w = raw.clone();
+                w.normalize();
+                let mut t = toml_edit::Table::new();
+                t.insert("id", toml_edit::value(w.id));
+                if let Some(mid) = w.monitor_id {
+                    t.insert("monitor_id", toml_edit::value(mid));
+                }
+                t.insert("layer", toml_edit::value(w.layer.as_str()));
+                t.insert("kind", toml_edit::value(w.kind.as_str()));
+                t.insert("x", toml_edit::value(f64::from(w.x)));
+                t.insert("y", toml_edit::value(f64::from(w.y)));
+                t.insert("width", toml_edit::value(f64::from(w.width)));
+                t.insert("height", toml_edit::value(f64::from(w.height)));
+                t.insert("rotation_deg", toml_edit::value(f64::from(w.rotation_deg)));
+                t.insert("flip_x", toml_edit::value(w.flip_x));
+                t.insert("flip_y", toml_edit::value(w.flip_y));
+                t.insert("z_index", toml_edit::value(i64::from(w.z_index)));
+                t.insert("opacity", toml_edit::value(f64::from(w.opacity)));
+                if !w.title.is_empty() {
+                    t.insert("title", toml_edit::value(w.title));
+                }
+                if !w.text.is_empty() {
+                    t.insert("text", toml_edit::value(w.text));
+                }
+                if let Some(p) = w.path {
+                    t.insert("path", toml_edit::value(p.to_string_lossy().into_owned()));
+                }
+                if let Some(cmd) = w.command {
+                    t.insert("command", toml_edit::value(cmd));
+                }
+                if let Some(col) = w.color {
+                    t.insert("color", toml_edit::value(col));
+                }
+                aot.push(t);
+            }
+            toml_edit::Item::ArrayOfTables(aot)
+        };
+        set_dotted_item(doc.as_table_mut(), &["canvas", "widgets"], item)?;
+        write_atomic(path, &doc.to_string())
     }
 }
 
@@ -1372,6 +1455,10 @@ impl Config {
             return Err("weather.longitude out of range (-180..=180)".to_string());
         }
         self.screentime.retention_days = self.screentime.retention_days.clamp(1, 90);
+        self.canvas.grid_size = self.canvas.grid_size.clamp(4, 64);
+        for w in &mut self.canvas.widgets {
+            w.normalize();
+        }
         for (id, w) in &self.widget {
             if w.exec_interval_secs > 0 && w.exec_interval_secs < 5 {
                 return Err(format!(
@@ -1772,6 +1859,45 @@ left_click_cmd = ["example"]
         fs::write(&bad, "[accessibility]\nfont_scale = 9.5\n").expect("write bad");
         let rep_bad = Config::validate_file(&bad);
         assert!(!rep_bad.ok && rep_bad.has_errors());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn settings_store_persists_canvas_widgets_preserving_comments() {
+        let dir = std::env::temp_dir().join(format!("kaze-canvas-cfg-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let cfg_path = dir.join("config.toml");
+        let settings_path = dir.join("settings.toml");
+        fs::write(&cfg_path, "[canvas]\ngrid_size = 16\n").expect("write cfg");
+        fs::write(
+            &settings_path,
+            "# Keep my comment\n[theme]\nmode = \"dark\"\n",
+        )
+        .expect("write settings");
+
+        let mut w = crate::canvas::CanvasWidget {
+            id: "clock-1".into(),
+            kind: crate::canvas::CanvasWidgetKind::Clock,
+            layer: crate::canvas::CanvasLayer::Lockscreen,
+            x: 120.0,
+            y: 80.0,
+            width: 240.0,
+            height: 112.0,
+            rotation_deg: 15.0,
+            flip_x: true,
+            ..Default::default()
+        };
+        w.normalize();
+        SettingsStore::set_canvas_widgets(&settings_path, &[w.clone()]).expect("persist canvas");
+
+        let raw = fs::read_to_string(&settings_path).expect("read settings");
+        assert!(raw.contains("# Keep my comment"));
+        let loaded = Config::load_layered(&cfg_path, Some(&settings_path)).expect("load layered");
+        assert_eq!(loaded.canvas.grid_size, 16);
+        assert_eq!(loaded.canvas.widgets.len(), 1);
+        assert_eq!(loaded.canvas.widgets[0], w);
 
         let _ = fs::remove_dir_all(&dir);
     }

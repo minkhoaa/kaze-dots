@@ -642,6 +642,7 @@ dependencies = [
  "calloop-wayland-source",
  "kaze-core",
  "kaze-ext-bar",
+ "kaze-ext-canvas",
  "kaze-ext-capture",
  "kaze-ext-cc",
  "kaze-ext-clipboard",
@@ -689,6 +690,14 @@ dependencies = [
 name = "kaze-ext-bar"
 version = "0.1.0"
 dependencies = [
+ "kaze-core",
+]
+
+[[package]]
+name = "kaze-ext-canvas"
+version = "0.1.0"
+dependencies = [
+ "image",
  "kaze-core",
 ]
 
@@ -839,6 +848,7 @@ dependencies = [
  "futures-util",
  "image",
  "kaze-core",
+ "kaze-ext-canvas",
  "kaze-ui",
  "libc",
  "smithay-client-toolkit",
