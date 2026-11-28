@@ -466,6 +466,7 @@ fn build_session_surface(
         animating: false,
         input_regions: None,
         ime_cursor_rect: None,
+        track_pointer_motion: false,
     }
 }
 

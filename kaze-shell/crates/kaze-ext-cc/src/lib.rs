@@ -1021,6 +1021,7 @@ fn build_cc_surface(state: &AppState, pending_power: Option<&str>) -> SurfaceSpe
         animating: false,
         input_regions: None,
         ime_cursor_rect: None,
+        track_pointer_motion: false,
     }
 }
 
@@ -1256,6 +1257,7 @@ mod tests {
             transient: false,
             sync_tag: None,
             timestamp_epoch_secs: 0,
+            progress_value: None,
         });
         let mut ext = ControlCenterExtension::new();
         {

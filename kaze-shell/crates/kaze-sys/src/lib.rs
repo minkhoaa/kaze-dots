@@ -3,6 +3,7 @@
 pub mod backlight;
 pub mod dbus_accounts;
 mod dbus_bluez;
+pub mod dbus_input;
 mod dbus_logind;
 mod dbus_mpris;
 mod dbus_net;
@@ -16,6 +17,7 @@ pub mod ddc;
 pub mod hooks;
 pub mod pipewire_privacy;
 pub mod pulse_native;
+pub mod sysmon;
 
 use calloop::channel::Sender as CalloopSender;
 use kaze_core::{BrightnessConfig, MasterKey, SystemEvent};
@@ -110,6 +112,11 @@ pub enum SysCommand {
         fd: OwnedFd,
         bytes: Arc<[u8]>,
     },
+    SetSysmonSubscribers(usize),
+    RunWidgetExec {
+        instance_id: String,
+        command: String,
+    },
     Shutdown,
 }
 
@@ -192,6 +199,7 @@ fn run_sys_thread(
         let (privacy_tx, privacy_rx) = mpsc::unbounded_channel();
         let (sleep_rel_tx, sleep_rel_rx) = mpsc::unbounded_channel();
         let (polkit_cmd_tx, polkit_cmd_rx) = mpsc::unbounded_channel();
+        let (sysmon_cmd_tx, sysmon_cmd_rx) = mpsc::unbounded_channel();
 
         // Share ONE System Bus and ONE Session Bus connection across all observers
         // (2 sockets total instead of 6; avoids spawning parallel zbus/tokio handshake threads).
@@ -259,6 +267,10 @@ fn run_sys_thread(
             event_tx.clone(),
             polkit_cmd_rx,
         ));
+        let input_task = sess_conn
+            .clone()
+            .map(|c| tokio::spawn(dbus_input::run_input_method_task(c, event_tx.clone())));
+        let sysmon_task = tokio::spawn(sysmon::run_sysmon_task(event_tx.clone(), sysmon_cmd_rx));
         let mut caffeine_inhibit_fd: Option<zbus::zvariant::OwnedFd> = None;
 
         while let Some(cmd) = cmd_rx.recv().await {
@@ -451,10 +463,40 @@ fn run_sys_thread(
                         write_nonblocking_pipe(fd, &bytes).await;
                     });
                 }
+                SysCommand::SetSysmonSubscribers(count) => {
+                    let _ = sysmon_cmd_tx.send(count);
+                }
+                SysCommand::RunWidgetExec {
+                    instance_id,
+                    command,
+                } => {
+                    let tx = event_tx.clone();
+                    tokio::spawn(async move {
+                        let res = tokio::time::timeout(
+                            Duration::from_secs(5),
+                            tokio::process::Command::new("sh")
+                                .arg("-c")
+                                .arg(&command)
+                                .output(),
+                        )
+                        .await;
+                        if let Ok(Ok(out)) = res {
+                            let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                            let _ = tx.send(SystemEvent::WidgetExecOutput {
+                                instance_id,
+                                output: text,
+                            });
+                        }
+                    });
+                }
                 SysCommand::Shutdown => break,
             }
         }
 
+        sysmon_task.abort();
+        if let Some(t) = input_task {
+            t.abort();
+        }
         accounts_task.abort();
         polkit_task.abort();
         if let Some(t) = logind_task {

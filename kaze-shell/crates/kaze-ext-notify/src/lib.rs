@@ -724,6 +724,7 @@ fn build_notify_surface(state: &AppState, visible: &[NotificationItem]) -> Optio
         animating: false,
         input_regions: None,
         ime_cursor_rect: None,
+        track_pointer_motion: false,
     })
 }
 
@@ -746,6 +747,7 @@ mod tests {
             transient: false,
             sync_tag: None,
             timestamp_epoch_secs: 1_700_000_000,
+            progress_value: None,
         }
     }
 

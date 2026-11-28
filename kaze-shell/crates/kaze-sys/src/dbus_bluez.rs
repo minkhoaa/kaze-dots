@@ -150,6 +150,7 @@ async fn query_bluez(conn: &Connection) -> Option<(BluetoothState, String)> {
             available: true,
             powered,
             connected_device,
+            ..BluetoothState::default()
         },
         path,
     ))

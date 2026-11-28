@@ -43,11 +43,109 @@ impl Default for ThemeConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BarLayerMode {
+    Top,
+    Overlay,
+    #[default]
+    Auto,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BarInstanceConfig {
+    pub id: String,
+    pub enabled: bool,
+    pub position: BarPosition,
+    pub monitor: String,
+    pub layer: BarLayerMode,
+    pub section_mode: String,
+    pub island_mode: bool,
+    pub thickness: u32,
+    pub length: u32,
+    pub margin_edge: i32,
+    pub margin_ends: i32,
+    pub corner_radius: f32,
+    pub border_width: f32,
+    pub background_opacity: f32,
+    pub exclusive: bool,
+    pub start_slots: Vec<String>,
+    pub center_slots: Vec<String>,
+    pub end_slots: Vec<String>,
+}
+
+impl Default for BarInstanceConfig {
+    fn default() -> Self {
+        Self {
+            id: "main".to_string(),
+            enabled: true,
+            position: BarPosition::Left,
+            monitor: String::new(),
+            layer: BarLayerMode::Auto,
+            section_mode: "solid".to_string(),
+            island_mode: false,
+            thickness: 42,
+            length: 0,
+            margin_edge: 8,
+            margin_ends: 8,
+            corner_radius: 0.0,
+            border_width: 2.0,
+            background_opacity: 0.94,
+            exclusive: true,
+            start_slots: Vec::new(),
+            center_slots: Vec::new(),
+            end_slots: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct BarMonitorOverride {
+    pub enabled: Option<bool>,
+    pub position: Option<BarPosition>,
+    pub thickness: Option<u32>,
+    pub length: Option<u32>,
+    pub margin_edge: Option<i32>,
+    pub margin_ends: Option<i32>,
+    pub corner_radius: Option<f32>,
+    pub exclusive: Option<bool>,
+    pub layer: Option<BarLayerMode>,
+    pub section_mode: Option<String>,
+    pub start_slots: Option<Vec<String>>,
+    pub center_slots: Option<Vec<String>>,
+    pub end_slots: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct WidgetInstanceConfig {
+    #[serde(rename = "type")]
+    pub widget_type: String,
+    pub label: String,
+    pub icon: String,
+    pub format: String,
+    pub timezone: String,
+    pub peek: bool,
+    pub visualizer_style: String,
+    pub sysmon_metric: String,
+    pub group_by_workspace: bool,
+    pub exec: String,
+    pub exec_interval_secs: u64,
+    pub on_left_click: String,
+    pub on_right_click: String,
+    pub on_middle_click: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BarConfig {
     pub enabled: bool,
     pub position: BarPosition,
+    pub layer: BarLayerMode,
+    /// `"solid"` (continuous bar), `"island"` / `"pills"` (click-through gaps between clusters).
+    pub section_mode: String,
     /// When `true`, renders a floating island pill (`kaze-island` namespace) with explicit `length`.
     pub island_mode: bool,
     pub thickness: u32,
@@ -61,7 +159,12 @@ pub struct BarConfig {
     pub exclusive: bool,
     pub persistent_workspaces: u32,
     pub font: String,
+    pub start_slots: Vec<String>,
+    pub center_slots: Vec<String>,
     pub end_slots: Vec<String>,
+    pub bars: Vec<BarInstanceConfig>,
+    pub monitors: BTreeMap<String, BarMonitorOverride>,
+    pub keyboard_aliases: BTreeMap<String, String>,
 }
 
 impl Default for BarConfig {
@@ -69,6 +172,8 @@ impl Default for BarConfig {
         Self {
             enabled: true,
             position: BarPosition::Left,
+            layer: BarLayerMode::Auto,
+            section_mode: "solid".to_string(),
             island_mode: false,
             thickness: 42,
             length: 0,
@@ -80,6 +185,8 @@ impl Default for BarConfig {
             exclusive: true,
             persistent_workspaces: 5,
             font: "JetBrainsMono Nerd Font".to_string(),
+            start_slots: Vec::new(),
+            center_slots: Vec::new(),
             end_slots: vec![
                 "tray".to_string(),
                 "display".to_string(),
@@ -89,6 +196,63 @@ impl Default for BarConfig {
                 "notifications".to_string(),
                 "cc".to_string(),
             ],
+            bars: Vec::new(),
+            monitors: BTreeMap::new(),
+            keyboard_aliases: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DockHideMode {
+    #[default]
+    Never,
+    Always,
+    DodgeActive,
+    DodgeAny,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DockConfig {
+    pub enabled: bool,
+    pub position: BarPosition,
+    pub monitor: String,
+    pub icon_size: u32,
+    pub magnification: f32,
+    pub hide_mode: DockHideMode,
+    pub smart_auto_hide: bool,
+    pub reveal_delay_ms: u64,
+    pub margin_edge: i32,
+    pub corner_radius: f32,
+    pub background_opacity: f32,
+    pub icon_shadow: bool,
+    pub icon_saturation: f32,
+    pub app_icon_colorize: bool,
+    pub pinned_apps: Vec<String>,
+    pub compositor_blur: BTreeMap<String, bool>,
+}
+
+impl Default for DockConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            position: BarPosition::Bottom,
+            monitor: String::new(),
+            icon_size: 40,
+            magnification: 1.45,
+            hide_mode: DockHideMode::Never,
+            smart_auto_hide: false,
+            reveal_delay_ms: 180,
+            margin_edge: 8,
+            corner_radius: 16.0,
+            background_opacity: 0.90,
+            icon_shadow: true,
+            icon_saturation: 1.0,
+            app_icon_colorize: false,
+            pinned_apps: Vec::new(),
+            compositor_blur: BTreeMap::new(),
         }
     }
 }
@@ -685,6 +849,8 @@ pub struct Config {
     pub lockscreen: LockscreenConfig,
     pub session: SessionConfig,
     pub capture: CaptureConfig,
+    pub dock: DockConfig,
+    pub widget: BTreeMap<String, WidgetInstanceConfig>,
 }
 
 pub fn xdg_config_home() -> Result<PathBuf, String> {
@@ -975,6 +1141,35 @@ impl Config {
         self.audio.spectrum_frame_rate = self.audio.spectrum_frame_rate.clamp(5, 60);
         self.clipboard.max_items = self.clipboard.max_items.clamp(1, 2000);
         self.clipboard.max_item_bytes = self.clipboard.max_item_bytes.clamp(1024, 64 * 1024 * 1024);
+        self.dock.icon_size = self.dock.icon_size.clamp(24, 96);
+        if !self.dock.magnification.is_finite() {
+            self.dock.magnification = 1.45;
+        }
+        self.dock.magnification = self.dock.magnification.clamp(1.0, 2.2);
+        if !self.dock.icon_saturation.is_finite() {
+            self.dock.icon_saturation = 1.0;
+        }
+        self.dock.icon_saturation = self.dock.icon_saturation.clamp(0.0, 1.0);
+        if !self.dock.background_opacity.is_finite() {
+            self.dock.background_opacity = 0.9;
+        }
+        self.dock.background_opacity = self.dock.background_opacity.clamp(0.0, 1.0);
+        for (id, w) in &self.widget {
+            if w.exec_interval_secs > 0 && w.exec_interval_secs < 5 {
+                return Err(format!(
+                    "widget.{id}.exec_interval_secs={} must be 0 or >= 5",
+                    w.exec_interval_secs
+                ));
+            }
+        }
+        for bar in &self.bar.bars {
+            if bar.thickness < 16 || bar.thickness > 256 {
+                return Err(format!(
+                    "bar.bars[id={}].thickness={} out of range (16..=256)",
+                    bar.id, bar.thickness
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1195,7 +1390,13 @@ fn is_dynamic_section(full: &str) -> bool {
         "brightness.monitors"
             | "idle.behavior.ac.custom_stages"
             | "idle.behavior.battery.custom_stages"
-    )
+            | "bar.bars"
+            | "bar.monitors"
+            | "bar.keyboard_aliases"
+            | "dock.compositor_blur"
+            | "widget"
+    ) || full.starts_with("widget.")
+        || full.starts_with("bar.monitors.")
 }
 
 fn is_optional_config_key(full: &str) -> bool {

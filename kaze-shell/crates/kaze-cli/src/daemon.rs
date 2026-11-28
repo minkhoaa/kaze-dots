@@ -4,18 +4,20 @@ use calloop::signals::{Signal, Signals};
 use calloop::timer::{TimeoutAction, Timer};
 use calloop::{EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, RegistrationToken};
 use calloop_wayland_source::WaylandSource;
+use kaze_core::desktop::scan_applications;
 use kaze_core::layout::{layout_state_path, load_persisted_preset, save_persisted_preset};
 use kaze_core::solar::evaluate_solar_now;
 use kaze_core::theme::generate_all_templates;
 use kaze_core::{
-    AppState, ClockTime, Config, DirtyFlags, IpcResult, KazeExtension, LayoutPreset, Locale,
-    NotificationItem, NotificationUrgency, ResolvedPalette, SettingsStore, ShellAction,
-    ShellContext, SystemEvent, ThemePaths,
+    resolve_keyboard_alias, AppState, ClockTime, Config, DirtyFlags, IpcResult, KazeExtension,
+    LayoutPreset, Locale, NotificationItem, NotificationUrgency, ResolvedPalette, SettingsStore,
+    ShellAction, ShellContext, SystemEvent, ThemePaths,
 };
 use kaze_ext_bar::BarExtension;
 use kaze_ext_capture::CaptureExtension;
 use kaze_ext_cc::ControlCenterExtension;
 use kaze_ext_clipboard::{default_clipboard_store_path, ClipboardExtension};
+use kaze_ext_dock::DockExtension;
 use kaze_ext_idle::IdleExtension;
 use kaze_ext_island::IslandExtension;
 use kaze_ext_launcher::{desktop as launcher_desktop, LauncherExtension};
@@ -354,8 +356,10 @@ impl Daemon {
             | SystemEvent::WallpaperReady { .. }
             | SystemEvent::WallpaperFailed { .. }
             | SystemEvent::SurfaceClosed { .. }
-            | SystemEvent::KeyboardFocusLost { .. }
-            | SystemEvent::ApplicationsChanged => {}
+            | SystemEvent::KeyboardFocusLost { .. } => {}
+            SystemEvent::ApplicationsChanged => {
+                self.state.desktop_apps = scan_applications();
+            }
             SystemEvent::UserAccountChanged(acct) => {
                 self.state.user_account = acct.clone();
             }
@@ -422,18 +426,105 @@ impl Daemon {
             | SystemEvent::IdleResumed { .. }
             | SystemEvent::PrepareForSleep(_)
             | SystemEvent::SessionLockRequested
-            | SystemEvent::LockWorkerCommitted
-            | SystemEvent::LockWorkerExited
             | SystemEvent::PolkitBegin(_)
             | SystemEvent::PolkitCancel { .. }
             | SystemEvent::PolkitPrompt { .. }
             | SystemEvent::PolkitError { .. }
             | SystemEvent::PolkitComplete { .. } => {}
+            SystemEvent::LockWorkerCommitted => {
+                self.state.session_locked = true;
+            }
+            SystemEvent::LockWorkerExited => {
+                self.state.session_locked = false;
+            }
             SystemEvent::PolkitBusOwned(owned) => {
                 self.state.polkit_bus_owned = *owned;
             }
-            SystemEvent::PointerMotion { .. }
+            SystemEvent::WindowsUpdated {
+                windows,
+                active_address,
+                fullscreen_outputs,
+            } => {
+                self.state.windows = windows.clone();
+                self.state.active_window_address = active_address.clone();
+                self.state.fullscreen_outputs = fullscreen_outputs.iter().cloned().collect();
+                let live_addrs: std::collections::HashSet<&str> =
+                    windows.iter().map(|w| w.address.as_str()).collect();
+                self.state
+                    .window_mru
+                    .retain(|a| live_addrs.contains(a.as_str()));
+                if let Some(ref active) = active_address {
+                    if live_addrs.contains(active.as_str()) {
+                        self.state.window_mru.retain(|a| a != active);
+                        self.state.window_mru.insert(0, active.clone());
+                    }
+                }
+                let mut rest: Vec<_> = windows
+                    .iter()
+                    .filter(|w| !self.state.window_mru.contains(&w.address))
+                    .collect();
+                rest.sort_by_key(|w| w.focus_history_id);
+                for w in rest {
+                    self.state.window_mru.push(w.address.clone());
+                }
+            }
+            SystemEvent::KeyboardLayoutChanged { raw_name, .. } => {
+                self.state.keyboard.layout_raw = raw_name.clone();
+                self.state.keyboard.layout_label =
+                    resolve_keyboard_alias(raw_name, &self.state.config.bar.keyboard_aliases);
+            }
+            SystemEvent::LockKeysChanged {
+                caps_lock,
+                num_lock,
+                scroll_lock,
+            } => {
+                self.state.keyboard.caps_lock = *caps_lock;
+                self.state.keyboard.num_lock = *num_lock;
+                self.state.keyboard.scroll_lock = *scroll_lock;
+            }
+            SystemEvent::ModifiersChanged {
+                caps_lock,
+                num_lock,
+                scroll_lock,
+                ..
+            } => {
+                if self.state.keyboard.caps_lock != *caps_lock
+                    || self.state.keyboard.num_lock != *num_lock
+                    || self.state.keyboard.scroll_lock != *scroll_lock
+                {
+                    self.state.keyboard.caps_lock = *caps_lock;
+                    self.state.keyboard.num_lock = *num_lock;
+                    self.state.keyboard.scroll_lock = *scroll_lock;
+                }
+            }
+            SystemEvent::WidgetExecOutput {
+                instance_id,
+                output,
+            } => {
+                self.state
+                    .widget_exec_outputs
+                    .insert(instance_id.clone(), output.clone());
+            }
+            SystemEvent::SettingsOpenRequested { target } => {
+                self.state.last_settings_target = Some(target.clone());
+            }
+            SystemEvent::SysmonUpdated(s) => {
+                self.state.sysmon = s.clone();
+            }
+            SystemEvent::WeatherUpdated(w) => {
+                self.state.weather = w.clone();
+            }
+            SystemEvent::ScreenTimeUpdated(st) => {
+                self.state.screentime = st.clone();
+            }
+            SystemEvent::CalendarUpdated(c) => {
+                self.state.calendar = c.clone();
+            }
+            SystemEvent::PointerEnter { .. }
+            | SystemEvent::PointerLeave { .. }
+            | SystemEvent::PointerMotion { .. }
             | SystemEvent::PointerRelease { .. }
+            | SystemEvent::WindowPreviewReady { .. }
             | SystemEvent::ScreencopyReady { .. }
             | SystemEvent::ScreencopyFailed { .. } => {}
         }
@@ -760,11 +851,66 @@ impl Daemon {
                     }
                 }
                 ShellAction::AudioSetSpectrumSubscribed(count) => {
+                    if count > 0 {
+                        self.state.spectrum_subscribers.insert("ipc".to_string());
+                    } else {
+                        self.state.spectrum_subscribers.remove("ipc");
+                    }
+                    let effective = count.max(self.state.spectrum_subscribers.len());
                     if let Some(ref sys) = self.sys {
                         sys.send(SysCommand::AudioSetSpectrumSubscribers {
-                            count,
+                            count: effective,
                             fps: self.state.config.audio.spectrum_frame_rate,
                         });
+                    }
+                }
+                ShellAction::SetSpectrumSubscriber { owner, active } => {
+                    if active {
+                        self.state.spectrum_subscribers.insert(owner);
+                    } else {
+                        self.state.spectrum_subscribers.remove(&owner);
+                    }
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::AudioSetSpectrumSubscribers {
+                            count: self.state.spectrum_subscribers.len(),
+                            fps: self.state.config.audio.spectrum_frame_rate,
+                        });
+                    }
+                }
+                ShellAction::SetSysmonSubscriber { owner, active } => {
+                    if active {
+                        self.state.sysmon_subscribers.insert(owner);
+                    } else {
+                        self.state.sysmon_subscribers.remove(&owner);
+                    }
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::SetSysmonSubscribers(
+                            self.state.sysmon_subscribers.len(),
+                        ));
+                    }
+                }
+                ShellAction::RunWidgetExec {
+                    instance_id,
+                    command,
+                } => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::RunWidgetExec {
+                            instance_id,
+                            command,
+                        });
+                    }
+                }
+                ShellAction::SettingsOpen(target) => {
+                    self.state.last_settings_target = Some(target.clone());
+                    self.dispatch_system_event(SystemEvent::SettingsOpenRequested { target });
+                }
+                ShellAction::PersistSetting { key, value_toml } => {
+                    if let Some(ref sp) = self.settings_path {
+                        if let Err(err) = SettingsStore::set_override(sp, &key, &value_toml) {
+                            eprintln!("kaze-shell: persist setting '{key}' failed: {err}");
+                        } else {
+                            let _ = self.reload_config();
+                        }
                     }
                 }
                 ShellAction::ConfigureIdleTimeouts(stages) => {
@@ -772,6 +918,7 @@ impl Daemon {
                     let _ = self.wayland_conn.flush();
                 }
                 ShellAction::SetOutputsDpms(on) => {
+                    self.state.outputs_dpms_off = !on;
                     self.ui.set_outputs_dpms(on);
                     let _ = self.wayland_conn.flush();
                 }
@@ -845,9 +992,25 @@ impl Daemon {
                             transient: true,
                             sync_tag: None,
                             timestamp_epoch_secs: secs,
+                            progress_value: None,
                         },
                     ));
                 }
+                ShellAction::RequestWindowPreviews { .. }
+                | ShellAction::NetworkRequestScan
+                | ShellAction::WifiConnect { .. }
+                | ShellAction::WifiDisconnect
+                | ShellAction::WifiForget(_)
+                | ShellAction::VpnToggle(_)
+                | ShellAction::BluetoothSetDiscovery(_)
+                | ShellAction::BluetoothPair(_)
+                | ShellAction::BluetoothTrust { .. }
+                | ShellAction::BluetoothConnect(_)
+                | ShellAction::BluetoothDisconnect(_)
+                | ShellAction::BluetoothRemove(_)
+                | ShellAction::WeatherRefresh
+                | ShellAction::ScreenTimeReset
+                | ShellAction::CalendarSyncNow => {}
             }
         }
     }
@@ -1860,6 +2023,15 @@ impl Daemon {
                     Err(err) => IpcResponse::err(err),
                 }
             }
+            "settings-open" => {
+                let target = req.args.join(" ");
+                if target.trim().is_empty() {
+                    IpcResponse::err("usage: settings-open <target>")
+                } else {
+                    self.execute_actions(vec![ShellAction::SettingsOpen(target.clone())]);
+                    IpcResponse::ok(format!("settings-open {target}"))
+                }
+            }
             "status" | "inspect" => {
                 let outputs: Vec<&String> = self.state.outputs.keys().collect();
                 let hidden: Vec<&String> = self.state.hidden_bars.iter().collect();
@@ -1947,6 +2119,23 @@ impl Daemon {
                     obj.insert(
                         "has_screencopy".into(),
                         serde_json::json!(self.ui.has_screencopy()),
+                    );
+                    obj.insert(
+                        "spectrum_subscribers".into(),
+                        serde_json::json!(self.state.spectrum_subscribers.len()),
+                    );
+                    obj.insert(
+                        "sysmon_subscribers".into(),
+                        serde_json::json!(self.state.sysmon_subscribers.len()),
+                    );
+                    obj.insert(
+                        "last_settings_target".into(),
+                        serde_json::json!(self.state.last_settings_target),
+                    );
+                    obj.insert("keyboard".into(), serde_json::json!(&self.state.keyboard));
+                    obj.insert(
+                        "windows_count".into(),
+                        serde_json::json!(self.state.windows.len()),
                     );
                 }
                 IpcResponse::ok_data("ok", data)
@@ -2081,10 +2270,13 @@ impl Daemon {
     }
 
     fn sync_hypr_snapshot(&mut self) {
-        let Some(ref client) = self.hypr_client else {
-            return;
+        let (snap_res, kbd_raw) = {
+            let Some(ref client) = self.hypr_client else {
+                return;
+            };
+            (client.snapshot(), client.active_keyboard_layout())
         };
-        match client.snapshot() {
+        match snap_res {
             Ok(snap) => {
                 self.dispatch_system_event(SystemEvent::HyprSynced {
                     monitors: snap.monitors,
@@ -2097,10 +2289,40 @@ impl Daemon {
                 eprintln!("kaze-shell: Hyprland snapshot failed: {err}");
             }
         }
+        self.sync_hypr_windows();
+        if let Some(raw) = kbd_raw {
+            if self.state.keyboard.layout_raw != raw {
+                self.dispatch_system_event(SystemEvent::KeyboardLayoutChanged {
+                    raw_name: raw,
+                    source: "hypr".to_string(),
+                });
+            }
+        }
+    }
+
+    fn sync_hypr_windows(&mut self) {
+        let Some(ref client) = self.hypr_client else {
+            return;
+        };
+        let Ok(windows) = client.clients() else {
+            return;
+        };
+        let active_address = client.active_window_address();
+        let fullscreen_outputs: Vec<String> = windows
+            .iter()
+            .filter(|w| w.fullscreen && !w.monitor.is_empty())
+            .map(|w| w.monitor.clone())
+            .collect();
+        self.dispatch_system_event(SystemEvent::WindowsUpdated {
+            windows,
+            active_address,
+            fullscreen_outputs,
+        });
     }
 
     fn process_hypr_events(&mut self, events: Vec<HyprEvent>) {
         let mut need_resync = false;
+        let mut need_windows_sync = false;
         let mut config_reloaded = false;
         for ev in events {
             if ev.requires_full_resync() {
@@ -2135,6 +2357,18 @@ impl Daemon {
                         workspace_id: workspace_name.parse::<i32>().ok(),
                     });
                 }
+                HyprEvent::WindowChanged
+                | HyprEvent::ActiveWindow { .. }
+                | HyprEvent::ActiveWindowV2 { .. }
+                | HyprEvent::Fullscreen { .. } => {
+                    need_windows_sync = true;
+                }
+                HyprEvent::ActiveLayout { layout, .. } => {
+                    self.dispatch_system_event(SystemEvent::KeyboardLayoutChanged {
+                        raw_name: layout,
+                        source: "hypr".to_string(),
+                    });
+                }
                 HyprEvent::ConfigReloaded => {
                     config_reloaded = true;
                 }
@@ -2149,6 +2383,8 @@ impl Daemon {
 
         if need_resync {
             self.sync_hypr_snapshot();
+        } else if need_windows_sync {
+            self.sync_hypr_windows();
         }
         if config_reloaded {
             let colors = self.state.palette.for_mode(self.state.theme_mode);
@@ -2306,6 +2542,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
 
     let layout_state_file = layout_state_path().ok();
     let mut state = AppState::new(config);
+    state.desktop_apps = scan_applications();
     ui.set_accessibility(
         state.effective_font_scale,
         state.config.accessibility.high_contrast,
@@ -2342,6 +2579,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     };
     let extensions: Vec<Box<dyn KazeExtension>> = vec![
         Box::new(BarExtension::new()),
+        Box::new(DockExtension::new()),
         Box::new(IslandExtension::new()),
         Box::new(ControlCenterExtension::new()),
         Box::new(TrayExtension::new()),

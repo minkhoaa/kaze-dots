@@ -182,6 +182,22 @@ fn build_osd_surface(state: &AppState, kind: OsdKind) -> SurfaceSpec {
             let p = state.backlight.percentage;
             (IconKind::Brightness, p, primary, format!("{p}%"))
         }
+        OsdKind::KeyboardLayout => (
+            IconKind::Keyboard,
+            100u8,
+            primary,
+            state.keyboard.layout_label.clone(),
+        ),
+        OsdKind::LockKeys => {
+            let txt = if state.keyboard.caps_lock {
+                "CAPS"
+            } else if state.keyboard.num_lock {
+                "NUM"
+            } else {
+                "SCROLL"
+            };
+            (IconKind::LockKey, 100u8, primary, txt.to_string())
+        }
     };
 
     let w = osd.width.max(160) as f32;
@@ -261,6 +277,7 @@ fn build_osd_surface(state: &AppState, kind: OsdKind) -> SurfaceSpec {
         animating: false,
         input_regions: None,
         ime_cursor_rect: None,
+        track_pointer_motion: false,
     }
 }
 

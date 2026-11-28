@@ -76,6 +76,9 @@ struct RawWorkspaceRef {
 struct RawMonitor {
     id: i32,
     name: String,
+    make: String,
+    model: String,
+    serial: String,
     width: i32,
     height: i32,
     scale: f32,
@@ -204,6 +207,32 @@ impl HyprClient {
         parse_clients(&raw)
     }
 
+    pub fn active_window_address(&self) -> Option<String> {
+        let raw = self.request("j/activewindow").ok()?;
+        let val: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        let addr = val.get("address")?.as_str()?.trim();
+        if addr.is_empty() {
+            None
+        } else {
+            Some(addr.to_string())
+        }
+    }
+
+    pub fn active_keyboard_layout(&self) -> Option<String> {
+        let raw = self.request("j/devices").ok()?;
+        let val: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        let keyboards = val.get("keyboards")?.as_array()?;
+        let main_kb = keyboards
+            .iter()
+            .find(|k| k.get("main").and_then(|v| v.as_bool()) == Some(true))
+            .or_else(|| keyboards.first())?;
+        main_kb
+            .get("active_keymap")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+    }
+
     pub fn connect_event_stream(&self) -> Result<HyprEventStream, HyprError> {
         HyprEventStream::connect(&self.paths.event_sock)
     }
@@ -244,6 +273,9 @@ pub fn parse_snapshot(
         .map(|m| MonitorState {
             id: m.id,
             name: m.name,
+            make: m.make,
+            model: m.model,
+            serial: m.serial,
             width: m.width,
             height: m.height,
             scale: if m.scale > 0.0 { m.scale } else { 1.0 },
@@ -291,13 +323,27 @@ struct RawClient {
     address: String,
     title: String,
     class: String,
+    #[serde(rename = "initialClass")]
+    initial_class: String,
     at: [i32; 2],
     size: [i32; 2],
     mapped: bool,
     hidden: bool,
     floating: bool,
+    fullscreen: serde_json::Value,
+    pid: i32,
+    #[serde(rename = "focusHistoryID")]
+    focus_history_id: i32,
     monitor: serde_json::Value,
     workspace: RawWorkspaceRef,
+}
+
+fn is_fullscreen_val(val: &serde_json::Value) -> bool {
+    match val {
+        serde_json::Value::Bool(b) => *b,
+        serde_json::Value::Number(n) => n.as_i64().unwrap_or(0) > 0,
+        _ => false,
+    }
 }
 
 pub fn parse_clients(clients_json: &str) -> Result<Vec<WindowGeometry>, HyprError> {
@@ -305,21 +351,29 @@ pub fn parse_clients(clients_json: &str) -> Result<Vec<WindowGeometry>, HyprErro
     Ok(raw
         .into_iter()
         .filter(|c| c.mapped && !c.hidden && c.size[0] > 0 && c.size[1] > 0)
-        .map(|c| WindowGeometry {
-            address: c.address,
-            title: c.title,
-            class: c.class,
-            workspace_id: c.workspace.id,
-            monitor: match c.monitor {
-                serde_json::Value::String(s) => s,
-                serde_json::Value::Number(n) => n.to_string(),
-                _ => String::new(),
-            },
-            x: c.at[0],
-            y: c.at[1],
-            w: c.size[0],
-            h: c.size[1],
-            floating: c.floating,
+        .map(|c| {
+            let focused = c.focus_history_id == 0;
+            WindowGeometry {
+                address: c.address,
+                title: c.title,
+                class: c.class,
+                initial_class: c.initial_class,
+                workspace_id: c.workspace.id,
+                monitor: match c.monitor {
+                    serde_json::Value::String(s) => s,
+                    serde_json::Value::Number(n) => n.to_string(),
+                    _ => String::new(),
+                },
+                x: c.at[0],
+                y: c.at[1],
+                w: c.size[0],
+                h: c.size[1],
+                floating: c.floating,
+                fullscreen: is_fullscreen_val(&c.fullscreen),
+                focused,
+                pid: c.pid,
+                focus_history_id: c.focus_history_id,
+            }
         })
         .collect())
 }
@@ -358,6 +412,20 @@ pub enum HyprEvent {
         name: String,
     },
     WindowChanged,
+    ActiveWindow {
+        class: String,
+        title: String,
+    },
+    ActiveWindowV2 {
+        address: String,
+    },
+    Fullscreen {
+        active: bool,
+    },
+    ActiveLayout {
+        keyboard: String,
+        layout: String,
+    },
     ConfigReloaded,
     Urgent {
         address: String,
@@ -428,7 +496,37 @@ impl HyprEvent {
                 let name = data.split(',').nth(1).unwrap_or(data).to_string();
                 Self::MonitorRemoved { name }
             }
-            "openwindow" | "closewindow" | "movewindow" | "movewindowv2" => Self::WindowChanged,
+            "openwindow" | "closewindow" | "movewindow" | "movewindowv2" | "windowtitlev2" => {
+                Self::WindowChanged
+            }
+            "activewindow" => {
+                let (class, title) = data.split_once(',').unwrap_or((data, ""));
+                Self::ActiveWindow {
+                    class: class.to_string(),
+                    title: title.to_string(),
+                }
+            }
+            "activewindowv2" => {
+                let trimmed = data.trim();
+                let address = if trimmed.is_empty() {
+                    String::new()
+                } else if trimmed.starts_with("0x") {
+                    trimmed.to_string()
+                } else {
+                    format!("0x{trimmed}")
+                };
+                Self::ActiveWindowV2 { address }
+            }
+            "fullscreen" => Self::Fullscreen {
+                active: data.trim() == "1",
+            },
+            "activelayout" => {
+                let (keyboard, layout) = data.split_once(',').unwrap_or((data, ""));
+                Self::ActiveLayout {
+                    keyboard: keyboard.to_string(),
+                    layout: layout.to_string(),
+                }
+            }
             "configreloaded" => Self::ConfigReloaded,
             "urgent" => Self::Urgent {
                 address: data.to_string(),
@@ -457,6 +555,8 @@ impl HyprEvent {
                 | Self::MonitorAdded { .. }
                 | Self::MonitorRemoved { .. }
                 | Self::WindowChanged
+                | Self::ActiveWindowV2 { .. }
+                | Self::Fullscreen { .. }
                 | Self::ConfigReloaded
         )
     }

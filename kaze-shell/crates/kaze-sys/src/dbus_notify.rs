@@ -162,6 +162,10 @@ impl NotificationsService {
             transient,
             sync_tag,
             timestamp_epoch_secs,
+            progress_value: hints
+                .get("value")
+                .and_then(|v| extract_u8_hint(v))
+                .map(|v| v.min(100)),
         };
         let _ = self.event_tx.send(SystemEvent::NotificationReceived(item));
         id

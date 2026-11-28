@@ -162,6 +162,39 @@ pub enum IconKind {
     PowerOff,
     Settings,
     Layout,
+    Calendar,
+    Weather,
+    Cpu,
+    Clock,
+    Keyboard,
+    LockKey,
+    Camera,
+    Clipboard,
+    ColorPicker,
+    Search,
+    Windows,
+    Shield,
+    PowerProfile,
+    Music,
+    Plus,
+    Undo,
+    Redo,
+    Trash,
+    Pin,
+    Vpn,
+    Refresh,
+    FlipH,
+    FlipV,
+    Rotate,
+    Grid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CornerPos {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -205,6 +238,15 @@ pub enum PaintCmd {
         bold: bool,
         align: TextAlign,
     },
+    /// Monospace-aligned digits (`tnum`) so changing clocks/meters never shift adjacent widgets.
+    TabularText {
+        rect: Rect,
+        text: String,
+        color: Color,
+        size: f32,
+        bold: bool,
+        align: TextAlign,
+    },
     /// Shaped Unicode text (Vietnamese diacritics + Color Emoji + font fallback) via lazy `cosmic-text`.
     RichText {
         rect: Rect,
@@ -233,6 +275,53 @@ pub enum PaintCmd {
         width: u32,
         height: u32,
         rgba_premul: Arc<[u8]>,
+    },
+    /// Styled raster image with saturation, theme colorization, shadow, opacity, and 2D transform.
+    StyledImage {
+        rect: Rect,
+        width: u32,
+        height: u32,
+        rgba_premul: Arc<[u8]>,
+        saturation: f32,
+        colorize: Option<Color>,
+        shadow: bool,
+        opacity: f32,
+        rotation_deg: f32,
+        flip_x: bool,
+        flip_y: bool,
+    },
+    /// Offscreen child paint list composited with 2D rotation, flip, and opacity.
+    TransformedGroup {
+        rect: Rect,
+        rotation_deg: f32,
+        flip_x: bool,
+        flip_y: bool,
+        opacity: f32,
+        commands: Vec<PaintCmd>,
+    },
+    /// Concave bezel corner cut-out for Screen Corners.
+    ConcaveCorner {
+        corner: CornerPos,
+        radius: f32,
+        color: Color,
+    },
+    /// Polyline / polygon stroke or fill for audio waves, sparklines, and SVG paths.
+    Polyline {
+        points: Vec<(f32, f32)>,
+        color: Color,
+        width: f32,
+        closed: bool,
+        fill: Option<Color>,
+    },
+    /// Circular arc stroke for gauges, rings, and dials.
+    Arc {
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        start_deg: f32,
+        sweep_deg: f32,
+        color: Color,
+        width: f32,
     },
     /// Full BiDi/RTL + grapheme-aware text input widget with selection, preedit underline, and caret.
     TextInputField {
@@ -282,6 +371,8 @@ pub struct SurfaceSpec {
     pub input_regions: Option<Vec<Rect>>,
     /// Logical cursor rectangle reported to `zwp_text_input_v3.set_cursor_rectangle` for IME popups.
     pub ime_cursor_rect: Option<Rect>,
+    /// When `true`, `kaze-ui` forwards hover `PointerMotion` events for this surface.
+    pub track_pointer_motion: bool,
 }
 
 impl SurfaceSpec {

@@ -148,5 +148,6 @@ async fn query_network_state(conn: &Connection) -> Option<NetworkState> {
         kind,
         ssid,
         strength,
+        ..NetworkState::default()
     })
 }

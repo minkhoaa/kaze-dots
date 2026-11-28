@@ -854,6 +854,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
                 scale: 1,
+                ..OutputInfo::default()
             },
         );
         state.outputs.insert(
@@ -863,6 +864,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
                 scale: 1,
+                ..OutputInfo::default()
             },
         );
 

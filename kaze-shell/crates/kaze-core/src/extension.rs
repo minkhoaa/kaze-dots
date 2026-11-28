@@ -5,9 +5,10 @@ use std::sync::Arc;
 use crate::i18n::Locale;
 use crate::layout::LayoutPreset;
 use crate::state::{
-    AppState, AudioState, BacklightState, BatteryState, BluetoothState, ClockTime, MediaState,
-    MonitorState, NetworkState, NotificationItem, OutputInfo, PowerCapabilities, PowerProfileState,
-    PrivacyState, ThemeMode, TrayItem, TrayMenuState, UserAccountState, WorkspaceState,
+    AppState, AudioState, BacklightState, BatteryState, BluetoothState, CalendarState, ClockTime,
+    MediaState, MonitorState, NetworkState, NotificationItem, OutputInfo, PowerCapabilities,
+    PowerProfileState, PrivacyState, ScreenTimeState, SysmonState, ThemeMode, TrayItem,
+    TrayMenuState, UserAccountState, WeatherState, WorkspaceState,
 };
 use crate::surface::SurfaceSpec;
 use crate::theme::ResolvedPalette;
@@ -31,7 +32,11 @@ bitflags! {
         const SESSION   = 1 << 12;
         const POLKIT    = 1 << 13;
         const CAPTURE   = 1 << 14;
-        const ALL       = 0b0111_1111_1111_1111;
+        const DOCK      = 1 << 15;
+        const SWITCHER  = 1 << 16;
+        const CORNERS   = 1 << 17;
+        const CANVAS    = 1 << 18;
+        const ALL       = 0b0111_1111_1111_1111_1111;
     }
 }
 
@@ -77,6 +82,8 @@ pub enum OsdKind {
     Volume,
     Mic,
     Brightness,
+    KeyboardLayout,
+    LockKeys,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -134,6 +141,14 @@ pub enum SystemEvent {
         x: f32,
         y: f32,
     },
+    PointerEnter {
+        surface_id: String,
+        x: f32,
+        y: f32,
+    },
+    PointerLeave {
+        surface_id: String,
+    },
     PointerRelease {
         surface_id: String,
         target_id: String,
@@ -149,6 +164,46 @@ pub enum SystemEvent {
     KeyInput {
         surface_id: String,
         key: KeyEvent,
+    },
+    ModifiersChanged {
+        surface_id: String,
+        modifiers: KeyModifiers,
+        caps_lock: bool,
+        num_lock: bool,
+        scroll_lock: bool,
+        layout_idx: u32,
+    },
+    WindowsUpdated {
+        windows: Vec<WindowGeometry>,
+        active_address: Option<String>,
+        fullscreen_outputs: Vec<String>,
+    },
+    KeyboardLayoutChanged {
+        raw_name: String,
+        source: String,
+    },
+    LockKeysChanged {
+        caps_lock: bool,
+        num_lock: bool,
+        scroll_lock: bool,
+    },
+    WidgetExecOutput {
+        instance_id: String,
+        output: String,
+    },
+    SettingsOpenRequested {
+        target: String,
+    },
+    SysmonUpdated(SysmonState),
+    WeatherUpdated(WeatherState),
+    ScreenTimeUpdated(ScreenTimeState),
+    CalendarUpdated(CalendarState),
+    WindowPreviewReady {
+        request_id: u64,
+        address: String,
+        width: u32,
+        height: u32,
+        rgba_premul: Arc<[u8]>,
     },
     ImeInput {
         surface_id: String,
@@ -277,11 +332,12 @@ pub struct CapturedOutputFrame {
     pub rgba: Arc<[u8]>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WindowGeometry {
     pub address: String,
     pub title: String,
     pub class: String,
+    pub initial_class: String,
     pub workspace_id: i32,
     pub monitor: String,
     pub x: i32,
@@ -289,6 +345,10 @@ pub struct WindowGeometry {
     pub w: i32,
     pub h: i32,
     pub floating: bool,
+    pub fullscreen: bool,
+    pub focused: bool,
+    pub pid: i32,
+    pub focus_history_id: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -429,6 +489,47 @@ pub enum ShellAction {
         summary: String,
         body: String,
     },
+    SettingsOpen(String),
+    PersistSetting {
+        key: String,
+        value_toml: String,
+    },
+    SetSpectrumSubscriber {
+        owner: String,
+        active: bool,
+    },
+    SetSysmonSubscriber {
+        owner: String,
+        active: bool,
+    },
+    RunWidgetExec {
+        instance_id: String,
+        command: String,
+    },
+    RequestWindowPreviews {
+        request_id: u64,
+        windows: Vec<(String, String, String)>,
+    },
+    NetworkRequestScan,
+    WifiConnect {
+        ssid: String,
+        password: String,
+    },
+    WifiDisconnect,
+    WifiForget(String),
+    VpnToggle(String),
+    BluetoothSetDiscovery(bool),
+    BluetoothPair(String),
+    BluetoothTrust {
+        path: String,
+        trusted: bool,
+    },
+    BluetoothConnect(String),
+    BluetoothDisconnect(String),
+    BluetoothRemove(String),
+    WeatherRefresh,
+    ScreenTimeReset,
+    CalendarSyncNow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

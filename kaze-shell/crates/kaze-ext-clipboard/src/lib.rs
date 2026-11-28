@@ -1002,6 +1002,7 @@ fn build_clipboard_surface(
         animating: false,
         input_regions: None,
         ime_cursor_rect,
+        track_pointer_motion: false,
     }
 }
 

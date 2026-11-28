@@ -1172,6 +1172,22 @@ fn build_island_surface(
                     tertiary,
                     format!("{}%", state.backlight.percentage),
                 ),
+                OsdKind::KeyboardLayout => (
+                    IconKind::Keyboard,
+                    100u8,
+                    primary,
+                    state.keyboard.layout_label.clone(),
+                ),
+                OsdKind::LockKeys => {
+                    let txt = if state.keyboard.caps_lock {
+                        "CAPS"
+                    } else if state.keyboard.num_lock {
+                        "NUM"
+                    } else {
+                        "LOCK"
+                    };
+                    (IconKind::LockKey, 100u8, secondary, txt.into())
+                }
             };
             commands.push(PaintCmd::Icon {
                 rect: Rect::new(inner_x + 16.0, (pill_h - 18.0) * 0.5, 18.0, 18.0),
@@ -1578,6 +1594,7 @@ fn build_island_surface(
             None
         },
         ime_cursor_rect: None,
+        track_pointer_motion: false,
     }
 }
 
@@ -1625,6 +1642,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
                 scale: 1,
+                ..OutputInfo::default()
             },
         );
         st.outputs.insert(
@@ -1634,6 +1652,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
                 scale: 1,
+                ..OutputInfo::default()
             },
         );
         st
@@ -1878,6 +1897,7 @@ mod tests {
             transient: false,
             sync_tag: None,
             timestamp_epoch_secs: 1_700_000_000,
+            progress_value: None,
         };
         {
             let mut ctx = ShellContext::new(&mut st);

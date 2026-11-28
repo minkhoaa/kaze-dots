@@ -645,6 +645,7 @@ dependencies = [
  "kaze-ext-capture",
  "kaze-ext-cc",
  "kaze-ext-clipboard",
+ "kaze-ext-dock",
  "kaze-ext-idle",
  "kaze-ext-island",
  "kaze-ext-launcher",
@@ -716,6 +717,14 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "kaze-ext-dock"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "kaze-core",
 ]
 
 [[package]]

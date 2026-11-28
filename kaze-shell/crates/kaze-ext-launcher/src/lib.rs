@@ -1396,6 +1396,7 @@ fn build_launcher_surface(
         animating: false,
         input_regions: None,
         ime_cursor_rect,
+        track_pointer_motion: false,
     }
 }
 
@@ -1431,8 +1432,11 @@ mod tests {
                 comment: "Browse the Web".into(),
                 keywords: "internet".into(),
                 exec: "firefox %u".into(),
+                icon: String::new(),
+                startup_wm_class: String::new(),
                 terminal: false,
                 categories: vec!["Network".into(), "WebBrowser".into()],
+                actions: vec![],
             },
             DesktopApp {
                 id: "yazi.desktop".into(),
@@ -1441,8 +1445,11 @@ mod tests {
                 comment: "Terminal files".into(),
                 keywords: "files".into(),
                 exec: "yazi %u".into(),
+                icon: String::new(),
+                startup_wm_class: String::new(),
                 terminal: true,
                 categories: vec!["System".into(), "Utility".into()],
+                actions: vec![],
             },
         ]
     }

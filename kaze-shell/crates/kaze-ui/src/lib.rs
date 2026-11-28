@@ -613,7 +613,11 @@ impl UiState {
                         | DirtyFlags::LAUNCHER
                         | DirtyFlags::CC
                         | DirtyFlags::TRAY
-                        | DirtyFlags::THEME,
+                        | DirtyFlags::THEME
+                        | DirtyFlags::DOCK
+                        | DirtyFlags::SWITCHER
+                        | DirtyFlags::CORNERS
+                        | DirtyFlags::CANVAS,
                 );
 
                 let recreate = existing.spec.namespace != spec.namespace
@@ -652,7 +656,7 @@ impl UiState {
                         // Wait for compositor configure before attaching a resized buffer.
                         existing.configured = false;
                     }
-                    if layer_geom_changed {
+                    if layer_geom_changed || input_changed {
                         existing.layer.commit();
                     }
                 } else if content_changed || force_redraw || spec.animating {
@@ -858,6 +862,9 @@ impl UiState {
                 width,
                 height,
                 scale,
+                make: info.make,
+                model: info.model,
+                serial: String::new(),
             },
             refresh_mhz,
         ))
@@ -1470,7 +1477,7 @@ impl KeyboardHandler for UiState {
         _serial: u32,
         modifiers: Modifiers,
         _raw_modifiers: RawModifiers,
-        _layout: u32,
+        layout: u32,
     ) {
         self.modifiers = KeyModifiers {
             ctrl: modifiers.ctrl,
@@ -1478,6 +1485,19 @@ impl KeyboardHandler for UiState {
             shift: modifiers.shift,
             logo: modifiers.logo,
         };
+        let surface_id = self
+            .keyboard_surface
+            .as_ref()
+            .and_then(|id| self.surface_key_by_obj.get(id).cloned())
+            .unwrap_or_default();
+        self.pending_events.push(SystemEvent::ModifiersChanged {
+            surface_id,
+            modifiers: self.modifiers,
+            caps_lock: modifiers.caps_lock,
+            num_lock: modifiers.num_lock,
+            scroll_lock: false,
+            layout_idx: layout,
+        });
     }
 }
 
@@ -1492,11 +1512,25 @@ impl PointerHandler for UiState {
         for event in events {
             match event.kind {
                 PointerEventKind::Enter { .. } => {
-                    self.pointer_surface = Some(event.surface.id());
+                    let obj = event.surface.id();
+                    self.pointer_surface = Some(obj.clone());
                     self.pointer_pos = event.position;
+                    if let Some(surf_id) = self.surface_key_by_obj.get(&obj) {
+                        self.pending_events.push(SystemEvent::PointerEnter {
+                            surface_id: surf_id.clone(),
+                            x: event.position.0 as f32,
+                            y: event.position.1 as f32,
+                        });
+                    }
                 }
                 PointerEventKind::Leave { .. } => {
-                    if self.pointer_surface.as_ref() == Some(&event.surface.id()) {
+                    let obj = event.surface.id();
+                    if self.pointer_surface.as_ref() == Some(&obj) {
+                        if let Some(surf_id) = self.surface_key_by_obj.get(&obj) {
+                            self.pending_events.push(SystemEvent::PointerLeave {
+                                surface_id: surf_id.clone(),
+                            });
+                        }
                         self.pointer_surface = None;
                         self.pointer_drag = None;
                     }
@@ -1512,7 +1546,13 @@ impl PointerHandler for UiState {
                             y: event.position.1 as f32,
                         });
                     } else if let Some(surf_id) = self.surface_key_by_obj.get(&event.surface.id()) {
-                        if surf_id.starts_with("capture:") || surf_id.starts_with("picker:") {
+                        let wants_motion = surf_id.starts_with("capture:")
+                            || surf_id.starts_with("picker:")
+                            || self
+                                .surfaces
+                                .get(surf_id)
+                                .is_some_and(|s| s.spec.track_pointer_motion);
+                        if wants_motion {
                             self.pending_events.push(SystemEvent::PointerMotion {
                                 surface_id: surf_id.clone(),
                                 x: event.position.0 as f32,
@@ -1546,7 +1586,9 @@ impl PointerHandler for UiState {
                                 if target.rect.contains(px, py) {
                                     if btn == PointerButton::Left
                                         && (target.id.contains(":slider:")
-                                            || target.id.contains(":canvas"))
+                                            || target.id.contains(":canvas")
+                                            || target.id.starts_with("dock:item:")
+                                            || target.id.starts_with("canvas:"))
                                     {
                                         self.pointer_drag =
                                             Some((surface_id.clone(), target.id.clone()));

@@ -3,15 +3,15 @@ use cosmic_text::{
     fontdb, Align as CosmicAlign, Attrs, Buffer as CosmicBuffer, Family, FontSystem, Metrics,
     Shaping, SwashCache, SwashContent, Weight, Wrap,
 };
-use kaze_core::{Color, IconKind, PaintCmd, Rect, SurfaceSpec, TextAlign};
+use kaze_core::{Color, CornerPos, IconKind, PaintCmd, Rect, SurfaceSpec, TextAlign};
 use memmap2::Mmap;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::PathBuf;
 use std::process::Command;
 use tiny_skia::{
-    Color as SkiaColor, FillRule, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap,
-    Rect as SkiaRect, Stroke, Transform,
+    BlendMode, Color as SkiaColor, FillRule, FilterQuality, LineCap, LineJoin, Paint, Path,
+    PathBuilder, Pixmap, PixmapPaint, Rect as SkiaRect, Stroke, Transform,
 };
 
 const KAPPA: f32 = 0.552_284_8;
@@ -713,7 +713,23 @@ impl Renderer {
         }
 
         // Extension paint commands
-        for cmd in &spec.commands {
+        self.render_commands(&mut pixmap, &spec.commands, s);
+
+        // Convert tiny-skia premultiplied RGBA -> Wayland ARGB8888 (little-endian BGRA).
+        let src = pixmap.data();
+        let len = src.len().min(out_argb8888.len());
+        let (dst_chunks, _) = out_argb8888[..len].as_chunks_mut::<4>();
+        let (src_chunks, _) = src[..len].as_chunks::<4>();
+        for (dst_px, src_px) in dst_chunks.iter_mut().zip(src_chunks.iter()) {
+            dst_px[0] = src_px[2];
+            dst_px[1] = src_px[1];
+            dst_px[2] = src_px[0];
+            dst_px[3] = src_px[3];
+        }
+    }
+
+    fn render_commands(&mut self, pixmap: &mut Pixmap, commands: &[PaintCmd], s: f32) {
+        for cmd in commands {
             match cmd {
                 PaintCmd::RoundedRect {
                     rect,
@@ -866,7 +882,7 @@ impl Renderer {
                     stroke_width,
                 } => {
                     draw_icon(
-                        &mut pixmap,
+                        pixmap,
                         IconKind::Display,
                         *rect,
                         *color,
@@ -882,7 +898,7 @@ impl Renderer {
                     stroke_width,
                     level,
                 } => {
-                    draw_icon(&mut pixmap, *kind, *rect, *color, *stroke_width, *level, s);
+                    draw_icon(pixmap, *kind, *rect, *color, *stroke_width, *level, s);
                 }
                 PaintCmd::Image {
                     rect,
@@ -890,7 +906,84 @@ impl Renderer {
                     height,
                     rgba_premul,
                 } => {
-                    draw_premul_rgba_image(&mut pixmap, *rect, *width, *height, rgba_premul, s);
+                    draw_premul_rgba_image(pixmap, *rect, *width, *height, rgba_premul, s);
+                }
+                PaintCmd::StyledImage {
+                    rect,
+                    width,
+                    height,
+                    rgba_premul,
+                    saturation,
+                    colorize,
+                    shadow,
+                    opacity,
+                    rotation_deg,
+                    flip_x,
+                    flip_y,
+                } => {
+                    draw_styled_premul_image(
+                        pixmap,
+                        *rect,
+                        *width,
+                        *height,
+                        rgba_premul,
+                        *saturation,
+                        *colorize,
+                        *shadow,
+                        *opacity,
+                        *rotation_deg,
+                        *flip_x,
+                        *flip_y,
+                        s,
+                    );
+                }
+                PaintCmd::TransformedGroup {
+                    rect,
+                    rotation_deg,
+                    flip_x,
+                    flip_y,
+                    opacity,
+                    commands: children,
+                } => {
+                    self.draw_transformed_group(
+                        pixmap,
+                        *rect,
+                        *rotation_deg,
+                        *flip_x,
+                        *flip_y,
+                        *opacity,
+                        children,
+                        s,
+                    );
+                }
+                PaintCmd::ConcaveCorner {
+                    corner,
+                    radius,
+                    color,
+                } => {
+                    draw_concave_corner(pixmap, *corner, *radius * s, *color);
+                }
+                PaintCmd::Polyline {
+                    points,
+                    color,
+                    width,
+                    closed,
+                    fill,
+                } => {
+                    draw_polyline(pixmap, points, *color, *width, *closed, *fill, s);
+                }
+                PaintCmd::Arc {
+                    cx,
+                    cy,
+                    radius,
+                    start_deg,
+                    sweep_deg,
+                    color,
+                    width,
+                } => {
+                    draw_arc(
+                        pixmap, *cx, *cy, *radius, *start_deg, *sweep_deg, *color, *width, s,
+                    );
                 }
                 PaintCmd::Text {
                     rect,
@@ -902,7 +995,23 @@ impl Renderer {
                 } => {
                     let eff_size = (*size * self.font_scale * s)
                         .clamp(6.0 * s, (rect.h * s * 0.92).max(6.0 * s));
-                    self.draw_text(&mut pixmap, *rect, text, *color, eff_size, *bold, *align, s);
+                    self.draw_text(
+                        pixmap, *rect, text, *color, eff_size, *bold, *align, false, s,
+                    );
+                }
+                PaintCmd::TabularText {
+                    rect,
+                    text,
+                    color,
+                    size,
+                    bold,
+                    align,
+                } => {
+                    let eff_size = (*size * self.font_scale * s)
+                        .clamp(6.0 * s, (rect.h * s * 0.92).max(6.0 * s));
+                    self.draw_text(
+                        pixmap, *rect, text, *color, eff_size, *bold, *align, true, s,
+                    );
                 }
                 PaintCmd::RichText {
                     rect,
@@ -920,15 +1029,7 @@ impl Renderer {
                         .rich_text
                         .get_or_insert_with(|| RichTextEngine::new(&hint));
                     engine.draw(
-                        &mut pixmap,
-                        *rect,
-                        text,
-                        *color,
-                        eff_size,
-                        *bold,
-                        *align,
-                        *max_lines,
-                        s,
+                        pixmap, *rect, text, *color, eff_size, *bold, *align, *max_lines, s,
                     );
                 }
                 PaintCmd::TextInputField {
@@ -952,7 +1053,7 @@ impl Renderer {
                         .rich_text
                         .get_or_insert_with(|| RichTextEngine::new(&hint));
                     engine.draw_text_input(
-                        &mut pixmap,
+                        pixmap,
                         *rect,
                         text,
                         preedit,
@@ -970,18 +1071,57 @@ impl Renderer {
                 }
             }
         }
+    }
 
-        // Convert tiny-skia premultiplied RGBA -> Wayland ARGB8888 (little-endian BGRA).
-        let src = pixmap.data();
-        let len = src.len().min(out_argb8888.len());
-        let (dst_chunks, _) = out_argb8888[..len].as_chunks_mut::<4>();
-        let (src_chunks, _) = src[..len].as_chunks::<4>();
-        for (dst_px, src_px) in dst_chunks.iter_mut().zip(src_chunks.iter()) {
-            dst_px[0] = src_px[2];
-            dst_px[1] = src_px[1];
-            dst_px[2] = src_px[0];
-            dst_px[3] = src_px[3];
+    #[allow(clippy::too_many_arguments)]
+    fn draw_transformed_group(
+        &mut self,
+        parent: &mut Pixmap,
+        rect: Rect,
+        rotation_deg: f32,
+        flip_x: bool,
+        flip_y: bool,
+        opacity: f32,
+        children: &[PaintCmd],
+        s: f32,
+    ) {
+        if !rect.w.is_finite()
+            || !rect.h.is_finite()
+            || !rect.x.is_finite()
+            || !rect.y.is_finite()
+            || rect.w <= 0.5
+            || rect.h <= 0.5
+            || opacity <= 0.01
+        {
+            return;
         }
+        let pw = (rect.w * s).ceil().clamp(1.0, 4096.0) as u32;
+        let ph = (rect.h * s).ceil().clamp(1.0, 4096.0) as u32;
+        let Some(mut local) = Pixmap::new(pw, ph) else {
+            return;
+        };
+        local.fill(SkiaColor::TRANSPARENT);
+        self.render_commands(&mut local, children, s);
+
+        let cx = (rect.x + rect.w * 0.5) * s;
+        let cy = (rect.y + rect.h * 0.5) * s;
+        let sx = if flip_x { -1.0 } else { 1.0 };
+        let sy = if flip_y { -1.0 } else { 1.0 };
+        let rad = if rotation_deg.is_finite() {
+            rotation_deg
+        } else {
+            0.0
+        };
+        let transform = Transform::from_translate(-(pw as f32) * 0.5, -(ph as f32) * 0.5)
+            .post_scale(sx, sy)
+            .post_rotate(rad)
+            .post_translate(cx, cy);
+        let paint = PixmapPaint {
+            opacity: opacity.clamp(0.0, 1.0),
+            blend_mode: BlendMode::SourceOver,
+            quality: FilterQuality::Bilinear,
+        };
+        parent.draw_pixmap(0, 0, local.as_ref(), &paint, transform, None);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -994,6 +1134,7 @@ impl Renderer {
         px_size: f32,
         bold: bool,
         align: TextAlign,
+        tabular: bool,
         scale: f32,
     ) {
         let rx = rect.x * scale;
@@ -1023,6 +1164,24 @@ impl Renderer {
             descent = (-scaled.descent()).max(0.0);
         }
 
+        let mut digit_advance = 0.0f32;
+        if tabular {
+            for d in '0'..='9' {
+                let key = (bold, d, size_key);
+                if !self.glyph_cache.contains_key(&key) {
+                    if let Some(cached) = self.rasterize_glyph(bold, d, px_size) {
+                        if self.glyph_cache.len() > 256 {
+                            self.glyph_cache.clear();
+                        }
+                        self.glyph_cache.insert(key, cached);
+                    }
+                }
+                if let Some(g) = self.glyph_cache.get(&key) {
+                    digit_advance = digit_advance.max(g.advance);
+                }
+            }
+        }
+
         for ch in text.chars() {
             let key = (bold, ch, size_key);
             if !self.glyph_cache.contains_key(&key) {
@@ -1034,7 +1193,11 @@ impl Renderer {
                 }
             }
             if let Some(g) = self.glyph_cache.get(&key) {
-                total_advance += g.advance;
+                if tabular && ch.is_ascii_digit() && digit_advance > 0.0 {
+                    total_advance += digit_advance;
+                } else {
+                    total_advance += g.advance;
+                }
             }
         }
 
@@ -1055,7 +1218,13 @@ impl Renderer {
             let Some(g) = self.glyph_cache.get(&key) else {
                 continue;
             };
-            let gx = (pen_x + g.offset_x).round() as i32;
+            let cell_adv = if tabular && ch.is_ascii_digit() && digit_advance > 0.0 {
+                digit_advance
+            } else {
+                g.advance
+            };
+            let cell_offset = (cell_adv - g.advance) * 0.5;
+            let gx = (pen_x + cell_offset + g.offset_x).round() as i32;
             let gy = (baseline_y + g.offset_y).round() as i32;
             for row in 0..g.height {
                 let py = gy + row as i32;
@@ -1074,8 +1243,41 @@ impl Renderer {
                     blend_pixel_premul(data, (py * pm_w + px) as usize * 4, color, cov);
                 }
             }
-            pen_x += g.advance;
+            pen_x += cell_adv;
         }
+    }
+
+    pub fn measure_tabular_width(&mut self, text: &str, px_size: f32, bold: bool) -> f32 {
+        let size_key = (px_size * 4.0).round().clamp(16.0, 2000.0) as u16;
+        let mut digit_advance = 0.0f32;
+        for d in '0'..='9' {
+            let key = (bold, d, size_key);
+            if !self.glyph_cache.contains_key(&key) {
+                if let Some(cached) = self.rasterize_glyph(bold, d, px_size) {
+                    self.glyph_cache.insert(key, cached);
+                }
+            }
+            if let Some(g) = self.glyph_cache.get(&key) {
+                digit_advance = digit_advance.max(g.advance);
+            }
+        }
+        let mut total = 0.0f32;
+        for ch in text.chars() {
+            if ch.is_ascii_digit() && digit_advance > 0.0 {
+                total += digit_advance;
+                continue;
+            }
+            let key = (bold, ch, size_key);
+            if !self.glyph_cache.contains_key(&key) {
+                if let Some(cached) = self.rasterize_glyph(bold, ch, px_size) {
+                    self.glyph_cache.insert(key, cached);
+                }
+            }
+            if let Some(g) = self.glyph_cache.get(&key) {
+                total += g.advance;
+            }
+        }
+        total
     }
 
     fn select_font(&self, bold: bool) -> Option<&MmappedFont> {
@@ -1757,6 +1959,599 @@ fn draw_icon(
                 pixmap.stroke_path(&div, &paint, &round_stroke, Transform::identity(), None);
             }
         }
+        IconKind::Calendar => {
+            if let Some(outer) = rounded_rect_path(
+                x + sw,
+                y + h * 0.18,
+                (w - sw * 2.0).max(2.0),
+                h * 0.74,
+                1.5 * s,
+            ) {
+                pixmap.stroke_path(&outer, &paint, &round_stroke, Transform::identity(), None);
+            }
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + sw, y + h * 0.40);
+            pb.line_to(x + w - sw, y + h * 0.40);
+            pb.move_to(x + w * 0.32, y + h * 0.08);
+            pb.line_to(x + w * 0.32, y + h * 0.24);
+            pb.move_to(x + w * 0.68, y + h * 0.08);
+            pb.line_to(x + w * 0.68, y + h * 0.24);
+            if let Some(p) = pb.finish() {
+                pixmap.stroke_path(&p, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Weather => {
+            if let Some(sun) = PathBuilder::from_circle(x + w * 0.36, y + h * 0.38, w.min(h) * 0.18)
+            {
+                pixmap.fill_path(&sun, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+            if let Some(cloud) =
+                rounded_rect_path(x + w * 0.24, y + h * 0.46, w * 0.62, h * 0.34, h * 0.17)
+            {
+                pixmap.fill_path(
+                    &cloud,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+        IconKind::Cpu => {
+            if let Some(core) =
+                rounded_rect_path(x + w * 0.24, y + h * 0.24, w * 0.52, h * 0.52, 1.2 * s)
+            {
+                pixmap.stroke_path(&core, &paint, &round_stroke, Transform::identity(), None);
+            }
+            let mut pb = PathBuilder::new();
+            for p in [0.36f32, 0.64] {
+                pb.move_to(x + w * p, y + h * 0.08);
+                pb.line_to(x + w * p, y + h * 0.22);
+                pb.move_to(x + w * p, y + h * 0.78);
+                pb.line_to(x + w * p, y + h * 0.92);
+                pb.move_to(x + w * 0.08, y + h * p);
+                pb.line_to(x + w * 0.22, y + h * p);
+                pb.move_to(x + w * 0.78, y + h * p);
+                pb.line_to(x + w * 0.92, y + h * p);
+            }
+            if let Some(pins) = pb.finish() {
+                pixmap.stroke_path(&pins, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Clock => {
+            let cx = x + w * 0.5;
+            let cy = y + h * 0.5;
+            let r = w.min(h) * 0.40;
+            if let Some(c) = PathBuilder::from_circle(cx, cy, r) {
+                pixmap.stroke_path(&c, &paint, &round_stroke, Transform::identity(), None);
+            }
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx, cy);
+            pb.line_to(cx, cy - r * 0.55);
+            pb.move_to(cx, cy);
+            pb.line_to(cx + r * 0.45, cy + r * 0.15);
+            if let Some(hands) = pb.finish() {
+                pixmap.stroke_path(&hands, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Keyboard => {
+            if let Some(body) = rounded_rect_path(
+                x + sw,
+                y + h * 0.22,
+                (w - sw * 2.0).max(2.0),
+                h * 0.56,
+                1.5 * s,
+            ) {
+                pixmap.stroke_path(&body, &paint, &round_stroke, Transform::identity(), None);
+            }
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.28, y + h * 0.62);
+            pb.line_to(x + w * 0.72, y + h * 0.62);
+            if let Some(bar) = pb.finish() {
+                pixmap.stroke_path(&bar, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::LockKey => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.50, y + h * 0.16);
+            pb.line_to(x + w * 0.24, y + h * 0.46);
+            pb.line_to(x + w * 0.38, y + h * 0.46);
+            pb.line_to(x + w * 0.38, y + h * 0.82);
+            pb.line_to(x + w * 0.62, y + h * 0.82);
+            pb.line_to(x + w * 0.62, y + h * 0.46);
+            pb.line_to(x + w * 0.76, y + h * 0.46);
+            pb.close();
+            if let Some(arr) = pb.finish() {
+                pixmap.stroke_path(&arr, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Camera => {
+            if let Some(body) = rounded_rect_path(
+                x + sw,
+                y + h * 0.26,
+                (w - sw * 2.0).max(2.0),
+                h * 0.58,
+                1.8 * s,
+            ) {
+                pixmap.stroke_path(&body, &paint, &round_stroke, Transform::identity(), None);
+            }
+            if let Some(lens) =
+                PathBuilder::from_circle(x + w * 0.50, y + h * 0.55, w.min(h) * 0.16)
+            {
+                pixmap.stroke_path(&lens, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Clipboard => {
+            if let Some(board) =
+                rounded_rect_path(x + w * 0.18, y + h * 0.18, w * 0.64, h * 0.72, 1.5 * s)
+            {
+                pixmap.stroke_path(&board, &paint, &round_stroke, Transform::identity(), None);
+            }
+            if let Some(clip) = SkiaRect::from_xywh(x + w * 0.34, y + h * 0.08, w * 0.32, h * 0.16)
+            {
+                pixmap.fill_rect(clip, &paint, Transform::identity(), None);
+            }
+        }
+        IconKind::ColorPicker => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.20, y + h * 0.80);
+            pb.line_to(x + w * 0.68, y + h * 0.32);
+            pb.move_to(x + w * 0.54, y + h * 0.22);
+            pb.line_to(x + w * 0.78, y + h * 0.46);
+            if let Some(p) = pb.finish() {
+                pixmap.stroke_path(&p, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Search => {
+            let r = w.min(h) * 0.28;
+            if let Some(c) = PathBuilder::from_circle(x + w * 0.42, y + h * 0.42, r) {
+                pixmap.stroke_path(&c, &paint, &round_stroke, Transform::identity(), None);
+            }
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.62, y + h * 0.62);
+            pb.line_to(x + w * 0.86, y + h * 0.86);
+            if let Some(hndl) = pb.finish() {
+                pixmap.stroke_path(&hndl, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Windows | IconKind::Grid => {
+            let cw = w * 0.34;
+            let ch = h * 0.34;
+            for (ox, oy) in [(0.12, 0.12), (0.54, 0.12), (0.12, 0.54), (0.54, 0.54)] {
+                if let Some(r) = rounded_rect_path(x + w * ox, y + h * oy, cw, ch, 1.0 * s) {
+                    pixmap.stroke_path(&r, &paint, &round_stroke, Transform::identity(), None);
+                }
+            }
+        }
+        IconKind::Shield | IconKind::Vpn => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.50, y + h * 0.10);
+            pb.line_to(x + w * 0.84, y + h * 0.24);
+            pb.line_to(x + w * 0.78, y + h * 0.64);
+            pb.line_to(x + w * 0.50, y + h * 0.90);
+            pb.line_to(x + w * 0.22, y + h * 0.64);
+            pb.line_to(x + w * 0.16, y + h * 0.24);
+            pb.close();
+            if let Some(p) = pb.finish() {
+                pixmap.stroke_path(&p, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::PowerProfile => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.56, y + h * 0.10);
+            pb.line_to(x + w * 0.24, y + h * 0.54);
+            pb.line_to(x + w * 0.50, y + h * 0.54);
+            pb.line_to(x + w * 0.44, y + h * 0.90);
+            pb.line_to(x + w * 0.76, y + h * 0.46);
+            pb.line_to(x + w * 0.50, y + h * 0.46);
+            pb.close();
+            if let Some(bolt) = pb.finish() {
+                pixmap.fill_path(
+                    &bolt,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+        IconKind::Music => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.42, y + h * 0.74);
+            pb.line_to(x + w * 0.42, y + h * 0.20);
+            pb.line_to(x + w * 0.80, y + h * 0.14);
+            pb.line_to(x + w * 0.80, y + h * 0.66);
+            if let Some(stem) = pb.finish() {
+                pixmap.stroke_path(&stem, &paint, &round_stroke, Transform::identity(), None);
+            }
+            if let Some(n1) = PathBuilder::from_circle(x + w * 0.30, y + h * 0.76, w.min(h) * 0.14)
+            {
+                pixmap.fill_path(&n1, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+            if let Some(n2) = PathBuilder::from_circle(x + w * 0.68, y + h * 0.68, w.min(h) * 0.14)
+            {
+                pixmap.fill_path(&n2, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        }
+        IconKind::Plus => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.5, y + h * 0.18);
+            pb.line_to(x + w * 0.5, y + h * 0.82);
+            pb.move_to(x + w * 0.18, y + h * 0.5);
+            pb.line_to(x + w * 0.82, y + h * 0.5);
+            if let Some(p) = pb.finish() {
+                pixmap.stroke_path(&p, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Undo | IconKind::Refresh => {
+            let cx = x + w * 0.5;
+            let cy = y + h * 0.5;
+            let r = w.min(h) * 0.32;
+            draw_arc(
+                pixmap,
+                rect.x + rect.w * 0.5,
+                rect.y + rect.h * 0.5,
+                rect.w.min(rect.h) * 0.32,
+                30.0,
+                270.0,
+                color,
+                stroke_width,
+                s,
+            );
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx - r * 0.4, cy - r);
+            pb.line_to(cx - r, cy - r * 0.5);
+            pb.line_to(cx - r * 0.3, cy - r * 0.2);
+            if let Some(tip) = pb.finish() {
+                pixmap.stroke_path(&tip, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Redo => {
+            let cx = x + w * 0.5;
+            let cy = y + h * 0.5;
+            let r = w.min(h) * 0.32;
+            draw_arc(
+                pixmap,
+                rect.x + rect.w * 0.5,
+                rect.y + rect.h * 0.5,
+                rect.w.min(rect.h) * 0.32,
+                -120.0,
+                270.0,
+                color,
+                stroke_width,
+                s,
+            );
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx + r * 0.4, cy - r);
+            pb.line_to(cx + r, cy - r * 0.5);
+            pb.line_to(cx + r * 0.3, cy - r * 0.2);
+            if let Some(tip) = pb.finish() {
+                pixmap.stroke_path(&tip, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Trash => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.18, y + h * 0.24);
+            pb.line_to(x + w * 0.82, y + h * 0.24);
+            pb.move_to(x + w * 0.38, y + h * 0.14);
+            pb.line_to(x + w * 0.62, y + h * 0.14);
+            if let Some(top) = pb.finish() {
+                pixmap.stroke_path(&top, &paint, &round_stroke, Transform::identity(), None);
+            }
+            if let Some(bin) =
+                rounded_rect_path(x + w * 0.24, y + h * 0.28, w * 0.52, h * 0.58, 1.0 * s)
+            {
+                pixmap.stroke_path(&bin, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Pin => {
+            if let Some(head) = PathBuilder::from_circle(x + w * 0.5, y + h * 0.34, w.min(h) * 0.20)
+            {
+                pixmap.stroke_path(&head, &paint, &round_stroke, Transform::identity(), None);
+            }
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.5, y + h * 0.54);
+            pb.line_to(x + w * 0.5, y + h * 0.88);
+            if let Some(needle) = pb.finish() {
+                pixmap.stroke_path(&needle, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::FlipH => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.5, y + h * 0.12);
+            pb.line_to(x + w * 0.5, y + h * 0.88);
+            pb.move_to(x + w * 0.14, y + h * 0.5);
+            pb.line_to(x + w * 0.38, y + h * 0.26);
+            pb.line_to(x + w * 0.38, y + h * 0.74);
+            pb.close();
+            pb.move_to(x + w * 0.86, y + h * 0.5);
+            pb.line_to(x + w * 0.62, y + h * 0.26);
+            pb.line_to(x + w * 0.62, y + h * 0.74);
+            pb.close();
+            if let Some(p) = pb.finish() {
+                pixmap.stroke_path(&p, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::FlipV => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + w * 0.12, y + h * 0.5);
+            pb.line_to(x + w * 0.88, y + h * 0.5);
+            pb.move_to(x + w * 0.5, y + h * 0.14);
+            pb.line_to(x + w * 0.26, y + h * 0.38);
+            pb.line_to(x + w * 0.74, y + h * 0.38);
+            pb.close();
+            pb.move_to(x + w * 0.5, y + h * 0.86);
+            pb.line_to(x + w * 0.26, y + h * 0.62);
+            pb.line_to(x + w * 0.74, y + h * 0.62);
+            pb.close();
+            if let Some(p) = pb.finish() {
+                pixmap.stroke_path(&p, &paint, &round_stroke, Transform::identity(), None);
+            }
+        }
+        IconKind::Rotate => {
+            draw_arc(
+                pixmap,
+                rect.x + rect.w * 0.5,
+                rect.y + rect.h * 0.5,
+                rect.w.min(rect.h) * 0.34,
+                -60.0,
+                290.0,
+                color,
+                stroke_width,
+                s,
+            );
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_styled_premul_image(
+    pixmap: &mut Pixmap,
+    rect: Rect,
+    src_w: u32,
+    src_h: u32,
+    rgba_premul: &[u8],
+    saturation: f32,
+    colorize: Option<Color>,
+    shadow: bool,
+    opacity: f32,
+    rotation_deg: f32,
+    flip_x: bool,
+    flip_y: bool,
+    scale: f32,
+) {
+    if src_w == 0
+        || src_h == 0
+        || rect.w <= 0.5
+        || rect.h <= 0.5
+        || opacity <= 0.01
+        || rgba_premul.len() < (src_w as usize) * (src_h as usize) * 4
+    {
+        return;
+    }
+
+    let mut buf = rgba_premul[..(src_w as usize) * (src_h as usize) * 4].to_vec();
+    let sat = saturation.clamp(0.0, 1.0);
+    if sat < 0.999 || colorize.is_some() {
+        for px in buf.as_chunks_mut::<4>().0 {
+            let a = px[3];
+            if a == 0 {
+                continue;
+            }
+            let af = f32::from(a) / 255.0;
+            let mut r = (f32::from(px[0]) / af).clamp(0.0, 255.0);
+            let mut g = (f32::from(px[1]) / af).clamp(0.0, 255.0);
+            let mut b = (f32::from(px[2]) / af).clamp(0.0, 255.0);
+            let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            if sat < 0.999 {
+                r = lum + (r - lum) * sat;
+                g = lum + (g - lum) * sat;
+                b = lum + (b - lum) * sat;
+            }
+            if let Some(tint) = colorize {
+                let lnorm = 0.22 + 0.78 * (lum / 255.0);
+                r = f32::from(tint.r) * lnorm;
+                g = f32::from(tint.g) * lnorm;
+                b = f32::from(tint.b) * lnorm;
+            }
+            px[0] = (r * af).round().clamp(0.0, 255.0) as u8;
+            px[1] = (g * af).round().clamp(0.0, 255.0) as u8;
+            px[2] = (b * af).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+
+    let Some(src_pm) = tiny_skia::PixmapRef::from_bytes(&buf, src_w, src_h).map(|r| r.to_owned())
+    else {
+        return;
+    };
+
+    let dst_sx = (rect.w * scale) / (src_w as f32);
+    let dst_sy = (rect.h * scale) / (src_h as f32);
+    let fx = if flip_x { -1.0 } else { 1.0 };
+    let fy = if flip_y { -1.0 } else { 1.0 };
+    let cx = (rect.x + rect.w * 0.5) * scale;
+    let cy = (rect.y + rect.h * 0.5) * scale;
+    let rad = if rotation_deg.is_finite() {
+        rotation_deg
+    } else {
+        0.0
+    };
+
+    if shadow {
+        let mut sh_buf = buf.clone();
+        for px in sh_buf.as_chunks_mut::<4>().0 {
+            let sa = ((u16::from(px[3]) * 90) / 255) as u8;
+            px[0] = 0;
+            px[1] = 0;
+            px[2] = 0;
+            px[3] = sa;
+        }
+        if let Some(sh_pm) =
+            tiny_skia::PixmapRef::from_bytes(&sh_buf, src_w, src_h).map(|r| r.to_owned())
+        {
+            let sh_tr = Transform::from_translate(-(src_w as f32) * 0.5, -(src_h as f32) * 0.5)
+                .post_scale(dst_sx * fx, dst_sy * fy)
+                .post_rotate(rad)
+                .post_translate(cx + 1.0 * scale, cy + 2.0 * scale);
+            let sh_paint = PixmapPaint {
+                opacity: opacity.clamp(0.0, 1.0),
+                blend_mode: BlendMode::SourceOver,
+                quality: FilterQuality::Bilinear,
+            };
+            pixmap.draw_pixmap(0, 0, sh_pm.as_ref(), &sh_paint, sh_tr, None);
+        }
+    }
+
+    let transform = Transform::from_translate(-(src_w as f32) * 0.5, -(src_h as f32) * 0.5)
+        .post_scale(dst_sx * fx, dst_sy * fy)
+        .post_rotate(rad)
+        .post_translate(cx, cy);
+    let paint = PixmapPaint {
+        opacity: opacity.clamp(0.0, 1.0),
+        blend_mode: BlendMode::SourceOver,
+        quality: FilterQuality::Bilinear,
+    };
+    pixmap.draw_pixmap(0, 0, src_pm.as_ref(), &paint, transform, None);
+}
+
+fn draw_concave_corner(pixmap: &mut Pixmap, corner: CornerPos, r: f32, color: Color) {
+    if !r.is_finite() || r <= 0.5 || color.a == 0 {
+        return;
+    }
+    let w = pixmap.width() as f32;
+    let h = pixmap.height() as f32;
+    let r = r.min(w).min(h);
+    let k = r * KAPPA;
+    let mut pb = PathBuilder::new();
+    match corner {
+        CornerPos::TopLeft => {
+            pb.move_to(0.0, 0.0);
+            pb.line_to(r, 0.0);
+            pb.cubic_to(r - k, 0.0, 0.0, r - k, 0.0, r);
+            pb.close();
+        }
+        CornerPos::TopRight => {
+            pb.move_to(w, 0.0);
+            pb.line_to(w, r);
+            pb.cubic_to(w, r - k, w - r + k, 0.0, w - r, 0.0);
+            pb.close();
+        }
+        CornerPos::BottomLeft => {
+            pb.move_to(0.0, h);
+            pb.line_to(0.0, h - r);
+            pb.cubic_to(0.0, h - r + k, r - k, h, r, h);
+            pb.close();
+        }
+        CornerPos::BottomRight => {
+            pb.move_to(w, h);
+            pb.line_to(w - r, h);
+            pb.cubic_to(w - r + k, h, w, h - r + k, w, h - r);
+            pb.close();
+        }
+    }
+    if let Some(path) = pb.finish() {
+        let mut paint = Paint::default();
+        paint.set_color(to_skia_color(color));
+        paint.anti_alias = true;
+        pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+}
+
+fn draw_polyline(
+    pixmap: &mut Pixmap,
+    points: &[(f32, f32)],
+    color: Color,
+    width: f32,
+    closed: bool,
+    fill: Option<Color>,
+    scale: f32,
+) {
+    let Some((first, rest)) = points.split_first() else {
+        return;
+    };
+    let mut pb = PathBuilder::new();
+    pb.move_to(first.0 * scale, first.1 * scale);
+    for &(px, py) in rest {
+        if px.is_finite() && py.is_finite() {
+            pb.line_to(px * scale, py * scale);
+        }
+    }
+    if closed {
+        pb.close();
+    }
+    if let Some(path) = pb.finish() {
+        if let Some(fill_col) = fill {
+            let mut fpaint = Paint::default();
+            fpaint.set_color(to_skia_color(fill_col));
+            fpaint.anti_alias = true;
+            pixmap.fill_path(
+                &path,
+                &fpaint,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
+        }
+        if width > 0.0 && color.a > 0 {
+            let mut paint = Paint::default();
+            paint.set_color(to_skia_color(color));
+            paint.anti_alias = true;
+            let st = Stroke {
+                width: (width * scale).max(1.0),
+                line_cap: LineCap::Round,
+                line_join: LineJoin::Round,
+                ..Stroke::default()
+            };
+            pixmap.stroke_path(&path, &paint, &st, Transform::identity(), None);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_arc(
+    pixmap: &mut Pixmap,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    start_deg: f32,
+    sweep_deg: f32,
+    color: Color,
+    width: f32,
+    scale: f32,
+) {
+    if radius <= 0.5 || sweep_deg.abs() < 0.5 || color.a == 0 {
+        return;
+    }
+    let steps = ((sweep_deg.abs() / 6.0).ceil() as usize).clamp(4, 96);
+    let mut pb = PathBuilder::new();
+    for i in 0..=steps {
+        let frac = i as f32 / steps as f32;
+        let rad = (start_deg + sweep_deg * frac).to_radians();
+        let px = (cx + radius * rad.cos()) * scale;
+        let py = (cy + radius * rad.sin()) * scale;
+        if i == 0 {
+            pb.move_to(px, py);
+        } else {
+            pb.line_to(px, py);
+        }
+    }
+    if let Some(path) = pb.finish() {
+        let mut paint = Paint::default();
+        paint.set_color(to_skia_color(color));
+        paint.anti_alias = true;
+        let st = Stroke {
+            width: (width * scale).max(1.0),
+            line_cap: LineCap::Round,
+            line_join: LineJoin::Round,
+            ..Stroke::default()
+        };
+        pixmap.stroke_path(&path, &paint, &st, Transform::identity(), None);
     }
 }
 
@@ -1940,6 +2735,7 @@ mod tests {
             animating: false,
             input_regions: None,
             ime_cursor_rect: None,
+            track_pointer_motion: false,
         }
     }
 
@@ -2061,5 +2857,83 @@ mod tests {
         renderer.render_spec(&spec, 240, 60, 1, &mut buf);
         let (chunks, _) = buf.as_chunks::<4>();
         assert!(chunks.iter().any(|px| px[3] == 255 && px[0] != 0x28));
+    }
+
+    #[test]
+    fn tabular_digits_keep_identical_pixel_width_across_varying_numbers() {
+        let mut renderer = Renderer::new("DejaVu Sans");
+        assert_eq!(
+            renderer.measure_tabular_width("11:11:11", 13.0, true),
+            renderer.measure_tabular_width("23:58:58", 13.0, true)
+        );
+        assert_eq!(
+            renderer.measure_tabular_width("11%", 13.0, false),
+            renderer.measure_tabular_width("98%", 13.0, false)
+        );
+    }
+
+    #[test]
+    fn transformed_group_styled_image_and_concave_corner_render_without_rb_swap_or_panic() {
+        let mut renderer = Renderer::new("JetBrainsMono Nerd Font");
+        // Pure red premul RGBA pixel (R=255, G=0, B=0, A=255)
+        let red_px: std::sync::Arc<[u8]> = std::sync::Arc::from([255, 0, 0, 255].repeat(16));
+        let mut spec = make_spec(vec![
+            PaintCmd::StyledImage {
+                rect: Rect::new(10.0, 10.0, 24.0, 24.0),
+                width: 4,
+                height: 4,
+                rgba_premul: red_px,
+                saturation: 1.0,
+                colorize: None,
+                shadow: true,
+                opacity: 1.0,
+                rotation_deg: 45.0,
+                flip_x: true,
+                flip_y: false,
+            },
+            PaintCmd::TransformedGroup {
+                rect: Rect::new(60.0, 10.0, 40.0, 40.0),
+                rotation_deg: 30.0,
+                flip_x: true,
+                flip_y: true,
+                opacity: 0.9,
+                commands: vec![PaintCmd::RoundedRect {
+                    rect: Rect::new(4.0, 4.0, 32.0, 32.0),
+                    radius: 4.0,
+                    fill: Some(Color::rgba(0x20, 0x80, 0xe0, 0xff)),
+                    stroke: None,
+                    stroke_width: 0.0,
+                }],
+            },
+            // Zero/degenerate group must never panic
+            PaintCmd::TransformedGroup {
+                rect: Rect::new(0.0, 0.0, 0.0, 0.0),
+                rotation_deg: f32::NAN,
+                flip_x: false,
+                flip_y: false,
+                opacity: 1.0,
+                commands: vec![],
+            },
+            PaintCmd::ConcaveCorner {
+                corner: CornerPos::TopLeft,
+                radius: 12.0,
+                color: Color::rgba(0, 0, 0, 255),
+            },
+        ]);
+        spec.background = Color::TRANSPARENT;
+        spec.border_width = 0.0;
+        let mut buf = vec![0u8; 240 * 60 * 4];
+        renderer.render_spec(&spec, 240, 60, 1, &mut buf);
+
+        // Center of rotated red StyledImage (x=22, y=22) in BGRA must have R > B
+        let idx = (22 * 240 + 22) * 4;
+        assert!(
+            buf[idx + 2] > 200 && buf[idx] < 40,
+            "expected red channel preserved, got {:?}",
+            &buf[idx..idx + 4]
+        );
+        // Top-left pixel (0,0) of ConcaveCorner must be opaque black, (11,11) transparent
+        assert_eq!(buf[3], 255);
+        assert_eq!(buf[(11 * 240 + 11) * 4 + 3], 0);
     }
 }

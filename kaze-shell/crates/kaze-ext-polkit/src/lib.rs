@@ -331,6 +331,7 @@ impl PolkitExtension {
             animating: false,
             input_regions: None,
             ime_cursor_rect: Some(Rect::new(32.0, 140.0, w - 64.0, 28.0)),
+            track_pointer_motion: false,
         });
     }
 }

@@ -19,6 +19,7 @@ kaze-ext-bar.workspace = true
 kaze-ext-capture.workspace = true
 kaze-ext-cc.workspace = true
 kaze-ext-clipboard.workspace = true
+kaze-ext-dock.workspace = true
 kaze-ext-idle.workspace = true
 kaze-ext-island.workspace = true
 kaze-ext-launcher.workspace = true
