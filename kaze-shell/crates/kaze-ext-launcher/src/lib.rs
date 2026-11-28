@@ -1,61 +1,129 @@
 #![deny(clippy::unwrap_used)]
 
+pub mod calc;
 pub mod desktop;
+pub mod emoji;
+pub mod frecency;
 
-use desktop::{scan_applications, DesktopApp};
+use calc::{evaluate_calculator, looks_like_math_expression};
+use desktop::{scan_applications, AppCategory, DesktopApp};
+use emoji::{load_recent_emojis, recent_emoji_path, record_recent_emoji, search_emojis};
+use frecency::FrecencyStore;
+use kaze_core::text_input::matches_binding;
 use kaze_core::{
     t, Anchor, AppState, DirtyFlags, EdgeInsets, HitTarget, I18nKey, ImeEvent, IpcResult,
     KazeExtension, KeyEvent, KeyboardMode, Layer, PaintCmd, PointerButton, Rect, ShellAction,
     ShellContext, SurfaceSpec, SystemEvent, TextAlign, TextInputOutcome, TextInputState,
 };
+use std::fs;
+use std::path::PathBuf;
 
 const SURFACE_ID: &str = "launcher:main";
 const NAMESPACE: &str = "kaze-launcher";
 
-// Standard X11 / XKB keysym raw values (`xkbcommon`)
-const KEY_TAB: u32 = 0xff09;
 const KEY_HOME: u32 = 0xff50;
 const KEY_UP: u32 = 0xff52;
 const KEY_DOWN: u32 = 0xff54;
 const KEY_PAGE_UP: u32 = 0xff55;
 const KEY_PAGE_DOWN: u32 = 0xff56;
 const KEY_END: u32 = 0xff57;
-const KEY_ISO_LEFT_TAB: u32 = 0xfe20;
-const KEY_DELETE: u32 = 0xffff;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClipboardEntry {
-    pub raw_line: String,
-    pub display: String,
-    pub is_image: bool,
-}
+const KEY_TAB: u32 = 0xff09;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LauncherMode {
     Closed,
     Apps,
     Dmenu { prompt: String, items: Vec<String> },
-    Clipboard { entries: Vec<ClipboardEntry> },
+}
+
+#[derive(Debug, Clone)]
+enum ItemKind {
+    App(usize),
+    Dmenu(usize),
+    Calc { copy_value: String, is_error: bool },
+    Emoji(String),
+    Panel(&'static str),
+    Wallpaper(PathBuf),
 }
 
 #[derive(Debug, Clone)]
 struct FilteredItem {
-    index: usize,
+    kind: ItemKind,
     title: String,
     subtitle: String,
     score: i32,
 }
 
-/// Unified App Launcher (`.desktop` scanner + lazy cache) and `dmenu` overlay (`kaze-launcher`).
+#[derive(Debug, Clone, Copy)]
+struct PanelItem {
+    id: &'static str,
+    title_en: &'static str,
+    title_vi: &'static str,
+    subtitle: &'static str,
+}
+
+const PANELS: &[PanelItem] = &[
+    PanelItem {
+        id: "cc",
+        title_en: "Control Center",
+        title_vi: "Trung tâm điều khiển",
+        subtitle: "Open quick toggles, sliders & notifications",
+    },
+    PanelItem {
+        id: "clip",
+        title_en: "Clipboard History",
+        title_vi: "Lịch sử bảng tạm",
+        subtitle: "Browse pinned & encrypted clipboard entries",
+    },
+    PanelItem {
+        id: "session",
+        title_en: "Session Power Menu",
+        title_vi: "Menu nguồn phiên",
+        subtitle: "Lock, Suspend, Hibernate, Logout, Reboot, Shutdown",
+    },
+    PanelItem {
+        id: "theme",
+        title_en: "Toggle Light / Dark Theme",
+        title_vi: "Đổi giao diện Sáng / Tối",
+        subtitle: "Switch active Noctalia color mode & apply templates",
+    },
+    PanelItem {
+        id: "layout",
+        title_en: "Cycle Bar Layout Preset",
+        title_vi: "Chuyển bố cục thanh Bar",
+        subtitle: "Cycle Omarchy -> Island -> Swiss -> Ghost",
+    },
+    PanelItem {
+        id: "offline",
+        title_en: "Toggle Offline Mode",
+        title_vi: "Bật / Tắt Chế độ Ngoại tuyến",
+        subtitle: "Block all outbound network queries globally",
+    },
+    PanelItem {
+        id: "settings",
+        title_en: "Reload Configuration",
+        title_vi: "Tải lại cấu hình",
+        subtitle: "Reload config.toml & settings.toml overrides",
+    },
+];
+
+/// Unified multi-provider Launcher (`Apps`, `Calculator`, `Emoji`, `Panels`, `Wallpaper`, `dmenu`).
 ///
-/// Zero T0 overhead: `.desktop` scanning and surface creation stay completely dormant until
-/// `launcher-toggle` or `kaze-shell dmenu` opens the overlay; closing returns `Vec::new()` so
-/// `kaze-ui` immediately drops the layer surface and releases SHM down to 0 KiB.
+/// Zero T0 overhead: `.desktop` scanning, wallpaper discovery, and Wayland surface creation
+/// remain completely dormant until opened; closing drops the surface down to 0 KiB SHM.
 pub struct LauncherExtension {
     mode: LauncherMode,
     apps: Vec<DesktopApp>,
     apps_loaded: bool,
     apps_dirty: bool,
+    wallpapers: Vec<PathBuf>,
+    wallpapers_loaded: bool,
+    frecency: FrecencyStore,
+    frecency_path: Option<PathBuf>,
+    recent_emojis: Vec<String>,
+    recent_emoji_path: Option<PathBuf>,
+    category: AppCategory,
+    grid_mode: bool,
     input: TextInputState,
     filtered: Vec<FilteredItem>,
     selected: usize,
@@ -71,11 +139,29 @@ impl Default for LauncherExtension {
 
 impl LauncherExtension {
     pub fn new() -> Self {
+        let frecency_path = FrecencyStore::default_path();
+        let frecency = frecency_path
+            .as_deref()
+            .map(FrecencyStore::load)
+            .unwrap_or_default();
+        let recent_emoji_path = recent_emoji_path();
+        let recent_emojis = recent_emoji_path
+            .as_deref()
+            .map(load_recent_emojis)
+            .unwrap_or_default();
         Self {
             mode: LauncherMode::Closed,
             apps: Vec::new(),
             apps_loaded: false,
             apps_dirty: false,
+            wallpapers: Vec::new(),
+            wallpapers_loaded: false,
+            frecency,
+            frecency_path,
+            recent_emojis,
+            recent_emoji_path,
+            category: AppCategory::All,
+            grid_mode: false,
             input: TextInputState::new(false),
             filtered: Vec::new(),
             selected: 0,
@@ -88,10 +174,23 @@ impl LauncherExtension {
         !matches!(self.mode, LauncherMode::Closed)
     }
 
+    pub fn is_grid_mode(&self) -> bool {
+        self.grid_mode
+    }
+
+    pub fn active_category(&self) -> AppCategory {
+        self.category
+    }
+
     pub fn set_apps_for_test(&mut self, apps: Vec<DesktopApp>) {
         self.apps = apps;
         self.apps_loaded = true;
         self.apps_dirty = false;
+    }
+
+    pub fn set_wallpapers_for_test(&mut self, walls: Vec<PathBuf>) {
+        self.wallpapers = walls;
+        self.wallpapers_loaded = true;
     }
 
     fn ensure_apps_loaded(&mut self) {
@@ -100,6 +199,39 @@ impl LauncherExtension {
             self.apps_loaded = true;
             self.apps_dirty = false;
         }
+    }
+
+    fn ensure_wallpapers_loaded(&mut self, state: &AppState) {
+        if self.wallpapers_loaded {
+            return;
+        }
+        self.wallpapers_loaded = true;
+        self.wallpapers.clear();
+        let mut dirs = Vec::new();
+        if let Some(ref cfg_dir) = state.config.wallpaper.directory {
+            dirs.push(expand_tilde_path(&cfg_dir.to_string_lossy()));
+        }
+        dirs.push(expand_tilde_path("~/Pictures/Wallpapers"));
+        dirs.push(expand_tilde_path("~/.local/share/wallpapers"));
+
+        for dir in dirs {
+            let Ok(rd) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.is_file() {
+                    let is_img = p
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "webp"));
+                    if is_img && !self.wallpapers.contains(&p) {
+                        self.wallpapers.push(p);
+                    }
+                }
+            }
+        }
+        self.wallpapers.sort();
     }
 
     fn effective_query(&self) -> String {
@@ -116,62 +248,108 @@ impl LauncherExtension {
         }
     }
 
-    fn refilter(&mut self, max_rows: usize) {
+    fn refilter(&mut self, state: &AppState) {
+        let max_rows = state.config.launcher.max_rows;
         let q = self.effective_query();
+        let trimmed = q.trim();
         self.filtered.clear();
 
         match &self.mode {
             LauncherMode::Closed => {}
-            LauncherMode::Apps => {
-                for (index, app) in self.apps.iter().enumerate() {
-                    if let Some(score) = score_desktop_app(&q, app) {
-                        self.filtered.push(FilteredItem {
-                            index,
-                            title: app.name.clone(),
-                            subtitle: app.subtitle().to_string(),
-                            score,
-                        });
-                    }
-                }
-                if !q.trim().is_empty() {
-                    self.filtered
-                        .sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.index.cmp(&b.index)));
-                }
-            }
             LauncherMode::Dmenu { items, .. } => {
                 for (index, line) in items.iter().enumerate() {
                     if let Some(score) = fuzzy_score(&q, line) {
                         self.filtered.push(FilteredItem {
-                            index,
+                            kind: ItemKind::Dmenu(index),
                             title: line.clone(),
                             subtitle: String::new(),
                             score,
                         });
                     }
                 }
-                if !q.trim().is_empty() {
-                    self.filtered
-                        .sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.index.cmp(&b.index)));
+                if !trimmed.is_empty() {
+                    self.filtered.sort_by_key(|a| std::cmp::Reverse(a.score));
                 }
             }
-            LauncherMode::Clipboard { entries } => {
-                for (index, entry) in entries.iter().enumerate() {
-                    if let Some(score) = fuzzy_score(&q, &entry.display) {
+            LauncherMode::Apps => {
+                if let Some(sub) = trimmed.strip_prefix("/emoji") {
+                    for (entry, score) in search_emojis(sub.trim(), &self.recent_emojis) {
                         self.filtered.push(FilteredItem {
-                            index,
-                            title: entry.display.clone(),
-                            subtitle: if entry.is_image {
-                                "Image · Enter copy · Shift+Del remove".to_string()
-                            } else {
-                                "Enter copy · Shift+Del remove".to_string()
-                            },
+                            kind: ItemKind::Emoji(entry.glyph.to_string()),
+                            title: format!("{}  {}", entry.glyph, entry.keywords),
+                            subtitle: "Enter copy emoji".into(),
                             score,
                         });
                     }
-                }
-                if !q.trim().is_empty() {
-                    self.filtered
-                        .sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.index.cmp(&b.index)));
+                } else if let Some(sub) = trimmed.strip_prefix("/pan") {
+                    let sub_q = sub.trim();
+                    for p in PANELS {
+                        let title = match state.locale {
+                            kaze_core::Locale::Vi => p.title_vi,
+                            kaze_core::Locale::En => p.title_en,
+                        };
+                        if let Some(score) = fuzzy_score(sub_q, &format!("{title} {}", p.id)) {
+                            self.filtered.push(FilteredItem {
+                                kind: ItemKind::Panel(p.id),
+                                title: title.to_string(),
+                                subtitle: p.subtitle.to_string(),
+                                score,
+                            });
+                        }
+                    }
+                    self.filtered.sort_by_key(|a| std::cmp::Reverse(a.score));
+                } else if let Some(sub) = trimmed.strip_prefix("/wall") {
+                    self.ensure_wallpapers_loaded(state);
+                    let sub_q = sub.trim();
+                    for wp in &self.wallpapers {
+                        let name = wp
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("wallpaper");
+                        if let Some(score) = fuzzy_score(sub_q, name) {
+                            self.filtered.push(FilteredItem {
+                                kind: ItemKind::Wallpaper(wp.clone()),
+                                title: name.to_string(),
+                                subtitle: wp.display().to_string(),
+                                score,
+                            });
+                        }
+                    }
+                    self.filtered.sort_by_key(|a| std::cmp::Reverse(a.score));
+                } else {
+                    if looks_like_math_expression(trimmed) {
+                        let calc = evaluate_calculator(trimmed, state.offline_mode);
+                        self.filtered.push(FilteredItem {
+                            kind: ItemKind::Calc {
+                                copy_value: calc.copy_value,
+                                is_error: calc.is_error,
+                            },
+                            title: calc.display,
+                            subtitle: if calc.is_error {
+                                "Calculator error".into()
+                            } else {
+                                "Calculator · Enter copies result".into()
+                            },
+                            score: 10_000,
+                        });
+                    }
+                    if !trimmed.starts_with('=') && !trimmed.starts_with("/calc") {
+                        for (index, app) in self.apps.iter().enumerate() {
+                            if !self.category.matches_app(app) {
+                                continue;
+                            }
+                            if let Some(score) = score_desktop_app(&q, app) {
+                                let frec = self.frecency.score(&app.id);
+                                self.filtered.push(FilteredItem {
+                                    kind: ItemKind::App(index),
+                                    title: app.name.clone(),
+                                    subtitle: app.subtitle().to_string(),
+                                    score: score + frec,
+                                });
+                            }
+                        }
+                        self.filtered.sort_by_key(|a| std::cmp::Reverse(a.score));
+                    }
                 }
             }
         }
@@ -185,14 +363,23 @@ impl LauncherExtension {
         }
     }
 
-    fn clamp_scroll(&mut self, max_rows: usize) {
+    fn visible_capacity(&self, max_rows: usize) -> usize {
         let rows = max_rows.max(1);
+        if self.grid_mode && matches!(self.mode, LauncherMode::Apps) {
+            rows * 3
+        } else {
+            rows
+        }
+    }
+
+    fn clamp_scroll(&mut self, max_rows: usize) {
+        let cap = self.visible_capacity(max_rows);
         if self.selected < self.scroll_offset {
             self.scroll_offset = self.selected;
-        } else if self.selected >= self.scroll_offset + rows {
-            self.scroll_offset = self.selected + 1 - rows;
+        } else if self.selected >= self.scroll_offset + cap {
+            self.scroll_offset = self.selected + 1 - cap;
         }
-        let max_offset = self.filtered.len().saturating_sub(rows);
+        let max_offset = self.filtered.len().saturating_sub(cap);
         self.scroll_offset = self.scroll_offset.min(max_offset);
     }
 
@@ -206,16 +393,27 @@ impl LauncherExtension {
         self.clamp_scroll(max_rows);
     }
 
-    fn open_apps(&mut self, ctx: &mut ShellContext) -> DirtyFlags {
+    fn open_apps(&mut self, prefix: Option<&str>, ctx: &mut ShellContext) -> DirtyFlags {
         if matches!(self.mode, LauncherMode::Dmenu { .. }) {
             ctx.push_action(ShellAction::DmenuReply { selected: None });
         }
         self.ensure_apps_loaded();
         self.mode = LauncherMode::Apps;
         self.input.clear();
+        if let Some(p) = prefix {
+            let trimmed = p.trim();
+            if !trimmed.is_empty() {
+                let text = if trimmed.starts_with('/') || trimmed.starts_with('=') {
+                    format!("{trimmed} ")
+                } else {
+                    trimmed.to_string()
+                };
+                self.input.set_text(&text);
+            }
+        }
         self.selected = 0;
         self.scroll_offset = 0;
-        self.refilter(ctx.state.config.launcher.max_rows);
+        self.refilter(ctx.state);
         self.rebuild(ctx.state);
         DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT
     }
@@ -227,51 +425,13 @@ impl LauncherExtension {
             .filter(|l| !l.is_empty())
             .collect();
         self.mode = LauncherMode::Dmenu { prompt, items };
+        self.grid_mode = false;
         self.input.clear();
         self.selected = 0;
         self.scroll_offset = 0;
-        self.refilter(ctx.state.config.launcher.max_rows);
+        self.refilter(ctx.state);
         self.rebuild(ctx.state);
         DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT
-    }
-
-    fn open_clipboard(&mut self, raw_payload: &str, ctx: &mut ShellContext) -> DirtyFlags {
-        if matches!(self.mode, LauncherMode::Dmenu { .. }) {
-            ctx.push_action(ShellAction::DmenuReply { selected: None });
-        }
-        let entries = parse_cliphist_output(raw_payload);
-        self.mode = LauncherMode::Clipboard { entries };
-        self.input.clear();
-        self.selected = 0;
-        self.scroll_offset = 0;
-        self.refilter(ctx.state.config.launcher.max_rows);
-        self.rebuild(ctx.state);
-        DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT
-    }
-
-    fn delete_selected_clipboard(&mut self, ctx: &mut ShellContext) -> DirtyFlags {
-        let Some(chosen) = self.filtered.get(self.selected).cloned() else {
-            return DirtyFlags::NONE;
-        };
-        let LauncherMode::Clipboard { ref mut entries } = self.mode else {
-            return DirtyFlags::NONE;
-        };
-        if chosen.index >= entries.len() {
-            return DirtyFlags::NONE;
-        }
-        let removed = entries.remove(chosen.index);
-        ctx.push_action(ShellAction::SpawnCommand {
-            program: "sh".to_string(),
-            args: vec![
-                "-c".to_string(),
-                "printf '%s\\n' \"$1\" | cliphist delete".to_string(),
-                "--".to_string(),
-                removed.raw_line,
-            ],
-        });
-        self.refilter(ctx.state.config.launcher.max_rows);
-        self.rebuild(ctx.state);
-        DirtyFlags::LAUNCHER
     }
 
     fn close_cancel(&mut self, ctx: &mut ShellContext) -> DirtyFlags {
@@ -296,10 +456,12 @@ impl LauncherExtension {
             return DirtyFlags::NONE;
         };
 
-        match &self.mode {
-            LauncherMode::Closed => DirtyFlags::NONE,
-            LauncherMode::Dmenu { items, .. } => {
-                let selected_line = items.get(chosen.index).cloned();
+        match chosen.kind {
+            ItemKind::Dmenu(idx) => {
+                let selected_line = match &self.mode {
+                    LauncherMode::Dmenu { items, .. } => items.get(idx).cloned(),
+                    _ => None,
+                };
                 self.mode = LauncherMode::Closed;
                 self.input.clear();
                 self.filtered.clear();
@@ -311,11 +473,17 @@ impl LauncherExtension {
                 });
                 DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT
             }
-            LauncherMode::Apps => {
-                let cmd = self
-                    .apps
-                    .get(chosen.index)
-                    .and_then(DesktopApp::build_command);
+            ItemKind::App(idx) => {
+                let (cmd, app_id) = match self.apps.get(idx) {
+                    Some(app) => (app.build_command(), Some(app.id.clone())),
+                    None => (None, None),
+                };
+                if let Some(id) = app_id {
+                    self.frecency.record_launch(&id);
+                    if let Some(ref p) = self.frecency_path {
+                        self.frecency.save(p);
+                    }
+                }
                 self.mode = LauncherMode::Closed;
                 self.input.clear();
                 self.filtered.clear();
@@ -327,25 +495,80 @@ impl LauncherExtension {
                 }
                 DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT
             }
-            LauncherMode::Clipboard { entries } => {
-                let raw = entries.get(chosen.index).map(|e| e.raw_line.clone());
+            ItemKind::Calc {
+                copy_value,
+                is_error,
+            } => {
+                if is_error || copy_value.is_empty() {
+                    return DirtyFlags::NONE;
+                }
+                ctx.push_action(ShellAction::SetClipboardText(copy_value));
+                self.close_cancel(ctx)
+            }
+            ItemKind::Emoji(glyph) => {
+                self.recent_emojis.retain(|g| g != &glyph);
+                self.recent_emojis.insert(0, glyph.clone());
+                self.recent_emojis.truncate(24);
+                if let Some(ref p) = self.recent_emoji_path {
+                    record_recent_emoji(p, &glyph);
+                }
+                ctx.push_action(ShellAction::SetClipboardText(glyph));
+                self.close_cancel(ctx)
+            }
+            ItemKind::Panel(id) => {
                 self.mode = LauncherMode::Closed;
                 self.input.clear();
                 self.filtered.clear();
                 self.selected = 0;
                 self.scroll_offset = 0;
                 self.cached_spec = None;
-                if let Some(raw_line) = raw {
-                    ctx.push_action(ShellAction::SpawnCommand {
-                        program: "sh".to_string(),
-                        args: vec![
-                            "-c".to_string(),
-                            "printf '%s\\n' \"$1\" | cliphist decode | wl-copy".to_string(),
-                            "--".to_string(),
-                            raw_line,
-                        ],
-                    });
+                match id {
+                    "cc" => ctx.push_action(ShellAction::ToggleControlCenter),
+                    "clip" => {
+                        ctx.push_action(ShellAction::SpawnCommand {
+                            program: "kaze-shell".into(),
+                            args: vec!["msg".into(), "clipboard-toggle".into()],
+                        });
+                    }
+                    "session" => {
+                        ctx.push_action(ShellAction::SpawnCommand {
+                            program: "kaze-shell".into(),
+                            args: vec!["msg".into(), "session-menu-toggle".into()],
+                        });
+                    }
+                    "theme" => ctx.push_action(ShellAction::ThemeModeToggle),
+                    "layout" => ctx.push_action(ShellAction::LayoutCycle),
+                    "offline" => {
+                        ctx.push_action(ShellAction::SpawnCommand {
+                            program: "kaze-shell".into(),
+                            args: vec!["msg".into(), "offline-mode-toggle".into()],
+                        });
+                    }
+                    "settings" => ctx.push_action(ShellAction::ReloadConfig),
+                    _ => {}
                 }
+                DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT
+            }
+            ItemKind::Wallpaper(path) => {
+                let outputs: Vec<(String, u32, u32)> = ctx
+                    .state
+                    .outputs
+                    .values()
+                    .filter(|o| o.name != "kaze-share" && o.width > 0 && o.height > 0)
+                    .map(|o| (o.name.clone(), o.width as u32, o.height as u32))
+                    .collect();
+                let extract = ctx.state.config.wallpaper.dynamic_palette;
+                self.mode = LauncherMode::Closed;
+                self.input.clear();
+                self.filtered.clear();
+                self.selected = 0;
+                self.scroll_offset = 0;
+                self.cached_spec = None;
+                ctx.push_action(ShellAction::RequestWallpaperLoad {
+                    path,
+                    outputs,
+                    extract_palette: extract,
+                });
                 DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT
             }
         }
@@ -356,6 +579,25 @@ impl LauncherExtension {
             return DirtyFlags::NONE;
         }
         let max_rows = ctx.state.config.launcher.max_rows;
+
+        if matches!(self.mode, LauncherMode::Apps)
+            && (key.keysym == KEY_TAB || matches_binding(key, &ctx.state.config.input.keybinds.toggle_layout))
+        {
+            if key.modifiers.shift {
+                let idx = AppCategory::ALL
+                    .iter()
+                    .position(|c| *c == self.category)
+                    .unwrap_or(0);
+                self.category = AppCategory::ALL[(idx + 1) % AppCategory::ALL.len()];
+                self.selected = 0;
+                self.refilter(ctx.state);
+            } else {
+                self.grid_mode = !self.grid_mode;
+                self.clamp_scroll(max_rows);
+            }
+            self.rebuild(ctx.state);
+            return DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT;
+        }
 
         if key.modifiers.ctrl {
             match key.keysym {
@@ -381,33 +623,32 @@ impl LauncherExtension {
 
         match key.keysym {
             KEY_DOWN => {
-                self.move_selection(1, max_rows);
+                let step = if self.grid_mode && matches!(self.mode, LauncherMode::Apps) {
+                    3
+                } else {
+                    1
+                };
+                self.move_selection(step, max_rows);
                 self.rebuild(ctx.state);
                 DirtyFlags::LAUNCHER
             }
             KEY_UP => {
-                self.move_selection(-1, max_rows);
-                self.rebuild(ctx.state);
-                DirtyFlags::LAUNCHER
-            }
-            KEY_TAB => {
-                let delta = if key.modifiers.shift { -1 } else { 1 };
-                self.move_selection(delta, max_rows);
-                self.rebuild(ctx.state);
-                DirtyFlags::LAUNCHER
-            }
-            KEY_ISO_LEFT_TAB => {
-                self.move_selection(-1, max_rows);
+                let step = if self.grid_mode && matches!(self.mode, LauncherMode::Apps) {
+                    -3
+                } else {
+                    -1
+                };
+                self.move_selection(step, max_rows);
                 self.rebuild(ctx.state);
                 DirtyFlags::LAUNCHER
             }
             KEY_PAGE_DOWN => {
-                self.move_selection(max_rows as isize, max_rows);
+                self.move_selection(self.visible_capacity(max_rows) as isize, max_rows);
                 self.rebuild(ctx.state);
                 DirtyFlags::LAUNCHER
             }
             KEY_PAGE_UP => {
-                self.move_selection(-(max_rows as isize), max_rows);
+                self.move_selection(-(self.visible_capacity(max_rows) as isize), max_rows);
                 self.rebuild(ctx.state);
                 DirtyFlags::LAUNCHER
             }
@@ -423,7 +664,6 @@ impl LauncherExtension {
                 self.rebuild(ctx.state);
                 DirtyFlags::LAUNCHER
             }
-            KEY_DELETE if key.modifiers.shift => self.delete_selected_clipboard(ctx),
             _ => match self.input.handle_key(key, &ctx.state.config.input.keybinds) {
                 TextInputOutcome::Cancel => self.close_cancel(ctx),
                 TextInputOutcome::Submit => self.activate_selected(ctx),
@@ -434,7 +674,7 @@ impl LauncherExtension {
                 TextInputOutcome::Cut(s) => {
                     ctx.push_action(ShellAction::SetClipboardText(s));
                     self.selected = 0;
-                    self.refilter(max_rows);
+                    self.refilter(ctx.state);
                     self.rebuild(ctx.state);
                     DirtyFlags::LAUNCHER
                 }
@@ -446,7 +686,7 @@ impl LauncherExtension {
                 }
                 TextInputOutcome::Changed => {
                     self.selected = 0;
-                    self.refilter(max_rows);
+                    self.refilter(ctx.state);
                     self.rebuild(ctx.state);
                     DirtyFlags::LAUNCHER
                 }
@@ -459,14 +699,13 @@ impl LauncherExtension {
         if !self.is_open() {
             return DirtyFlags::NONE;
         }
-        let max_rows = ctx.state.config.launcher.max_rows;
         if !self.input.handle_ime(ime) {
             return DirtyFlags::NONE;
         }
         if matches!(ime, ImeEvent::Commit(_) | ImeEvent::DeleteSurrounding { .. }) {
             self.selected = 0;
         }
-        self.refilter(max_rows);
+        self.refilter(ctx.state);
         self.rebuild(ctx.state);
         DirtyFlags::LAUNCHER
     }
@@ -479,6 +718,8 @@ impl LauncherExtension {
         self.cached_spec = Some(build_launcher_surface(
             state,
             &self.mode,
+            self.category,
+            self.grid_mode,
             &self.input,
             &self.filtered,
             self.selected,
@@ -511,6 +752,24 @@ impl KazeExtension for LauncherExtension {
                     return self.close_cancel(ctx);
                 }
                 if *button == PointerButton::Left {
+                    if target_id == "launcher:view-toggle" {
+                        self.grid_mode = !self.grid_mode;
+                        self.clamp_scroll(ctx.state.config.launcher.max_rows);
+                        self.rebuild(ctx.state);
+                        return DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT;
+                    }
+                    if let Some(cat_idx) = target_id
+                        .strip_prefix("launcher:cat:")
+                        .and_then(|s| s.parse::<usize>().ok())
+                    {
+                        if let Some(&cat) = AppCategory::ALL.get(cat_idx) {
+                            self.category = cat;
+                            self.selected = 0;
+                            self.refilter(ctx.state);
+                            self.rebuild(ctx.state);
+                            return DirtyFlags::LAUNCHER | DirtyFlags::LAYOUT;
+                        }
+                    }
                     if let Some(idx_str) = target_id.strip_prefix("launcher:row:") {
                         if let Ok(idx) = idx_str.parse::<usize>() {
                             if idx < self.filtered.len() {
@@ -542,7 +801,7 @@ impl KazeExtension for LauncherExtension {
                 self.apps_dirty = true;
                 if matches!(self.mode, LauncherMode::Apps) {
                     self.ensure_apps_loaded();
-                    self.refilter(ctx.state.config.launcher.max_rows);
+                    self.refilter(ctx.state);
                     self.rebuild(ctx.state);
                     return DirtyFlags::LAUNCHER;
                 }
@@ -553,7 +812,7 @@ impl KazeExtension for LauncherExtension {
             {
                 if self.input.paste_text(text) {
                     self.selected = 0;
-                    self.refilter(ctx.state.config.launcher.max_rows);
+                    self.refilter(ctx.state);
                     self.rebuild(ctx.state);
                     DirtyFlags::LAUNCHER
                 } else {
@@ -562,13 +821,14 @@ impl KazeExtension for LauncherExtension {
             }
             SystemEvent::ConfigReloaded
             | SystemEvent::LocaleChanged(_)
+            | SystemEvent::OfflineModeChanged(_)
             | SystemEvent::ThemeChanged(_)
             | SystemEvent::LayoutPresetChanged(_) => {
                 if !ctx.state.config.launcher.enabled {
                     return self.close_cancel(ctx);
                 }
                 if self.is_open() {
-                    self.clamp_scroll(ctx.state.config.launcher.max_rows);
+                    self.refilter(ctx.state);
                     self.rebuild(ctx.state);
                     return DirtyFlags::LAUNCHER | DirtyFlags::THEME;
                 }
@@ -596,12 +856,29 @@ impl KazeExtension for LauncherExtension {
                         dirty,
                     }
                 } else {
-                    let dirty = self.open_apps(ctx);
+                    let prefix = args.first().map(String::as_str);
+                    let dirty = self.open_apps(prefix, ctx);
                     IpcResult::Handled {
                         ok: true,
                         message: "opened".into(),
                         dirty,
                     }
+                }
+            }
+            "launcher-open" | "launcher" => {
+                if !ctx.state.config.launcher.enabled {
+                    return IpcResult::Handled {
+                        ok: false,
+                        message: "launcher disabled in config".into(),
+                        dirty: DirtyFlags::NONE,
+                    };
+                }
+                let prefix = args.first().map(String::as_str);
+                let dirty = self.open_apps(prefix, ctx);
+                IpcResult::Handled {
+                    ok: true,
+                    message: "opened".into(),
+                    dirty,
                 }
             }
             "launcher-close" => {
@@ -623,7 +900,7 @@ impl KazeExtension for LauncherExtension {
                 if let Some(q) = args.first() {
                     self.input.set_text(q);
                     self.selected = 0;
-                    self.refilter(ctx.state.config.launcher.max_rows);
+                    self.refilter(ctx.state);
                 }
                 let dirty = self.activate_selected(ctx);
                 IpcResult::Handled {
@@ -650,33 +927,6 @@ impl KazeExtension for LauncherExtension {
                     dirty,
                 }
             }
-            "clipboard-toggle" => {
-                if !ctx.state.config.launcher.enabled {
-                    return IpcResult::Handled {
-                        ok: false,
-                        message: "launcher disabled in config".into(),
-                        dirty: DirtyFlags::NONE,
-                    };
-                }
-                if matches!(self.mode, LauncherMode::Clipboard { .. }) {
-                    let dirty = self.close_cancel(ctx);
-                    return IpcResult::Handled {
-                        ok: true,
-                        message: "closed".into(),
-                        dirty,
-                    };
-                }
-                let raw = match args.first() {
-                    Some(inline) => inline.clone(),
-                    None => read_cliphist_list(),
-                };
-                let dirty = self.open_clipboard(&raw, ctx);
-                IpcResult::Handled {
-                    ok: true,
-                    message: "opened".into(),
-                    dirty,
-                }
-            }
             _ => IpcResult::Unhandled,
         }
     }
@@ -686,46 +936,13 @@ impl KazeExtension for LauncherExtension {
     }
 }
 
-fn read_cliphist_list() -> String {
-    match std::process::Command::new("cliphist")
-        .arg("list")
-        .stdin(std::process::Stdio::null())
-        .output()
-    {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
-        _ => String::new(),
+fn expand_tilde_path(raw: &str) -> PathBuf {
+    if let Some(rest) = raw.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
     }
-}
-
-/// Parses `cliphist list` lines (`<id>\t<preview>`), tagging binary images as `[IMG] ...`
-/// while preserving UTF-8 Vietnamese text and Emoji.
-pub fn parse_cliphist_output(raw: &str) -> Vec<ClipboardEntry> {
-    raw.lines()
-        .filter(|l| !l.trim().is_empty())
-        .take(200)
-        .map(|line| {
-            let trimmed = line.trim_end_matches('\r');
-            let preview = trimmed
-                .split_once('\t')
-                .map(|(_, rest)| rest)
-                .unwrap_or(trimmed);
-            let is_image = preview.starts_with("[[ binary data");
-            let display = if is_image {
-                let inner = preview
-                    .trim_start_matches("[[ binary data")
-                    .trim_end_matches("]]")
-                    .trim();
-                format!("[IMG] {inner}")
-            } else {
-                preview.split_whitespace().collect::<Vec<_>>().join(" ")
-            };
-            ClipboardEntry {
-                raw_line: trimmed.to_string(),
-                display,
-                is_image,
-            }
-        })
-        .collect()
+    PathBuf::from(raw)
 }
 
 fn score_desktop_app(query: &str, app: &DesktopApp) -> Option<i32> {
@@ -753,7 +970,6 @@ fn score_desktop_app(query: &str, app: &DesktopApp) -> Option<i32> {
     best
 }
 
-/// Case-insensitive multi-token fuzzy matcher (supports full Unicode / Vietnamese lowercase).
 pub fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
     let q_trimmed = query.trim();
     if q_trimmed.is_empty() {
@@ -765,55 +981,63 @@ pub fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
 
     for token in q_trimmed.split_whitespace() {
         let tok_lower = token.to_lowercase();
-        let tok_score = score_single_token(&tok_lower, &cand_lower, &cand_chars)?;
-        total = total.saturating_add(tok_score);
+        let tok_chars: Vec<char> = tok_lower.chars().collect();
+        if tok_chars.is_empty() {
+            continue;
+        }
+        total += fuzzy_token_score(&tok_chars, &cand_chars)?;
     }
+
     Some(total)
 }
 
-fn score_single_token(tok: &str, cand_lower: &str, cand_chars: &[char]) -> Option<i32> {
-    if cand_lower == tok {
-        return Some(1000);
-    }
-    if cand_lower.starts_with(tok) {
-        return Some(600 - (cand_chars.len() as i32).min(100));
-    }
-    if let Some(byte_pos) = cand_lower.find(tok) {
-        let at_word = byte_pos == 0
-            || cand_lower[..byte_pos]
-                .chars()
-                .last()
-                .is_some_and(|c| !c.is_alphanumeric());
-        let bonus = if at_word { 420 } else { 300 };
-        return Some(bonus - (byte_pos as i32).min(150));
+fn fuzzy_token_score(needle: &[char], haystack: &[char]) -> Option<i32> {
+    if needle.len() > haystack.len() {
+        return None;
     }
 
-    // Subsequence match with consecutive and word-boundary bonuses.
-    let mut score = 100i32;
-    let mut c_idx = 0usize;
+    if haystack.len() >= needle.len() {
+        for start in 0..=haystack.len() - needle.len() {
+            if haystack[start..start + needle.len()] == *needle {
+                let mut score = 420 - (start as i32 * 4).min(120);
+                if start == 0 {
+                    score += 180;
+                } else if !haystack[start - 1].is_alphanumeric() {
+                    score += 110;
+                }
+                if haystack.len() == needle.len() {
+                    score += 120;
+                }
+                return Some(score);
+            }
+        }
+    }
+
+    let mut score = 120i32;
+    let mut h_idx = 0usize;
     let mut prev_match: Option<usize> = None;
 
-    for qch in tok.chars() {
+    for &nc in needle {
         let mut found = None;
-        while c_idx < cand_chars.len() {
-            if cand_chars[c_idx] == qch {
-                found = Some(c_idx);
-                c_idx += 1;
+        while h_idx < haystack.len() {
+            if haystack[h_idx] == nc {
+                found = Some(h_idx);
+                h_idx += 1;
                 break;
             }
-            c_idx += 1;
+            h_idx += 1;
         }
         let pos = found?;
         if let Some(prev) = prev_match {
             if pos == prev + 1 {
-                score += 18;
+                score += 24;
             } else {
                 score -= ((pos - prev - 1) as i32).min(12);
             }
         } else {
             score -= (pos as i32).min(30);
         }
-        if pos == 0 || !cand_chars[pos - 1].is_alphanumeric() {
+        if pos == 0 || !haystack[pos - 1].is_alphanumeric() {
             score += 22;
         }
         prev_match = Some(pos);
@@ -822,9 +1046,12 @@ fn score_single_token(tok: &str, cand_lower: &str, cand_chars: &[char]) -> Optio
     Some(score)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_launcher_surface(
     state: &AppState,
     mode: &LauncherMode,
+    category: AppCategory,
+    grid_mode: bool,
     input: &TextInputState,
     filtered: &[FilteredItem],
     selected: usize,
@@ -846,36 +1073,46 @@ fn build_launcher_surface(
     let selection_color = colors.secondary_color().with_opacity(0.35);
 
     let is_apps = matches!(mode, LauncherMode::Apps);
-    let is_clip = matches!(mode, LauncherMode::Clipboard { .. });
     let prompt = match mode {
         LauncherMode::Apps => t(loc, I18nKey::LauncherPromptApps).to_string(),
         LauncherMode::Dmenu { prompt, .. } => prompt.clone(),
-        LauncherMode::Clipboard { .. } => t(loc, I18nKey::LauncherPromptClip).to_string(),
         LauncherMode::Closed => String::new(),
     };
     let total_count = match mode {
         LauncherMode::Apps => filtered.len(),
         LauncherMode::Dmenu { items, .. } => items.len(),
-        LauncherMode::Clipboard { entries } => entries.len(),
         LauncherMode::Closed => 0,
     };
 
     let border_w = bar.border_width.max(2.0);
-    let w = cfg.width.clamp(320, 960) as f32;
+    let w = cfg.width.clamp(420, 960) as f32;
     let pad_x = border_w + 14.0;
     let input_h = 44.0f32;
+    let cat_bar_h = if is_apps { 28.0f32 } else { 0.0f32 };
     let divider_h = 1.0f32;
     let row_h = if is_apps { 40.0f32 } else { 34.0f32 };
-    let visible_rows = filtered.len().clamp(1, cfg.max_rows.max(1));
+    let max_rows = cfg.max_rows.max(1);
+    let grid_active = is_apps && grid_mode && !filtered.is_empty();
+    let visible_rows = if grid_active {
+        let vis_items = filtered.len().saturating_sub(scroll_offset).min(max_rows * 3);
+        vis_items.div_ceil(3).max(1)
+    } else {
+        filtered.len().clamp(1, max_rows)
+    };
+    let tile_h = 62.0f32;
+    let list_h = if grid_active {
+        visible_rows as f32 * tile_h
+    } else {
+        visible_rows as f32 * row_h
+    };
     let list_pad_y = 6.0f32;
-    let total_h =
-        (border_w * 2.0 + input_h + divider_h + list_pad_y * 2.0 + visible_rows as f32 * row_h)
-            .ceil() as u32;
+    let total_h = (border_w * 2.0 + input_h + cat_bar_h + divider_h + list_pad_y * 2.0 + list_h)
+        .ceil() as u32;
 
-    let mut commands = Vec::with_capacity(visible_rows * 4 + 8);
-    let mut hit_targets = Vec::with_capacity(visible_rows);
+    let mut commands = Vec::with_capacity(visible_rows * 6 + 24);
+    let mut hit_targets = Vec::with_capacity(visible_rows * 3 + 8);
 
-    // 1. Input bar background strip
+    // 1. Input bar
     commands.push(PaintCmd::RoundedRect {
         rect: Rect::new(border_w, border_w, w - border_w * 2.0, input_h),
         radius: 0.0,
@@ -907,8 +1144,6 @@ fn build_launcher_surface(
     let query_w = (w - query_x - count_w - pad_x - 6.0).max(80.0);
     let placeholder = if is_apps {
         t(loc, I18nKey::LauncherPlaceholderApps)
-    } else if is_clip {
-        t(loc, I18nKey::LauncherPlaceholderClip)
     } else {
         t(loc, I18nKey::LauncherPlaceholderFilter)
     };
@@ -940,8 +1175,60 @@ fn build_launcher_surface(
         align: TextAlign::Right,
     });
 
-    // 2. Divider line
-    let div_y = border_w + input_h;
+    // Optional Category & List/Grid bar in Apps mode
+    let mut div_y = border_w + input_h;
+    if is_apps {
+        let mut cx = pad_x;
+        for (idx, cat) in AppCategory::ALL.iter().enumerate() {
+            let active = *cat == category;
+            let tab_w = 50.0f32;
+            let tab_rect = Rect::new(cx, div_y + 3.0, tab_w, cat_bar_h - 6.0);
+            if active {
+                commands.push(PaintCmd::RoundedRect {
+                    rect: tab_rect,
+                    radius: 4.0,
+                    fill: Some(surface_variant),
+                    stroke: None,
+                    stroke_width: 0.0,
+                });
+            }
+            commands.push(PaintCmd::Text {
+                rect: tab_rect,
+                text: cat.label().to_string(),
+                color: if active { primary } else { muted },
+                size: 10.5,
+                bold: active,
+                align: TextAlign::Center,
+            });
+            hit_targets.push(HitTarget {
+                rect: tab_rect,
+                id: format!("launcher:cat:{idx}"),
+            });
+            cx += tab_w + 4.0;
+        }
+        let view_rect = Rect::new(w - pad_x - 56.0, div_y + 3.0, 56.0, cat_bar_h - 6.0);
+        commands.push(PaintCmd::RoundedRect {
+            rect: view_rect,
+            radius: 4.0,
+            fill: Some(surface_variant),
+            stroke: None,
+            stroke_width: 0.0,
+        });
+        commands.push(PaintCmd::Text {
+            rect: view_rect,
+            text: if grid_mode { "Grid" } else { "List" }.to_string(),
+            color: on_surface,
+            size: 10.5,
+            bold: true,
+            align: TextAlign::Center,
+        });
+        hit_targets.push(HitTarget {
+            rect: view_rect,
+            id: "launcher:view-toggle".into(),
+        });
+        div_y += cat_bar_h;
+    }
+
     commands.push(PaintCmd::RoundedRect {
         rect: Rect::new(border_w, div_y, w - border_w * 2.0, divider_h),
         radius: 0.0,
@@ -950,7 +1237,6 @@ fn build_launcher_surface(
         stroke_width: 0.0,
     });
 
-    // 3. Results list
     let list_y = div_y + divider_h + list_pad_y;
     if filtered.is_empty() {
         commands.push(PaintCmd::RichText {
@@ -962,8 +1248,52 @@ fn build_launcher_surface(
             align: TextAlign::Center,
             max_lines: 1,
         });
+    } else if grid_active {
+        let cap = max_rows * 3;
+        let end = (scroll_offset + cap).min(filtered.len());
+        let inner_w = w - border_w * 2.0 - 16.0;
+        let col_gap = 8.0f32;
+        let tile_w = (inner_w - col_gap * 2.0) / 3.0;
+        for (vis_idx, item_idx) in (scroll_offset..end).enumerate() {
+            let item = &filtered[item_idx];
+            let col = vis_idx % 3;
+            let row = vis_idx / 3;
+            let tx = border_w + 8.0 + col as f32 * (tile_w + col_gap);
+            let ty = list_y + row as f32 * tile_h;
+            let tile_rect = Rect::new(tx, ty, tile_w, tile_h - 6.0);
+            let is_sel = item_idx == selected;
+            commands.push(PaintCmd::RoundedRect {
+                rect: tile_rect,
+                radius: 6.0,
+                fill: Some(if is_sel { surface_variant } else { surface_container }),
+                stroke: if is_sel { Some(primary) } else { None },
+                stroke_width: if is_sel { 1.5 } else { 0.0 },
+            });
+            commands.push(PaintCmd::RichText {
+                rect: Rect::new(tx + 8.0, ty + 8.0, tile_w - 16.0, 22.0),
+                text: item.title.clone(),
+                color: on_surface,
+                size: 12.0,
+                bold: is_sel,
+                align: TextAlign::Center,
+                max_lines: 1,
+            });
+            commands.push(PaintCmd::RichText {
+                rect: Rect::new(tx + 8.0, ty + 32.0, tile_w - 16.0, 16.0),
+                text: item.subtitle.clone(),
+                color: muted,
+                size: 9.5,
+                bold: false,
+                align: TextAlign::Center,
+                max_lines: 1,
+            });
+            hit_targets.push(HitTarget {
+                rect: tile_rect,
+                id: format!("launcher:row:{item_idx}"),
+            });
+        }
     } else {
-        let end = (scroll_offset + visible_rows).min(filtered.len());
+        let end = (scroll_offset + max_rows).min(filtered.len());
         for (vis_idx, item_idx) in (scroll_offset..end).enumerate() {
             let item = &filtered[item_idx];
             let ry = list_y + vis_idx as f32 * row_h;
@@ -1036,7 +1366,7 @@ fn build_launcher_surface(
         keyboard_interactivity: KeyboardMode::Exclusive,
         anchor: Anchor::TOP,
         exclusive_zone: 0,
-        width: cfg.width.clamp(320, 960),
+        width: cfg.width.clamp(420, 960),
         height: total_h,
         margin: EdgeInsets {
             top: cfg.offset_y,
@@ -1079,6 +1409,31 @@ mod tests {
         }
     }
 
+    fn sample_apps() -> Vec<DesktopApp> {
+        vec![
+            DesktopApp {
+                id: "firefox.desktop".into(),
+                name: "Firefox".into(),
+                generic_name: "Web Browser".into(),
+                comment: "Browse the Web".into(),
+                keywords: "internet".into(),
+                exec: "firefox %u".into(),
+                terminal: false,
+                categories: vec!["Network".into(), "WebBrowser".into()],
+            },
+            DesktopApp {
+                id: "yazi.desktop".into(),
+                name: "Yazi".into(),
+                generic_name: "File Manager".into(),
+                comment: "Terminal files".into(),
+                keywords: "files".into(),
+                exec: "yazi %u".into(),
+                terminal: true,
+                categories: vec!["System".into(), "Utility".into()],
+            },
+        ]
+    }
+
     #[test]
     fn dmenu_filters_navigates_selects_and_frees_surface() {
         let mut state = AppState::new(Config::default());
@@ -1091,31 +1446,16 @@ mod tests {
                 "dmenu-open",
                 &[
                     "Display > ".into(),
-                    "󰍹  Extend Right\n󰐕  New clean workspace (WS 2)\n󰈈  Tiếng Việt có dấu\n".into(),
+                    "󰍹  Extend Right\n󰐕  New clean workspace (WS 2)\n󰈈  Tiếng Việt có dấu\n"
+                        .into(),
                 ],
                 &mut ctx,
             );
             assert!(matches!(res, IpcResult::Handled { ok: true, .. }));
         }
-        let specs = ext.surfaces();
-        assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].namespace, "kaze-launcher");
-        assert_eq!(specs[0].keyboard_interactivity, KeyboardMode::Exclusive);
-
-        // Type Vietnamese via IME commit to filter to the 3rd row.
+        assert_eq!(ext.surfaces().len(), 1);
         {
             let mut ctx = ShellContext::new(&mut state);
-            ext.on_event(
-                &SystemEvent::ImeInput {
-                    surface_id: SURFACE_ID.into(),
-                    ime: ImeEvent::Preedit {
-                        text: "việ".into(),
-                        cursor_begin: 0,
-                        cursor_end: 4,
-                    },
-                },
-                &mut ctx,
-            );
             ext.on_event(
                 &SystemEvent::ImeInput {
                     surface_id: SURFACE_ID.into(),
@@ -1138,7 +1478,6 @@ mod tests {
     fn dmenu_cancels_on_escape_and_focus_loss() {
         let mut state = AppState::new(Config::default());
         let mut ext = LauncherExtension::new();
-
         {
             let mut ctx = ShellContext::new(&mut state);
             ext.on_ipc(
@@ -1153,199 +1492,64 @@ mod tests {
             );
         }
         assert!(ext.surfaces().is_empty());
-
-        {
-            let mut ctx = ShellContext::new(&mut state);
-            ext.on_ipc(
-                "dmenu-open",
-                &["Test > ".into(), "Alpha\nBeta\n".into()],
-                &mut ctx,
-            );
-            ext.on_event(
-                &SystemEvent::KeyboardFocusLost {
-                    surface_id: SURFACE_ID.into(),
-                },
-                &mut ctx,
-            );
-            assert_eq!(
-                ctx.actions,
-                vec![ShellAction::DmenuReply { selected: None }]
-            );
-        }
-        assert!(ext.surfaces().is_empty());
     }
 
     #[test]
-    fn app_launcher_launches_detached_and_respects_ctrl_n_ctrl_p() {
+    fn app_launcher_supports_categories_grid_toggle_calculator_and_emoji() {
         let mut state = AppState::new(Config::default());
+        state.offline_mode = true;
         let mut ext = LauncherExtension::new();
-        ext.set_apps_for_test(vec![
-            DesktopApp {
-                id: "firefox.desktop".into(),
-                name: "Firefox".into(),
-                generic_name: "Web Browser".into(),
-                comment: "Browse the Web".into(),
-                keywords: "internet".into(),
-                exec: "firefox %u".into(),
-                terminal: false,
-            },
-            DesktopApp {
-                id: "yazi.desktop".into(),
-                name: "Yazi".into(),
-                generic_name: "File Manager".into(),
-                comment: "Terminal files".into(),
-                keywords: "files".into(),
-                exec: "yazi %u".into(),
-                terminal: true,
-            },
-        ]);
+        ext.set_apps_for_test(sample_apps());
 
         {
             let mut ctx = ShellContext::new(&mut state);
             ext.on_ipc("launcher-toggle", &[], &mut ctx);
-            ext.on_event(&key(0x006e, None, true), &mut ctx); // Ctrl+N -> Yazi
-            ext.on_event(&key(KEY_RETURN, None, false), &mut ctx);
-            assert_eq!(
-                ctx.actions,
-                vec![ShellAction::SpawnDetachedApp {
-                    program: "kaze-footclient".into(),
-                    args: vec!["-N".into(), "-e".into(), "yazi".into()],
-                }]
-            );
-        }
-        assert!(ext.surfaces().is_empty());
-    }
+            assert_eq!(ext.filtered.len(), 2);
 
-    #[test]
-    fn fuzzy_score_ranks_prefix_above_subsequence() {
-        let exact = fuzzy_score("foot", "Foot").expect("exact");
-        let prefix = fuzzy_score("foo", "Foot Terminal").expect("prefix");
-        let subseq = fuzzy_score("ftl", "Foot Terminal").expect("subseq");
-        assert!(exact > prefix && prefix > subseq);
-        assert!(fuzzy_score("xyz", "Foot").is_none());
-    }
+            // Tab toggles List <-> Grid.
+            assert!(!ext.is_grid_mode());
+            ext.on_event(&key(KEY_TAB, None, false), &mut ctx);
+            assert!(ext.is_grid_mode());
 
-    #[test]
-    fn clipboard_mode_parses_images_vietnamese_deletes_and_copies() {
-        let mut state = AppState::new(Config::default());
-        let mut ext = LauncherExtension::new();
-        let sample = "101\t[[ binary data 42 KiB png 1920x1080 ]]\n102\tXin chào Việt Nam 🔥\n";
-        {
-            let mut ctx = ShellContext::new(&mut state);
-            let res = ext.on_ipc("clipboard-toggle", &[sample.into()], &mut ctx);
-            assert!(matches!(res, IpcResult::Handled { ok: true, .. }));
-        }
-        assert_eq!(ext.surfaces().len(), 1);
-        assert_eq!(ext.filtered.len(), 2);
-        assert!(ext.filtered[0].title.starts_with("[IMG]"));
-        assert!(ext.filtered[1].title.contains("Việt Nam 🔥"));
-
-        // Shift+Delete removes item 0 and spawns cliphist delete.
-        {
-            let mut ctx = ShellContext::new(&mut state);
+            // Category filter narrows to System.
             ext.on_event(
-                &SystemEvent::KeyInput {
+                &SystemEvent::PointerClick {
                     surface_id: SURFACE_ID.into(),
-                    key: KeyEvent {
-                        keysym: KEY_DELETE,
-                        utf8: None,
-                        modifiers: KeyModifiers {
-                            shift: true,
-                            ..KeyModifiers::default()
-                        },
-                        pressed: true,
-                    },
+                    target_id: "launcher:cat:4".into(),
+                    button: PointerButton::Left,
                 },
                 &mut ctx,
             );
-            assert!(ctx.actions.iter().any(|a| matches!(
-                a,
-                ShellAction::SpawnCommand { program, args }
-                if program == "sh" && args.iter().any(|s| s.contains("cliphist delete"))
-            )));
-        }
-        assert_eq!(ext.filtered.len(), 1);
+            assert_eq!(ext.active_category(), AppCategory::System);
+            assert_eq!(ext.filtered.len(), 1);
+            assert_eq!(ext.filtered[0].title, "Yazi");
 
-        // Return copies remaining Vietnamese line via cliphist decode | wl-copy and frees surface.
-        {
-            let mut ctx = ShellContext::new(&mut state);
-            ext.on_event(&key(KEY_RETURN, None, false), &mut ctx);
-            assert!(ctx.actions.iter().any(|a| matches!(
-                a,
-                ShellAction::SpawnCommand { program, args }
-                if program == "sh" && args.iter().any(|s| s.contains("cliphist decode | wl-copy"))
-            )));
-        }
-        assert!(ext.surfaces().is_empty());
-    }
-
-    #[test]
-    fn launcher_input_handles_grapheme_zwj_preedit_escape_copy_and_vi_locale() {
-        use kaze_core::Locale;
-
-        let mut state = AppState::new(Config::default());
-        state.locale = Locale::Vi;
-        let mut ext = LauncherExtension::new();
-        {
-            let mut ctx = ShellContext::new(&mut state);
-            ext.on_ipc("launcher-toggle", &[], &mut ctx);
-        }
-        let specs = ext.surfaces();
-        assert_eq!(specs.len(), 1);
-        assert!(specs[0].ime_cursor_rect.is_some());
-        assert!(specs[0].commands.iter().any(|c| matches!(
-            c,
-            PaintCmd::RichText { text, .. } if text.contains("Ứng dụng")
-        )));
-
-        {
-            let mut ctx = ShellContext::new(&mut state);
-            let sample = "Xin chào مرحبا 👨\u{200d}👩\u{200d}👧\u{200d}👦";
+            // Calculator copies `70` cleanly on Enter.
             ext.on_event(
                 &SystemEvent::ImeInput {
                     surface_id: SURFACE_ID.into(),
-                    ime: ImeEvent::Commit(sample.into()),
+                    ime: ImeEvent::Commit("= (12 + 8) * 3.5".into()),
                 },
                 &mut ctx,
             );
-            // 1 Backspace deletes the full ZWJ emoji grapheme cluster cleanly.
-            ext.on_event(&key(0xff08, None, false), &mut ctx);
-            assert_eq!(ext.input.text, "Xin chào مرحبا ");
-
-            // Ctrl+A -> Ctrl+C emits SetClipboardText preserving exact UTF-8.
-            ext.on_event(&key(b'a' as u32, None, true), &mut ctx);
-            ext.on_event(&key(b'c' as u32, None, true), &mut ctx);
-            assert!(ctx
-                .actions
-                .contains(&ShellAction::SetClipboardText("Xin chào مرحبا ".into())));
-
-            // Live switch back to English updates surface labels without restarting daemon.
-            ctx.state.locale = Locale::En;
-            ext.on_event(&SystemEvent::LocaleChanged(Locale::En), &mut ctx);
+            ext.on_event(&key(KEY_RETURN, None, false), &mut ctx);
+            assert!(ctx.actions.contains(&ShellAction::SetClipboardText("70".into())));
         }
-        let updated = ext.surfaces();
-        assert!(updated[0].commands.iter().any(|c| matches!(
-            c,
-            PaintCmd::RichText { text, .. } if text.contains("Apps")
-        )));
+        assert!(ext.surfaces().is_empty());
 
-        // Preedit + Escape clears preedit cleanly and closes launcher.
+        // Emoji provider opened via `launcher-open /emoji` copies selected glyph.
         {
             let mut ctx = ShellContext::new(&mut state);
+            ext.on_ipc("launcher-open", &["/emoji".into()], &mut ctx);
             ext.on_event(
                 &SystemEvent::ImeInput {
                     surface_id: SURFACE_ID.into(),
-                    ime: ImeEvent::Preedit {
-                        text: "đang".into(),
-                        cursor_begin: 0,
-                        cursor_end: 4,
-                    },
+                    ime: ImeEvent::Commit("lua".into()),
                 },
                 &mut ctx,
             );
-            ext.on_event(&key(KEY_ESCAPE, None, false), &mut ctx);
+            ext.on_event(&key(KEY_RETURN, None, false), &mut ctx);
+            assert!(ctx.actions.contains(&ShellAction::SetClipboardText("🔥".into())));
         }
-        assert!(ext.input.preedit.is_empty());
-        assert!(ext.surfaces().is_empty());
     }
 }

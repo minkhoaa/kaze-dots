@@ -14,6 +14,7 @@ members = [
     "crates/kaze-ext-cc",
     "crates/kaze-ext-tray",
     "crates/kaze-ext-wallpaper",
+    "crates/kaze-ext-clipboard",
     "crates/kaze-cli",
 ]
 
@@ -42,6 +43,7 @@ memmap2 = "0.9"
 notify = { version = "8", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = { version = "0.10", default-features = false }
 smithay-client-toolkit = { version = "0.20", default-features = false, features = ["calloop", "xkbcommon"] }
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "sync", "macros", "process"] }
@@ -67,6 +69,7 @@ kaze-ext-island = { path = "crates/kaze-ext-island" }
 kaze-ext-cc = { path = "crates/kaze-ext-cc" }
 kaze-ext-tray = { path = "crates/kaze-ext-tray" }
 kaze-ext-wallpaper = { path = "crates/kaze-ext-wallpaper" }
+kaze-ext-clipboard = { path = "crates/kaze-ext-clipboard" }
 
 # Keep variables inspectable in our crates; keep source locations in dependencies.
 [profile.dev.package."*"]

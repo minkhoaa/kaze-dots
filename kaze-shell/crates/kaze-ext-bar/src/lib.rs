@@ -354,7 +354,8 @@ impl KazeExtension for BarExtension {
             | SystemEvent::UserAccountChanged(_)
             | SystemEvent::OfflineModeChanged(_)
             | SystemEvent::LocaleChanged(_)
-            | SystemEvent::ClipboardTextPasted { .. } => DirtyFlags::NONE,
+            | SystemEvent::ClipboardTextPasted { .. }
+            | SystemEvent::ClipboardOfferCaptured { .. } => DirtyFlags::NONE,
         }
     }
 

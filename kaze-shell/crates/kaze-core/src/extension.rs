@@ -25,7 +25,8 @@ bitflags! {
         const CC        = 1 << 7;
         const TRAY      = 1 << 8;
         const WALLPAPER = 1 << 9;
-        const ALL       = 0b0011_1111_1111;
+        const CLIPBOARD = 1 << 10;
+        const ALL       = 0b0111_1111_1111;
     }
 }
 
@@ -198,6 +199,11 @@ pub enum SystemEvent {
         surface_id: String,
         text: String,
     },
+    ClipboardOfferCaptured {
+        mime: String,
+        bytes: Vec<u8>,
+        source_is_self: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -282,6 +288,10 @@ pub enum ShellAction {
         value: Option<String>,
     },
     SetClipboardText(String),
+    SetClipboardSelection {
+        mime: String,
+        bytes: Vec<u8>,
+    },
     RequestClipboardPaste {
         surface_id: String,
     },

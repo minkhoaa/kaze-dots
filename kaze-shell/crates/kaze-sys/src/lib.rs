@@ -15,8 +15,12 @@ pub mod pulse_native;
 
 use calloop::channel::Sender as CalloopSender;
 use kaze_core::{MasterKey, SystemEvent};
+use std::os::fd::OwnedFd;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
+use tokio::io::unix::AsyncFd;
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug)]
@@ -60,6 +64,17 @@ pub enum SysCommand {
     ResolveMasterKey {
         fallback_path: PathBuf,
         reply: oneshot::Sender<Result<MasterKey, String>>,
+    },
+    ReadClipboardPipe {
+        mime: String,
+        fd: OwnedFd,
+        max_bytes: usize,
+        source_is_self: bool,
+        paste_surface_id: Option<String>,
+    },
+    WriteClipboardFd {
+        fd: OwnedFd,
+        bytes: Arc<[u8]>,
     },
     Shutdown,
 }
@@ -290,6 +305,37 @@ fn run_sys_thread(
                         let _ = reply.send(res);
                     });
                 }
+                SysCommand::ReadClipboardPipe {
+                    mime,
+                    fd,
+                    max_bytes,
+                    source_is_self,
+                    paste_surface_id,
+                } => {
+                    let tx = event_tx.clone();
+                    tokio::spawn(async move {
+                        if let Some(bytes) = read_nonblocking_pipe_bounded(fd, max_bytes).await {
+                            if let Some(surface_id) = paste_surface_id {
+                                let text = String::from_utf8_lossy(&bytes).into_owned();
+                                let _ = tx.send(SystemEvent::ClipboardTextPasted {
+                                    surface_id,
+                                    text,
+                                });
+                            } else {
+                                let _ = tx.send(SystemEvent::ClipboardOfferCaptured {
+                                    mime,
+                                    bytes,
+                                    source_is_self,
+                                });
+                            }
+                        }
+                    });
+                }
+                SysCommand::WriteClipboardFd { fd, bytes } => {
+                    tokio::spawn(async move {
+                        write_nonblocking_pipe(fd, &bytes).await;
+                    });
+                }
                 SysCommand::Shutdown => break,
             }
         }
@@ -314,4 +360,79 @@ fn run_sys_thread(
             t.abort();
         }
     });
+}
+
+async fn read_nonblocking_pipe_bounded(fd: OwnedFd, max_bytes: usize) -> Option<Vec<u8>> {
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+
+    let raw = fd.as_raw_fd();
+    // SAFETY: set O_NONBLOCK cleanly in case caller passed a blocking fd.
+    unsafe {
+        let flags = libc::fcntl(raw, libc::F_GETFL);
+        if flags >= 0 {
+            let _ = libc::fcntl(raw, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+    }
+    let file = std::fs::File::from(fd);
+    // SAFETY: `file` is owned exclusively by `async_fd` until dropped.
+    let async_fd = unsafe { AsyncFd::register(file) }.ok()?;
+    let mut out = Vec::new();
+    let mut buf = [0u8; 8192];
+
+    let read_fut = async {
+        loop {
+            let mut guard = async_fd.readable().await.ok()?;
+            match guard.try_io(|inner| inner.get_ref().read(&mut buf)) {
+                Ok(Ok(0)) => return Some(out),
+                Ok(Ok(n)) => {
+                    if out.len().saturating_add(n) > max_bytes {
+                        // Oversized payload (e.g. 50 MiB): abort early and reclaim memory immediately.
+                        return None;
+                    }
+                    out.extend_from_slice(&buf[..n]);
+                }
+                Ok(Err(_)) => return None,
+                Err(_would_block) => continue,
+            }
+        }
+    };
+
+    tokio::time::timeout(Duration::from_millis(1200), read_fut)
+        .await
+        .ok()
+        .flatten()
+}
+
+async fn write_nonblocking_pipe(fd: OwnedFd, bytes: &[u8]) {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+
+    let raw = fd.as_raw_fd();
+    // SAFETY: set O_NONBLOCK so slow/closed readers never block the single tokio thread.
+    unsafe {
+        let flags = libc::fcntl(raw, libc::F_GETFL);
+        if flags >= 0 {
+            let _ = libc::fcntl(raw, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+    }
+    let file = std::fs::File::from(fd);
+    // SAFETY: `file` is owned exclusively by `async_fd` until dropped.
+    let Ok(async_fd) = (unsafe { AsyncFd::register(file) }) else {
+        return;
+    };
+    let mut written = 0usize;
+    let _ = tokio::time::timeout(Duration::from_millis(2000), async {
+        while written < bytes.len() {
+            let Ok(mut guard) = async_fd.writable().await else {
+                break;
+            };
+            match guard.try_io(|inner| inner.get_ref().write(&bytes[written..])) {
+                Ok(Ok(0)) | Ok(Err(_)) => break,
+                Ok(Ok(n)) => written += n,
+                Err(_would_block) => continue,
+            }
+        }
+    })
+    .await;
 }

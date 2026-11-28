@@ -12,6 +12,7 @@ use kaze_core::{
 };
 use kaze_ext_bar::BarExtension;
 use kaze_ext_cc::ControlCenterExtension;
+use kaze_ext_clipboard::{default_clipboard_store_path, ClipboardExtension};
 use kaze_ext_island::IslandExtension;
 use kaze_ext_launcher::{desktop as launcher_desktop, LauncherExtension};
 use kaze_ext_notify::NotifyExtension;
@@ -29,7 +30,6 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use smithay_client_toolkit::reexports::client::Connection;
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -333,6 +333,15 @@ impl Daemon {
                 self.state.locale = *locale;
             }
             SystemEvent::ClipboardTextPasted { .. } => {}
+            SystemEvent::ClipboardOfferCaptured {
+                mime,
+                bytes,
+                source_is_self,
+            } => {
+                if !*source_is_self {
+                    self.ui.note_clipboard_captured(mime, bytes);
+                }
+            }
         }
 
         let prev_unread = self.state.unread_notifications;
@@ -596,35 +605,21 @@ impl Daemon {
                     self.fire_hook(&event, old, new, value);
                 }
                 ShellAction::SetClipboardText(text) => {
-                    // ponytail: temporary wl-copy fallback in 5B, replaced by native data-control in 5C.
-                    if let Ok(mut child) = Command::new("wl-copy")
-                        .stdin(Stdio::piped())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .spawn()
-                    {
-                        if let Some(mut stdin) = child.stdin.take() {
-                            let _ = stdin.write_all(text.as_bytes());
-                        }
-                        self.children.push(child);
-                    }
+                    self.ui
+                        .set_clipboard_selection("text/plain;charset=utf-8".into(), text.into_bytes());
+                    self.pump_clipboard_pipes();
+                    let _ = self.wayland_conn.flush();
+                }
+                ShellAction::SetClipboardSelection { mime, bytes } => {
+                    self.ui.set_clipboard_selection(mime, bytes);
+                    self.pump_clipboard_pipes();
+                    let _ = self.wayland_conn.flush();
                 }
                 ShellAction::RequestClipboardPaste { surface_id } => {
-                    // ponytail: temporary wl-paste fallback in 5B, replaced by native data-control in 5C.
-                    let tx = self.event_tx.clone();
-                    let _ = std::thread::Builder::new()
-                        .name("kaze-paste-tmp".to_string())
-                        .spawn(move || {
-                            if let Ok(out) = Command::new("wl-paste").arg("--no-newline").output() {
-                                if out.status.success() {
-                                    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-                                    let _ = tx.send(SystemEvent::ClipboardTextPasted {
-                                        surface_id,
-                                        text,
-                                    });
-                                }
-                            }
-                        });
+                    if self.ui.request_clipboard_paste_text(surface_id) {
+                        self.pump_clipboard_pipes();
+                        let _ = self.wayland_conn.flush();
+                    }
                 }
             }
         }
@@ -823,6 +818,27 @@ impl Daemon {
         }
     }
 
+    fn pump_clipboard_pipes(&mut self) {
+        let Some(ref sys) = self.sys else {
+            return;
+        };
+        for read_job in self.ui.drain_clipboard_pipe_reads() {
+            sys.send(SysCommand::ReadClipboardPipe {
+                mime: read_job.mime,
+                fd: read_job.fd,
+                max_bytes: read_job.max_bytes,
+                source_is_self: read_job.source_is_self,
+                paste_surface_id: read_job.paste_surface_id,
+            });
+        }
+        for write_job in self.ui.drain_clipboard_pipe_writes() {
+            sys.send(SysCommand::WriteClipboardFd {
+                fd: write_job.fd,
+                bytes: write_job.bytes,
+            });
+        }
+    }
+
     fn reload_config(&mut self) -> Result<(), String> {
         match Config::load_layered(&self.config_path, self.settings_path.as_deref()) {
             Ok(new_cfg) => {
@@ -838,6 +854,11 @@ impl Daemon {
                 );
                 self.ui.set_font(&new_cfg.bar.font);
                 self.ui.set_accessibility(new_font_scale, high_contrast);
+                self.ui.configure_clipboard(
+                    new_cfg.clipboard.ignore_mimes.clone(),
+                    new_cfg.clipboard.max_item_bytes,
+                    new_cfg.clipboard.persist,
+                );
                 self.state.config = new_cfg;
                 self.state.theme_mode = mode;
                 self.state.offline_mode = offline;
@@ -1194,6 +1215,7 @@ impl Daemon {
                     "caffeine_enabled": self.state.caffeine_enabled,
                     "wayland_idle_protocol": self.ui.has_idle_inhibit(),
                     "has_gamma_control": self.ui.has_gamma_control(),
+                    "has_data_control": self.ui.has_data_control(),
                     "tray_bus_owned": self.state.tray_bus_owned,
                     "tray_items_count": self.state.tray_items.len(),
                     "wallpaper_path": self.state.wallpaper_path.as_ref().map(|p| p.display().to_string()),
@@ -1582,6 +1604,11 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         state.effective_font_scale,
         state.config.accessibility.high_contrast,
     );
+    ui.configure_clipboard(
+        state.config.clipboard.ignore_mimes.clone(),
+        state.config.clipboard.max_item_bytes,
+        state.config.clipboard.persist,
+    );
     let has_persisted_layout = if let Some(ref path) = layout_state_file {
         if let Some(saved) = load_persisted_preset(path) {
             state.layout_preset = saved;
@@ -1598,6 +1625,15 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         }
     }
     let theme_paths = ThemePaths::default_paths()?;
+    let clipboard_ext = {
+        let store_path = default_clipboard_store_path().ok();
+        let master_key = sys_handle.as_ref().and_then(|s| {
+            kaze_core::crypto::default_master_key_path()
+                .ok()
+                .and_then(|kp| s.resolve_master_key(kp).ok())
+        });
+        ClipboardExtension::new(store_path, master_key)
+    };
     let extensions: Vec<Box<dyn KazeExtension>> = vec![
         Box::new(BarExtension::new()),
         Box::new(IslandExtension::new()),
@@ -1606,6 +1642,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         Box::new(WallpaperExtension::new()),
         Box::new(OsdExtension::new()),
         Box::new(NotifyExtension::new()),
+        Box::new(clipboard_ext),
         Box::new(LauncherExtension::new()),
     ];
 
@@ -1656,6 +1693,7 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
     loop_handle
         .insert_source(wayland_source, |_, queue, daemon| {
             let dispatched = queue.dispatch_pending(&mut daemon.ui)?;
+            daemon.pump_clipboard_pipes();
             let events = daemon.ui.drain_events();
             for ev in events {
                 daemon.dispatch_system_event(ev);

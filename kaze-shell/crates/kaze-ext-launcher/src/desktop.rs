@@ -3,6 +3,64 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppCategory {
+    All,
+    Development,
+    Internet,
+    Media,
+    System,
+    Utilities,
+}
+
+impl AppCategory {
+    pub const ALL: &'static [Self] = &[
+        Self::All,
+        Self::Development,
+        Self::Internet,
+        Self::Media,
+        Self::System,
+        Self::Utilities,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Development => "Dev",
+            Self::Internet => "Net",
+            Self::Media => "Media",
+            Self::System => "System",
+            Self::Utilities => "Utils",
+        }
+    }
+
+    pub fn matches_app(self, app: &DesktopApp) -> bool {
+        match self {
+            Self::All => true,
+            Self::Development => app
+                .categories
+                .iter()
+                .any(|c| matches!(c.as_str(), "Development" | "IDE" | "RevisionControl")),
+            Self::Internet => app
+                .categories
+                .iter()
+                .any(|c| matches!(c.as_str(), "Network" | "WebBrowser" | "Email" | "InstantMessaging")),
+            Self::Media => app
+                .categories
+                .iter()
+                .any(|c| matches!(c.as_str(), "AudioVideo" | "Audio" | "Video" | "Graphics" | "Photography")),
+            Self::System => app
+                .categories
+                .iter()
+                .any(|c| matches!(c.as_str(), "System" | "Settings" | "Monitor")),
+            Self::Utilities => app
+                .categories
+                .iter()
+                .any(|c| matches!(c.as_str(), "Utility" | "Accessories" | "Archiving" | "TextEditor")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopApp {
     pub id: String,
@@ -12,6 +70,7 @@ pub struct DesktopApp {
     pub keywords: String,
     pub exec: String,
     pub terminal: bool,
+    pub categories: Vec<String>,
 }
 
 impl DesktopApp {
@@ -128,6 +187,7 @@ fn parse_desktop_file(id: &str, raw: &str) -> DesktopParse {
     let mut terminal = false;
     let mut no_display = false;
     let mut hidden = false;
+    let mut categories = Vec::new();
 
     for line in raw.lines() {
         let trimmed = line.trim();
@@ -156,6 +216,14 @@ fn parse_desktop_file(id: &str, raw: &str) -> DesktopParse {
             "Terminal" => terminal = val.eq_ignore_ascii_case("true"),
             "NoDisplay" => no_display = val.eq_ignore_ascii_case("true"),
             "Hidden" => hidden = val.eq_ignore_ascii_case("true"),
+            "Categories" => {
+                categories = val
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|c| !c.is_empty())
+                    .map(str::to_string)
+                    .collect();
+            }
             _ => {}
         }
     }
@@ -175,6 +243,7 @@ fn parse_desktop_file(id: &str, raw: &str) -> DesktopParse {
         keywords,
         exec,
         terminal,
+        categories,
     })
 }
 
@@ -326,6 +395,7 @@ mod tests {
             keywords: String::new(),
             exec: "yazi %u".into(),
             terminal: true,
+            categories: vec!["System".into(), "Utility".into()],
         };
         let (prog, args) = term_app.build_command().expect("terminal command");
         assert_eq!(prog, "kaze-footclient");

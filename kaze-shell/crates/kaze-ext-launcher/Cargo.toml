@@ -9,3 +9,5 @@ workspace = true
 
 [dependencies]
 kaze-core.workspace = true
+serde.workspace = true
+toml.workspace = true

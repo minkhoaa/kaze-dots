@@ -1,6 +1,9 @@
 #![deny(clippy::unwrap_used)]
 
+pub mod data_control;
 pub mod render;
+
+use data_control::{ClipboardPipeRead, ClipboardPipeWrite, DataControlState};
 
 use kaze_core::{
     Anchor, DirtyFlags, ImeEvent, KeyEvent as CoreKeyEvent, KeyModifiers, KeyboardMode, Layer,
@@ -170,6 +173,7 @@ pub struct UiState {
     wallpaper_output_by_obj: HashMap<ObjectId, String>,
     anim_clock: AnimationClock,
     renderer: Renderer,
+    data_control: DataControlState,
     pending_events: Vec<SystemEvent>,
 }
 
@@ -195,6 +199,7 @@ impl UiState {
         let gamma_manager = globals
             .bind::<ZwlrGammaControlManagerV1, _, _>(&qh, 1..=1, ())
             .ok();
+        let data_control = DataControlState::bind_globals(&globals, &qh);
 
         let state = Self {
             registry_state: RegistryState::new(&globals),
@@ -231,6 +236,7 @@ impl UiState {
             wallpaper_output_by_obj: HashMap::new(),
             anim_clock: AnimationClock::default(),
             renderer: Renderer::new(font_hint),
+            data_control,
             pending_events: Vec::new(),
         };
 
@@ -265,17 +271,50 @@ impl UiState {
         self.gamma_manager.is_some()
     }
 
-    /// Ensures `zwp_text_input_v3` is bound for the active seat even if `wl_seat`
-    /// was already present in the initial registry snapshot before `SeatHandler::new_seat`.
+    pub fn has_data_control(&self) -> bool {
+        self.data_control.has_protocol()
+    }
+
+    pub fn configure_clipboard(
+        &mut self,
+        ignore_mimes: Vec<String>,
+        max_item_bytes: usize,
+        persist: bool,
+    ) {
+        self.data_control
+            .configure(ignore_mimes, max_item_bytes, persist);
+    }
+
+    pub fn set_clipboard_selection(&mut self, mime: String, bytes: Vec<u8>) -> bool {
+        self.data_control.set_selection(mime, bytes, &self.qh)
+    }
+
+    pub fn note_clipboard_captured(&mut self, mime: &str, bytes: &[u8]) {
+        self.data_control.note_captured(mime, bytes);
+    }
+
+    pub fn request_clipboard_paste_text(&mut self, surface_id: String) -> bool {
+        self.data_control.request_paste_text(surface_id)
+    }
+
+    pub fn drain_clipboard_pipe_reads(&mut self) -> Vec<ClipboardPipeRead> {
+        std::mem::take(&mut self.data_control.pending_reads)
+    }
+
+    pub fn drain_clipboard_pipe_writes(&mut self) -> Vec<ClipboardPipeWrite> {
+        std::mem::take(&mut self.data_control.pending_writes)
+    }
+
+    /// Ensures `zwp_text_input_v3` and `data_control` are bound for the active seat even if
+    /// `wl_seat` was already present in the initial registry snapshot before `SeatHandler::new_seat`.
     pub fn ensure_text_input(&mut self) {
-        if self.text_input.is_some() {
-            return;
-        }
-        let Some(ref mgr) = self.text_input_manager else {
-            return;
-        };
         if let Some(seat) = self.seat_state.seats().next() {
-            self.text_input = Some(mgr.get_text_input(&seat, &self.qh, ()));
+            if self.text_input.is_none() {
+                if let Some(ref mgr) = self.text_input_manager {
+                    self.text_input = Some(mgr.get_text_input(&seat, &self.qh, ()));
+                }
+            }
+            self.data_control.ensure_device(&seat, &self.qh);
         }
     }
 
@@ -1192,12 +1231,13 @@ impl SeatHandler for UiState {
     }
 
     fn new_seat(&mut self, conn: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat) {
+        self.data_control.ensure_device(&seat, qh);
         if self.text_input.is_none() {
             if let Some(ref mgr) = self.text_input_manager {
                 self.text_input = Some(mgr.get_text_input(&seat, qh, ()));
-                let _ = conn.flush();
             }
         }
+        let _ = conn.flush();
     }
 
     fn new_capability(
