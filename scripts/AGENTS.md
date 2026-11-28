@@ -1,14 +1,40 @@
-# Deployment and VM scripts
+# Deployment, rollback and session units
 
-## Scope
-Maintain the shared [package manifest](packages.sh), [package installer](install-packages.sh), [bootstrap wrapper](bootstrap.sh), [installer library](install-lib.sh), [TUI wizard](install-tui.sh), [profile installer](install.sh), [symlink and rollback installer](apply.sh), [VM launcher](launch-vm.sh) and [verification harness](../tests/vm/verify.sh).
+## Preserve the uninstall baseline
 
-## Local rules
-- Use Bash strict mode (`set -euo pipefail`) and quote paths. Respect `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_STATE_HOME` when deploying or logging.
-- Back up replaced files and symlinks before applying. Record installed paths and generate a reversible `rollback.sh`.
-- Seed `~/.config/noctalia/config.toml` as an editable file on first apply and preserve user Noctalia Settings GUI edits on reapply.
-- Seed `~/.config/hypr/user.lua` only when absent (with hybrid iGPU `drm_devices` + `prefer_mesa_egl` when detected); preserve it across apply and rollback.
-- Check `pgrep -x qemu-system-x86` (filtered to `shell-bench-vm` / `vm.pid` so unrelated QEMU instances like Android Emulator are untouched) before starting a test VM. Stop if a test VM is already running.
+- In [apply.sh](apply.sh), record managed destinations and move aside originals, including dangling symlinks,
+  before linking or seeding. Respect XDG overrides and paths containing spaces.
+- On reapply, carry forward the original backups and manifests; do not replace the uninstall baseline with managed files.
+  Generate `rollback.sh` in the new backup **before** publishing the `last-backup` pointer by atomic rename.
+- Roll back dotfiles only from the current backup with the session stopped. Restore the original link or file,
+  not its resolved contents. Keep system rollback opt-in and never auto-remove packages.
+- Seed the [shell config](../config/kaze-shell/config.toml) as an editable copy; preserve the managed copy on reapply.
+  Seed the Hyprland `user.lua` only if neither a file nor a link exists. Never include it in the removal manifest.
+- Keep [Foot's theme include](../config/foot/foot.ini) valid before the first shell template pass,
+  including with a non-default XDG config directory. Do not write theme output through a link into the repo.
 
-## Verify
-Run `scripts/install-packages.sh --dry-run`, `scripts/install.sh --dry-run`, and `scripts/bootstrap.sh --dry-run` to inspect package and bootstrap plans without installing. For deployment changes, test apply, reapply, and rollback in the guest; verify that pre-existing files, Noctalia GUI edits, and `hypr/user.lua` survive.
+## Packages and activation
+
+- Source [packages.sh](packages.sh) from both installers. Keep core dependencies in official Arch repos;
+  install optional AUR helpers separately so their failure cannot block core deployment.
+- Apply links an already-built release shell if present; it is not a Rust build step.
+- Put session dependencies in [kaze-session.target](../config/systemd/user/kaze-session.target).
+  Preserve `DefaultDependencies=no`: wanted services start **after** the target, not before it.
+- Follow [kaze-shell.service](../config/systemd/user/kaze-shell.service) for session-bound services:
+  `PartOf=` propagates stops; `Requisite=` rejects starts without the target; `After=` orders startup.
+  Use `EnvironmentFile=` to read the environment prepared by the [session helper](../lua/kaze/session.lua).
+- Linking a unit does not enable it. Keep [the recorder](../config/systemd/user/kaze-record.service) on demand, outside the target's startup wants.
+
+## Verify from the repository root
+
+Run the [Bash and ShellCheck gates](../AGENTS.md#local-verification) and compare both installers' plans without applying:
+
+```sh
+for p in minimal full; do
+  scripts/install-packages.sh --profile "$p" --dry-run
+  scripts/install.sh --profile "$p" --dry-run
+done
+```
+
+Exercise apply → reapply → generated rollback in a disposable home with private XDG directories and no live user bus.
+Check that stale rollback is refused, original symlinks are restored and the user override survives.

@@ -1,48 +1,58 @@
 # kaze-dots
 
-Build a lightweight, vertical-first Hyprland desktop powered natively by **Noctalia Shell (C++ v5.x)**.
-Keep the idle shell stack at ≤100 MiB PSS, ≤0.20% CPU, and 0 early portals at 1920×1080.
-Use [docs/specs/05-verification-and-benchmarks.md](docs/specs/05-verification-and-benchmarks.md) for budgets and [docs/specs/02-layouts.md](docs/specs/02-layouts.md) / [docs/specs/03-theming.md](docs/specs/03-theming.md) for visual decisions.
+kaze-dots deploys Arch Linux / CachyOS dotfiles for Hyprland. Its desktop shell is `kaze-shell`, a native Rust Wayland client.
+The [session target](config/systemd/user/kaze-session.target) starts [kaze-shell.service](config/systemd/user/kaze-shell.service) to run `kaze-shell daemon`; do not start a second shell from compositor config.
 
-## Core stack
+## Global invariants
 
-- Target Arch Linux / CachyOS with official `[extra]` packages; keep the core AUR-free.
-- Configure Hyprland 0.57+ with native Lua (`hypr/*.lua`) and optional `~/.config/hypr/user.lua`. Use Lua 5.5+ and its standard library for the small Hyprland helper CLIs.
-- Use **Noctalia** (`noctalia`) natively for bar layout, themes/palettes, app theming templates (`hyprland`, `foot`, `gtk3`, `gtk4`, `btop`), wallpaper, launcher (`noctalia dmenu`), Control Center, Settings GUI, notifications, OSD, clipboard history, idle, lockscreen, Night Light, Caffeine, Polkit, screenshots/annotation, and window switcher; use **Foot** (`foot --server` / `footclient`) for terminals.
+- Keep the idle desktop event-driven: no polling, new resident helpers or telemetry. Extend the shell instead of starting another daemon.
+- Do not add Qt/QML, GTK, Electron, wgpu, Node or Python dependencies to implement shell features.
+- Require zero early portals. Check passively; a client request can start the very service being measured.
+- Enforce shell and shell+session PSS, idle CPU and context-switch limits from the [T0 sampler](tests/vm/idle_sampler.py).
+  Use a cold 1920×1080 guest; neither RSS nor a post-interaction sample proves the idle budget.
+- Never modify, reload, restart or kill the live host compositor or shell. Never use `pkill -f`.
+- No host `sudo`, package changes or writes to `/etc` or `/usr`. Never apply to host dotfiles without an explicit request.
+- Preserve user overrides on apply, reapply and rollback. Keep generated theme and display state separate from repository files.
 
-## Repo map
+## Read by scope
 
-Read the matching guide before editing the source paths below. Add a nested guide only for distinct local rules or checks.
+Read the matching guide before editing; follow a second route only if the change crosses that boundary.
 
-| Guide | Change | Current source paths |
+| Directory | Guide | When |
 | --- | --- | --- |
-| [config/AGENTS.md](config/AGENTS.md) | Native Hyprland, Noctalia, Foot, and systemd configs | `hypr/`, `config/noctalia/`, `config/foot/`, `config/systemd/` |
-| [kaze-shell/AGENTS.md](kaze-shell/AGENTS.md) | Rust shell workspace, headless checks and Rust CI | `kaze-shell/`, `.github/workflows/kaze-shell.yml` |
-| [kaze/AGENTS.md](kaze/AGENTS.md) | Lua helper libraries and CLIs | `lua/kaze/`, `bin/`, `templates/hypr-user.lua.example`, `tests/run.lua` |
-| [scripts/AGENTS.md](scripts/AGENTS.md) | Installation, backups and VM testing | `scripts/`, `tests/vm/verify.sh` |
+| `kaze-shell/`, `config/kaze-shell/` | [Rust shell](kaze-shell/AGENTS.md) | Daemon, IPC, rendering or shell config contracts |
+| `hypr/`, `templates/` | [Hyprland](hypr/AGENTS.md) | Compositor hooks, reload order, overrides or layer rules |
+| `lua/`, `bin/` | [Lua and CLIs](lua/AGENTS.md) | Display planning, pickers or session lifecycle |
+| `scripts/`, `config/` | [Deployment](scripts/AGENTS.md) | Installed files, packages, backups or user units |
+| `tests/`, `scripts/launch-vm.sh` | [Verification](tests/AGENTS.md) | Fixtures, guest isolation or resource measurements |
 
-## Global constraints
+## Local verification
 
-- NEVER add Qt/QML, Electron, GTK4/AGS, wgpu/Iced or Node/Python runtimes to the desktop stack.
-- NEVER add polling scripts or resident helpers. Keep Noctalia offline/zero-telemetry (`offline_mode = true`, `telemetry_enabled = false`, `[weather]`, `[calendar]`, `[system.monitor]`, `[dock]`, `[desktop_widgets]` disabled).
-- NEVER duplicate features Noctalia already provides natively (bar/theme/wallpaper/screenshot/launcher/idle/lock/OSD/clipboard/Night Light/Polkit).
-- NEVER modify, reload, restart or kill the live host Hyprland or Quickshell session.
-- NEVER run host `sudo`, modify host `/etc` or `/usr`, or install/remove host packages.
-- NEVER apply changes to host dotfiles without an explicit request.
-- NEVER use `pkill -f`; match the exact process name with `pkill -x`.
-- Keep edits within the requested scope.
-
-## Common checks
-
-Run from the repository root before every VM deployment or commit:
+Run Gate 1 from the repository root before a commit or VM deployment. Parse one file per invocation:
 
 ```sh
 find lua hypr bin tests -type f \( -name '*.lua' -o -path 'bin/kaze-*' \) -print0 | xargs -0 -r -n1 luac -p
 lua tests/run.lua
-python3 -m unittest tests/vm/test_idle_sampler.py
-shellcheck scripts/*.sh tests/vm/verify.sh tests/vm/common.sh 2>/dev/null || bash -n scripts/*.sh tests/vm/verify.sh tests/vm/common.sh
+python3 -B -m unittest tests/vm/test_idle_sampler.py
+find scripts tests/vm -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+shellcheck --severity=error scripts/*.sh tests/vm/verify.sh tests/vm/common.sh
 ```
 
-For runtime/UI changes, use [tests/vm/verify.sh](tests/vm/verify.sh) and the [VM gates](docs/specs/05-verification-and-benchmarks.md).
-Test only in the isolated Arch guest. Pin QEMU to the Intel iGPU and power off the guest cleanly after automated runs.
-Report changed paths, exact checks and results, and any unverified budgets or regressions.
+On pull requests and pushes to `main`, [`static-and-unit`](.github/workflows/ci.yml) runs Lua syntax and tests,
+sampler unit tests, Bash checks, ShellCheck and installer dry-runs for both profiles. ShellCheck warnings are advisory; errors are not.
+
+For Rust changes, run the workspace gates locally; neither Rust nor VM tests run in CI:
+
+```sh
+(cd kaze-shell && cargo test --workspace --frozen)
+(cd kaze-shell && cargo clippy --workspace --all-targets --frozen -- -D warnings)
+```
+
+For runtime, UI or resource changes, run `tests/vm/verify-kaze-shell.sh` from the repository root.
+Use only the disposable Arch KVM overlay described in the [verification guide](tests/AGENTS.md).
+Report the checks run, any failures and any unmeasured budgets separately.
+
+## Maintaining the guides
+
+When a contract or check changes, update the relevant scoped guide and verify its pointers against the implementation.
+Keep this hub limited to shared rules, verification entry points and routing; link to manifests and tests instead of copying their contents.
