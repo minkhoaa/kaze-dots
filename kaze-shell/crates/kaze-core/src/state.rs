@@ -191,6 +191,31 @@ pub struct PowerProfileState {
     pub degraded_reason: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PowerCapabilities {
+    pub can_suspend: bool,
+    pub can_hibernate: bool,
+    pub can_reboot: bool,
+    pub can_poweroff: bool,
+    pub can_reboot_to_uefi: bool,
+    pub uwsm_active: bool,
+}
+
+impl Default for PowerCapabilities {
+    fn default() -> Self {
+        let uwsm_active = std::env::var_os("UWSM_FINALIZE_VARNAMES").is_some();
+        Self {
+            can_suspend: true,
+            can_hibernate: false,
+            can_reboot: true,
+            can_poweroff: true,
+            can_reboot_to_uefi: false,
+            uwsm_active,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct PrivacyState {
@@ -479,6 +504,7 @@ pub struct AppState {
     pub bluetooth: BluetoothState,
     pub battery: BatteryState,
     pub power_profile: PowerProfileState,
+    pub power_capabilities: PowerCapabilities,
     pub privacy: PrivacyState,
     pub audio: AudioState,
     pub audio_spectrum: Vec<u8>,
@@ -555,6 +581,7 @@ impl AppState {
             bluetooth: BluetoothState::default(),
             battery: BatteryState::default(),
             power_profile: PowerProfileState::default(),
+            power_capabilities: PowerCapabilities::default(),
             privacy: PrivacyState::default(),
             audio: AudioState::default(),
             audio_spectrum: Vec::new(),

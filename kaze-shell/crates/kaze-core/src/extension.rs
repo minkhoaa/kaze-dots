@@ -5,8 +5,8 @@ use crate::i18n::Locale;
 use crate::layout::LayoutPreset;
 use crate::state::{
     AppState, AudioState, BacklightState, BatteryState, BluetoothState, ClockTime, MediaState,
-    MonitorState, NetworkState, NotificationItem, OutputInfo, PowerProfileState, PrivacyState,
-    ThemeMode, TrayItem, TrayMenuState, UserAccountState, WorkspaceState,
+    MonitorState, NetworkState, NotificationItem, OutputInfo, PowerCapabilities, PowerProfileState,
+    PrivacyState, ThemeMode, TrayItem, TrayMenuState, UserAccountState, WorkspaceState,
 };
 use crate::surface::SurfaceSpec;
 use crate::theme::ResolvedPalette;
@@ -26,7 +26,9 @@ bitflags! {
         const TRAY      = 1 << 8;
         const WALLPAPER = 1 << 9;
         const CLIPBOARD = 1 << 10;
-        const ALL       = 0b0111_1111_1111;
+        const IDLE      = 1 << 11;
+        const SESSION   = 1 << 12;
+        const ALL       = 0b0001_1111_1111_1111;
     }
 }
 
@@ -207,6 +209,18 @@ pub enum SystemEvent {
     PowerProfileChanged(PowerProfileState),
     PrivacyChanged(PrivacyState),
     AudioSpectrum(Vec<u8>),
+    IdleTimeout {
+        id: String,
+    },
+    IdleResumed {
+        id: String,
+    },
+    PrepareForSleep(bool),
+    SessionLockRequested,
+    SessionUnlockRequested,
+    LockWorkerCommitted,
+    LockWorkerExited,
+    PowerCapabilitiesChanged(PowerCapabilities),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -314,6 +328,10 @@ pub enum ShellAction {
         muted: bool,
     },
     AudioSetSpectrumSubscribed(usize),
+    ConfigureIdleTimeouts(Vec<(String, u64)>),
+    SetOutputsDpms(bool),
+    ReleaseSleepInhibitor,
+    LockSession,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

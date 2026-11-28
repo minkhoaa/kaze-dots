@@ -16,6 +16,7 @@ fn print_usage() {
         "kaze-shell {}\n\n\
 Usage:\n\
   kaze-shell daemon [--config PATH]\n\
+  kaze-shell lock-worker [OPTIONS]\n\
   kaze-shell dmenu [-p|--prompt TEXT]\n\
   kaze-shell msg <command> [args...]\n\
   kaze-shell inspect\n\
@@ -40,7 +41,10 @@ IPC Commands (via `kaze-shell msg`):\n\
   wallpaper-set <path>              Set wallpaper & extract dynamic Dark/Light theme\n\
   wallpaper-next | wallpaper-clear  Cycle or clear wallpaper background\n\
   nightlight-toggle | nightlight-set <on|off|K>\n\
-  caffeine-toggle | caffeine-set <on|off>\n\
+  caffeine-toggle | caffeine-set <on|off>
+  inhibit                           Toggle idle/sleep caffeine inhibitor
+  lock | unlock-status              Lock session via ext-session-lock-v1 or inspect lock state
+  session-menu-toggle               Toggle native power/session menu overlay\n\
   theme-mode-toggle                 Toggle Dark/Light mode & regenerate templates\n\
   templates-apply                   Regenerate Hyprland, Foot, GTK3/4, btop themes\n\
   display-status <mode> [detail]    Update Display Slot dot (idle|present|virtual-share|virtual-control|recording)\n\
@@ -80,6 +84,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         "daemon" => run_daemon_cmd(&args[1..]),
+        "lock-worker" => run_lock_worker_cmd(&args[1..]),
         "dmenu" => run_dmenu_cmd(&args[1..]),
         "msg" => run_msg_cmd(&args[1..]),
         "inspect" => run_inspect_cmd(&args[1..]),
@@ -579,6 +584,113 @@ fn run_config_cmd(args: &[String]) -> ExitCode {
         _ => {
             eprintln!("Usage: kaze-shell config validate [--strict] [--json] [PATH]");
             ExitCode::from(2)
+        }
+    }
+}
+
+fn run_lock_worker_cmd(args: &[String]) -> ExitCode {
+    let mut cfg = kaze_lock::LockWorkerConfig::default();
+    let mut i = 0usize;
+    while i < args.len() {
+        let next_val = |idx: usize, flag: &str| -> Result<String, ExitCode> {
+            args.get(idx + 1).cloned().ok_or_else(|| {
+                eprintln!("kaze-shell lock-worker: {flag} expects a value");
+                ExitCode::from(2)
+            })
+        };
+        match args[i].as_str() {
+            "-h" | "--help" => {
+                println!(
+                    "Usage: kaze-shell lock-worker [--ipc-fd FD] [--pam-service SVC] [--grace-secs N] [--no-fprintd] [--no-blur] [--bg HEX] [--wallpaper PATH] [--username USER] [--real-name NAME] [--avatar PATH] [--font FONT] [--font-scale SCALE] [--high-contrast] [--locale CODE]"
+                );
+                return ExitCode::SUCCESS;
+            }
+            "--ipc-fd" => match next_val(i, "--ipc-fd") {
+                Ok(v) => match v.parse::<i32>() {
+                    Ok(fd) => cfg.ipc_fd = Some(fd),
+                    Err(_) => {
+                        eprintln!("kaze-shell lock-worker: invalid --ipc-fd '{v}'");
+                        return ExitCode::from(2);
+                    }
+                },
+                Err(code) => return code,
+            },
+            "--pam-service" => match next_val(i, "--pam-service") {
+                Ok(v) => cfg.pam_service = v,
+                Err(code) => return code,
+            },
+            "--grace-secs" => match next_val(i, "--grace-secs") {
+                Ok(v) => match v.parse::<u64>() {
+                    Ok(n) => cfg.grace_secs = n,
+                    Err(_) => return ExitCode::from(2),
+                },
+                Err(code) => return code,
+            },
+            "--bg" => match next_val(i, "--bg") {
+                Ok(v) => cfg.background_color = v,
+                Err(code) => return code,
+            },
+            "--wallpaper" => match next_val(i, "--wallpaper") {
+                Ok(v) => cfg.wallpaper_path = Some(PathBuf::from(v)),
+                Err(code) => return code,
+            },
+            "--username" => match next_val(i, "--username") {
+                Ok(v) => cfg.username = v,
+                Err(code) => return code,
+            },
+            "--real-name" => match next_val(i, "--real-name") {
+                Ok(v) => cfg.real_name = v,
+                Err(code) => return code,
+            },
+            "--avatar" => match next_val(i, "--avatar") {
+                Ok(v) => cfg.avatar_path = Some(PathBuf::from(v)),
+                Err(code) => return code,
+            },
+            "--font" => match next_val(i, "--font") {
+                Ok(v) => cfg.font = v,
+                Err(code) => return code,
+            },
+            "--font-scale" => match next_val(i, "--font-scale") {
+                Ok(v) => match v.parse::<f32>() {
+                    Ok(s) => cfg.font_scale = s,
+                    Err(_) => return ExitCode::from(2),
+                },
+                Err(code) => return code,
+            },
+            "--locale" => match next_val(i, "--locale") {
+                Ok(v) => {
+                    cfg.locale = kaze_core::Locale::from_code(&v).unwrap_or(kaze_core::Locale::En);
+                }
+                Err(code) => return code,
+            },
+            "--no-fprintd" => {
+                cfg.fprintd = false;
+                i += 1;
+                continue;
+            }
+            "--no-blur" => {
+                cfg.blur = false;
+                i += 1;
+                continue;
+            }
+            "--high-contrast" => {
+                cfg.high_contrast = true;
+                i += 1;
+                continue;
+            }
+            other => {
+                eprintln!("kaze-shell lock-worker: unknown option '{other}'");
+                return ExitCode::from(2);
+            }
+        }
+        i += 2;
+    }
+
+    match kaze_lock::run_lock_worker(cfg) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("kaze-shell lock-worker: {err}");
+            ExitCode::FAILURE
         }
     }
 }

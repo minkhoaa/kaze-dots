@@ -15,6 +15,9 @@ members = [
     "crates/kaze-ext-tray",
     "crates/kaze-ext-wallpaper",
     "crates/kaze-ext-clipboard",
+    "crates/kaze-ext-idle",
+    "crates/kaze-ext-session",
+    "crates/kaze-lock",
     "crates/kaze-cli",
 ]
 
@@ -70,6 +73,9 @@ kaze-ext-cc = { path = "crates/kaze-ext-cc" }
 kaze-ext-tray = { path = "crates/kaze-ext-tray" }
 kaze-ext-wallpaper = { path = "crates/kaze-ext-wallpaper" }
 kaze-ext-clipboard = { path = "crates/kaze-ext-clipboard" }
+kaze-ext-idle = { path = "crates/kaze-ext-idle" }
+kaze-ext-session = { path = "crates/kaze-ext-session" }
+kaze-lock = { path = "crates/kaze-lock" }
 
 # Keep variables inspectable in our crates; keep source locations in dependencies.
 [profile.dev.package."*"]

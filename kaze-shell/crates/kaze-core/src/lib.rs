@@ -37,9 +37,9 @@ pub use state::{
     AppState, AudioDeviceInfo, AudioState, AudioStreamInfo, BacklightState, BatteryDeviceDetail,
     BatteryState, BluetoothState, ClockTime, CustomActivity, DisplayActivity, DisplayStatus,
     MediaPlayback, MediaState, MonitorState, NetworkKind, NetworkState, NotificationAction,
-    NotificationItem, NotificationUrgency, OutputInfo, PowerProfileState, PrivacyState,
-    RecordActivity, ThemeMode, TrayItem, TrayMenuEntry, TrayMenuState, UserAccountState,
-    WorkspaceState,
+    NotificationItem, NotificationUrgency, OutputInfo, PowerCapabilities, PowerProfileState,
+    PrivacyState, RecordActivity, ThemeMode, TrayItem, TrayMenuEntry, TrayMenuState,
+    UserAccountState, WorkspaceState,
 };
 pub use surface::{
     Anchor, Color, EdgeInsets, HitTarget, IconKind, KeyboardMode, Layer, PaintCmd, Rect,

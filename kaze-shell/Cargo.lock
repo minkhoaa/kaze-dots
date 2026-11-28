@@ -644,14 +644,17 @@ dependencies = [
  "kaze-ext-bar",
  "kaze-ext-cc",
  "kaze-ext-clipboard",
+ "kaze-ext-idle",
  "kaze-ext-island",
  "kaze-ext-launcher",
  "kaze-ext-notify",
  "kaze-ext-osd",
+ "kaze-ext-session",
  "kaze-ext-tray",
  "kaze-ext-wallpaper",
  "kaze-hypr",
  "kaze-ipc",
+ "kaze-lock",
  "kaze-sys",
  "kaze-ui",
  "libc",
@@ -702,6 +705,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kaze-ext-idle"
+version = "0.1.0"
+dependencies = [
+ "kaze-core",
+]
+
+[[package]]
 name = "kaze-ext-island"
 version = "0.1.0"
 dependencies = [
@@ -727,6 +737,13 @@ dependencies = [
 
 [[package]]
 name = "kaze-ext-osd"
+version = "0.1.0"
+dependencies = [
+ "kaze-core",
+]
+
+[[package]]
+name = "kaze-ext-session"
 version = "0.1.0"
 dependencies = [
  "kaze-core",
@@ -762,6 +779,25 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "kaze-lock"
+version = "0.1.0"
+dependencies = [
+ "calloop",
+ "calloop-wayland-source",
+ "futures-util",
+ "image",
+ "kaze-core",
+ "kaze-ui",
+ "libc",
+ "smithay-client-toolkit",
+ "tokio",
+ "unicode-segmentation",
+ "wayland-protocols",
+ "zbus",
+ "zeroize",
 ]
 
 [[package]]

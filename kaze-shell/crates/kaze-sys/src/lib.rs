@@ -55,6 +55,7 @@ pub enum SysCommand {
     },
     SetPowerProfile(String),
     HyprScreencastUpdate(bool),
+    ReleaseSleepInhibitor,
     MediaCommand(String),
     WifiToggle,
     BluetoothToggle,
@@ -180,6 +181,7 @@ fn run_sys_thread(
         let (power_cmd_tx, power_cmd_rx) = mpsc::unbounded_channel();
         let (ddc_cmd_tx, ddc_cmd_rx) = mpsc::unbounded_channel();
         let (privacy_tx, privacy_rx) = mpsc::unbounded_channel();
+        let (sleep_rel_tx, sleep_rel_rx) = mpsc::unbounded_channel();
 
         // Share ONE System Bus and ONE Session Bus connection across all observers
         // (2 sockets total instead of 6; avoids spawning parallel zbus/tokio handshake threads).
@@ -191,6 +193,13 @@ fn run_sys_thread(
             privacy_tx.clone(),
             audio_cmd_rx,
         ));
+        let logind_task = sys_conn.clone().map(|c| {
+            tokio::spawn(dbus_logind::run_logind_task(
+                c,
+                event_tx.clone(),
+                sleep_rel_rx,
+            ))
+        });
         let privacy_task = tokio::spawn(pipewire_privacy::run_privacy_task(
             event_tx.clone(),
             privacy_rx,
@@ -290,6 +299,9 @@ fn run_sys_thread(
                 }
                 SysCommand::HyprScreencastUpdate(active) => {
                     let _ = privacy_tx.send(pipewire_privacy::PrivacyUpdate::HyprScreencast(active));
+                }
+                SysCommand::ReleaseSleepInhibitor => {
+                    let _ = sleep_rel_tx.send(());
                 }
                 SysCommand::MediaCommand(action) => {
                     let _ = media_cmd_tx.send(action);
@@ -408,6 +420,9 @@ fn run_sys_thread(
         }
 
         accounts_task.abort();
+        if let Some(t) = logind_task {
+            t.abort();
+        }
         privacy_task.abort();
         ddc_task.abort();
         if let Some(t) = power_task {

@@ -1,9 +1,11 @@
 #![deny(clippy::unwrap_used)]
 
 pub mod data_control;
+pub mod idle_power;
 pub mod render;
 
 use data_control::{ClipboardPipeRead, ClipboardPipeWrite, DataControlState};
+use idle_power::IdlePowerState;
 
 use kaze_core::{
     Anchor, DirtyFlags, ImeEvent, KeyEvent as CoreKeyEvent, KeyModifiers, KeyboardMode, Layer,
@@ -174,6 +176,7 @@ pub struct UiState {
     anim_clock: AnimationClock,
     renderer: Renderer,
     data_control: DataControlState,
+    idle_power: IdlePowerState,
     pending_events: Vec<SystemEvent>,
 }
 
@@ -200,6 +203,7 @@ impl UiState {
             .bind::<ZwlrGammaControlManagerV1, _, _>(&qh, 1..=1, ())
             .ok();
         let data_control = DataControlState::bind_globals(&globals, &qh);
+        let idle_power = IdlePowerState::bind_globals(&globals, &qh);
 
         let state = Self {
             registry_state: RegistryState::new(&globals),
@@ -237,6 +241,7 @@ impl UiState {
             anim_clock: AnimationClock::default(),
             renderer: Renderer::new(font_hint),
             data_control,
+            idle_power,
             pending_events: Vec::new(),
         };
 
@@ -273,6 +278,30 @@ impl UiState {
 
     pub fn has_data_control(&self) -> bool {
         self.data_control.has_protocol()
+    }
+
+    pub fn has_idle_notify(&self) -> bool {
+        self.idle_power.has_idle_notify()
+    }
+
+    pub fn has_output_power(&self) -> bool {
+        self.idle_power.has_output_power()
+    }
+
+    pub fn configure_idle_timeouts(&mut self, stages: &[(String, u64)]) -> bool {
+        let Some(seat) = self.seat_state.seats().next() else {
+            self.idle_power.set_pending_stages(stages);
+            return false;
+        };
+        self.idle_power.configure_timeouts(stages, &seat, &self.qh)
+    }
+
+    pub fn set_outputs_dpms(&mut self, on: bool) -> bool {
+        let iter = self
+            .output_obj_by_name
+            .iter()
+            .filter_map(|(name, oid)| self.outputs_by_obj.get(oid).map(|t| (name, &t.wl_output)));
+        self.idle_power.set_dpms(on, iter, &self.qh)
     }
 
     pub fn configure_clipboard(
@@ -1147,6 +1176,7 @@ impl OutputHandler for UiState {
                     .is_some_and(|id| id == &obj_id);
                 if is_current {
                     self.output_obj_by_name.remove(&info.name);
+                    self.idle_power.remove_output(&info.name);
                     self.remove_surfaces_for_output(&info.name);
                     self.pending_events
                         .push(SystemEvent::OutputRemoved { name: info.name });
@@ -1232,6 +1262,7 @@ impl SeatHandler for UiState {
 
     fn new_seat(&mut self, conn: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat) {
         self.data_control.ensure_device(&seat, qh);
+        self.idle_power.on_seat(&seat, qh);
         if self.text_input.is_none() {
             if let Some(ref mgr) = self.text_input_manager {
                 self.text_input = Some(mgr.get_text_input(&seat, qh, ()));

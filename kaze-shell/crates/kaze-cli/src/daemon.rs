@@ -14,10 +14,12 @@ use kaze_core::{
 use kaze_ext_bar::BarExtension;
 use kaze_ext_cc::ControlCenterExtension;
 use kaze_ext_clipboard::{default_clipboard_store_path, ClipboardExtension};
+use kaze_ext_idle::IdleExtension;
 use kaze_ext_island::IslandExtension;
 use kaze_ext_launcher::{desktop as launcher_desktop, LauncherExtension};
 use kaze_ext_notify::NotifyExtension;
 use kaze_ext_osd::OsdExtension;
+use kaze_ext_session::SessionMenuExtension;
 use kaze_ext_tray::TrayExtension;
 use kaze_ext_wallpaper::{
     expand_tilde, load_wallpaper_job, validate_wallpaper_file, WallpaperExtension,
@@ -31,6 +33,9 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use smithay_client_toolkit::reexports::client::Connection;
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
+use std::os::unix::io::{FromRawFd, IntoRawFd, OwnedFd};
+use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -69,6 +74,10 @@ struct Daemon {
     watched_symlink_dir: Option<PathBuf>,
     watched_config_target: Arc<Mutex<Option<PathBuf>>>,
     children: Vec<Child>,
+    active_lock_pid: Option<u32>,
+    lock_committed: bool,
+    pre_lock_dnd: Option<bool>,
+    lock_pipe_token: Option<RegistrationToken>,
 }
 
 impl Daemon {
@@ -375,6 +384,23 @@ impl Daemon {
             SystemEvent::AudioSpectrum(bars) => {
                 self.state.audio_spectrum = bars.clone();
             }
+            SystemEvent::PowerCapabilitiesChanged(caps) => {
+                self.state.power_capabilities = caps.clone();
+            }
+            SystemEvent::SessionUnlockRequested => {
+                if let Some(pid) = self.active_lock_pid {
+                    // SAFETY: signal our own active lock-worker child to unlock on logind Unlock.
+                    unsafe {
+                        libc::kill(pid as i32, libc::SIGTERM);
+                    }
+                }
+            }
+            SystemEvent::IdleTimeout { .. }
+            | SystemEvent::IdleResumed { .. }
+            | SystemEvent::PrepareForSleep(_)
+            | SystemEvent::SessionLockRequested
+            | SystemEvent::LockWorkerCommitted
+            | SystemEvent::LockWorkerExited => {}
         }
         if matches!(&event, SystemEvent::TimerFired { id } if id == "kaze:solar") {
             self.state.nightlight_manual_override = false;
@@ -694,6 +720,22 @@ impl Daemon {
                         });
                     }
                 }
+                ShellAction::ConfigureIdleTimeouts(stages) => {
+                    self.ui.configure_idle_timeouts(&stages);
+                    let _ = self.wayland_conn.flush();
+                }
+                ShellAction::SetOutputsDpms(on) => {
+                    self.ui.set_outputs_dpms(on);
+                    let _ = self.wayland_conn.flush();
+                }
+                ShellAction::ReleaseSleepInhibitor => {
+                    if let Some(ref sys) = self.sys {
+                        sys.send(SysCommand::ReleaseSleepInhibitor);
+                    }
+                }
+                ShellAction::LockSession => {
+                    self.spawn_lock_worker();
+                }
             }
         }
     }
@@ -777,8 +819,180 @@ impl Daemon {
     }
 
     fn reap_children(&mut self) {
-        self.children
-            .retain_mut(|child| matches!(child.try_wait(), Ok(None)));
+        let mut lock_exited = false;
+        self.children.retain_mut(|child| {
+            let pid = child.id();
+            match child.try_wait() {
+                Ok(None) => true,
+                _ => {
+                    if self.active_lock_pid == Some(pid) {
+                        lock_exited = true;
+                    }
+                    false
+                }
+            }
+        });
+        if lock_exited {
+            self.handle_lock_worker_exit();
+        }
+    }
+
+    fn handle_lock_worker_exit(&mut self) {
+        if let Some(token) = self.lock_pipe_token.take() {
+            self.loop_handle.remove(token);
+        }
+        if self.active_lock_pid.take().is_some() {
+            self.lock_committed = false;
+            if let Some(prev_dnd) = self.pre_lock_dnd.take() {
+                self.dispatch_system_event(SystemEvent::DndChanged(prev_dnd));
+            }
+            self.fire_hook("session_unlocked", None, None, None);
+            self.dispatch_system_event(SystemEvent::LockWorkerExited);
+        }
+    }
+
+    fn spawn_lock_worker(&mut self) {
+        self.reap_children();
+        if self.active_lock_pid.is_some() {
+            if self.lock_committed {
+                self.dispatch_system_event(SystemEvent::LockWorkerCommitted);
+            }
+            return;
+        }
+        let Ok(exe) = std::env::current_exe() else {
+            eprintln!("kaze-shell: unable to locate current_exe for lock-worker");
+            return;
+        };
+        let Ok((parent_sock, child_sock)) = UnixStream::pair() else {
+            eprintln!("kaze-shell: failed creating lock-worker socketpair");
+            return;
+        };
+        let _ = parent_sock.set_nonblocking(true);
+        let child_raw = child_sock.into_raw_fd();
+
+        let cfg = &self.state.config.lockscreen;
+        let mut args = vec![
+            "lock-worker".to_string(),
+            "--ipc-fd".to_string(),
+            child_raw.to_string(),
+            "--pam-service".to_string(),
+            cfg.pam_service.clone(),
+            "--grace-secs".to_string(),
+            cfg.grace_secs.to_string(),
+            "--bg".to_string(),
+            cfg.background_color.clone(),
+            "--font".to_string(),
+            self.state.config.bar.font.clone(),
+            "--font-scale".to_string(),
+            format!("{:.2}", self.state.effective_font_scale),
+            "--locale".to_string(),
+            self.state.locale.as_str().to_string(),
+        ];
+        if !self.state.user_account.username.is_empty() {
+            args.push("--username".into());
+            args.push(self.state.user_account.username.clone());
+        }
+        if !self.state.user_account.real_name.is_empty() {
+            args.push("--real-name".into());
+            args.push(self.state.user_account.real_name.clone());
+        }
+        if let Some(ref avatar) = self.state.user_account.icon_path {
+            args.push("--avatar".into());
+            args.push(avatar.display().to_string());
+        }
+        if let Some(ref wall) = self.state.wallpaper_path {
+            args.push("--wallpaper".into());
+            args.push(wall.display().to_string());
+        }
+        if !cfg.fprintd {
+            args.push("--no-fprintd".into());
+        }
+        if !cfg.blur {
+            args.push("--no-blur".into());
+        }
+        if self.state.config.accessibility.high_contrast {
+            args.push("--high-contrast".into());
+        }
+
+        let mut cmd = Command::new(exe);
+        cmd.args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit());
+        // SAFETY: `setsid` and `fcntl(F_SETFD)` are async-signal-safe; clears FD_CLOEXEC only in child.
+        unsafe {
+            cmd.pre_exec(move || {
+                libc::setsid();
+                let flags = libc::fcntl(child_raw, libc::F_GETFD);
+                if flags >= 0 {
+                    libc::fcntl(child_raw, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+                }
+                Ok(())
+            });
+        }
+
+        let spawned = cmd.spawn();
+        // SAFETY: parent always closes its copy of `child_raw` after fork/exec.
+        unsafe {
+            drop(OwnedFd::from_raw_fd(child_raw));
+        }
+
+        let child = match spawned {
+            Ok(c) => c,
+            Err(err) => {
+                eprintln!("kaze-shell: failed spawning lock-worker: {err}");
+                return;
+            }
+        };
+        self.active_lock_pid = Some(child.id());
+        self.lock_committed = false;
+        self.children.push(child);
+
+        if let Some(old_token) = self.lock_pipe_token.take() {
+            self.loop_handle.remove(old_token);
+        }
+        let mut buf_acc = Vec::<u8>::new();
+        let source = Generic::new(parent_sock, Interest::READ, Mode::Level);
+        if let Ok(token) = self.loop_handle.insert_source(source, move |_, sock, daemon| {
+            let mut tmp = [0u8; 128];
+            let sock_ref = unsafe { sock.get_mut() };
+            loop {
+                match sock_ref.read(&mut tmp) {
+                    Ok(0) => {
+                        daemon.lock_pipe_token = None;
+                        daemon.handle_lock_worker_exit();
+                        return Ok(PostAction::Remove);
+                    }
+                    Ok(n) => {
+                        buf_acc.extend_from_slice(&tmp[..n]);
+                        if !daemon.lock_committed
+                            && buf_acc.windows(22).any(|w| w == b"LOCKED_FRAME_COMMITTED")
+                        {
+                            daemon.lock_committed = true;
+                            if daemon.state.config.lockscreen.dnd && daemon.pre_lock_dnd.is_none()
+                            {
+                                daemon.pre_lock_dnd = Some(daemon.state.dnd);
+                                if !daemon.state.dnd {
+                                    daemon.dispatch_system_event(SystemEvent::DndChanged(true));
+                                }
+                            }
+                            daemon.fire_hook("session_locked", None, None, None);
+                            daemon.dispatch_system_event(SystemEvent::LockWorkerCommitted);
+                        }
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        return Ok(PostAction::Continue);
+                    }
+                    Err(_) => {
+                        daemon.lock_pipe_token = None;
+                        daemon.handle_lock_worker_exit();
+                        return Ok(PostAction::Remove);
+                    }
+                }
+            }
+        }) {
+            self.lock_pipe_token = Some(token);
+        }
     }
 
     fn apply_templates(&mut self) -> Result<String, String> {
@@ -1364,10 +1578,37 @@ impl Daemon {
             } else {
                 "off"
             }),
-            "caffeine-toggle" => {
-                let next = !self.state.caffeine_enabled;
-                self.apply_caffeine(next);
-                IpcResponse::ok(if next { "on" } else { "off" })
+            "caffeine-toggle" | "inhibit" => match req.args.first().map(String::as_str) {
+                Some("on" | "true" | "1") => {
+                    self.apply_caffeine(true);
+                    IpcResponse::ok("on")
+                }
+                Some("off" | "false" | "0") => {
+                    self.apply_caffeine(false);
+                    IpcResponse::ok("off")
+                }
+                _ => {
+                    let next = !self.state.caffeine_enabled;
+                    self.apply_caffeine(next);
+                    IpcResponse::ok(if next { "on" } else { "off" })
+                }
+            },
+            "lock" => {
+                self.spawn_lock_worker();
+                IpcResponse::ok(format!(
+                    "locked pid={}",
+                    self.active_lock_pid.unwrap_or(0)
+                ))
+            }
+            "unlock-status" => {
+                if let Some(pid) = self.active_lock_pid {
+                    IpcResponse::ok(format!(
+                        "locked pid={pid} committed={}",
+                        self.lock_committed
+                    ))
+                } else {
+                    IpcResponse::ok("unlocked")
+                }
             }
             "caffeine-set" => match req.args.first().map(String::as_str) {
                 Some("on" | "true" | "1") => {
@@ -1505,6 +1746,23 @@ impl Daemon {
                         serde_json::json!(self.state.power_profile),
                     );
                     obj.insert("privacy".into(), serde_json::json!(self.state.privacy));
+                    obj.insert(
+                        "lock_active".into(),
+                        serde_json::json!(self.active_lock_pid.is_some()),
+                    );
+                    obj.insert("lock_pid".into(), serde_json::json!(self.active_lock_pid));
+                    obj.insert(
+                        "has_idle_notify".into(),
+                        serde_json::json!(self.ui.has_idle_notify()),
+                    );
+                    obj.insert(
+                        "has_output_power".into(),
+                        serde_json::json!(self.ui.has_output_power()),
+                    );
+                    obj.insert(
+                        "power_capabilities".into(),
+                        serde_json::json!(self.state.power_capabilities),
+                    );
                 }
                 IpcResponse::ok_data("ok", data)
             }
@@ -1907,6 +2165,8 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         Box::new(NotifyExtension::new()),
         Box::new(clipboard_ext),
         Box::new(LauncherExtension::new()),
+        Box::new(IdleExtension::new()),
+        Box::new(SessionMenuExtension::new()),
     ];
 
     let mut daemon = Daemon {
@@ -1935,6 +2195,10 @@ pub fn run(config_path: PathBuf) -> Result<(), String> {
         watched_symlink_dir: None,
         watched_config_target,
         children: Vec::new(),
+        active_lock_pid: None,
+        lock_committed: false,
+        pre_lock_dnd: None,
+        lock_pipe_token: None,
     };
     daemon.sync_config_symlink_watch();
 

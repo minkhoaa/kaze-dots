@@ -358,7 +358,15 @@ impl KazeExtension for BarExtension {
             | SystemEvent::ClipboardOfferCaptured { .. }
             | SystemEvent::PowerProfileChanged(_)
             | SystemEvent::PrivacyChanged(_)
-            | SystemEvent::AudioSpectrum(_) => DirtyFlags::NONE,
+            | SystemEvent::AudioSpectrum(_)
+            | SystemEvent::IdleTimeout { .. }
+            | SystemEvent::IdleResumed { .. }
+            | SystemEvent::PrepareForSleep(_)
+            | SystemEvent::SessionLockRequested
+            | SystemEvent::SessionUnlockRequested
+            | SystemEvent::LockWorkerCommitted
+            | SystemEvent::LockWorkerExited
+            | SystemEvent::PowerCapabilitiesChanged(_) => DirtyFlags::NONE,
         }
     }
 

@@ -1,0 +1,23 @@
+[package]
+name = "kaze-lock"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+calloop.workspace = true
+calloop-wayland-source.workspace = true
+futures-util.workspace = true
+image.workspace = true
+kaze-core.workspace = true
+kaze-ui.workspace = true
+libc.workspace = true
+smithay-client-toolkit.workspace = true
+tokio.workspace = true
+unicode-segmentation.workspace = true
+wayland-protocols.workspace = true
+zbus.workspace = true
+zeroize.workspace = true
